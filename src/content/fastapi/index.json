@@ -1,0 +1,8 @@
+{
+  "name": "FastAPI",
+  "icon": "⚡",
+  "tagline": "Fast APIs with Pydantic",
+  "order": 4,
+  "playground": "none",
+  "modules": []
+}

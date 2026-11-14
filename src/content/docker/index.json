@@ -1,0 +1,8 @@
+{
+  "name": "Docker",
+  "icon": "🐳",
+  "tagline": "Images, containers, compose",
+  "order": 8,
+  "playground": "terminal",
+  "modules": []
+}

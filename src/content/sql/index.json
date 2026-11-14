@@ -1,0 +1,8 @@
+{
+  "name": "SQL",
+  "icon": "🗄️",
+  "tagline": "SELECT, JOINs, window functions",
+  "order": 2,
+  "playground": "sql",
+  "modules": []
+}

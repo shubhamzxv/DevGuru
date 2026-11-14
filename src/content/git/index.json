@@ -1,0 +1,8 @@
+{
+  "name": "Git & GitHub",
+  "icon": "🌿",
+  "tagline": "Commits, branches, merges, PRs",
+  "order": 7,
+  "playground": "git",
+  "modules": []
+}

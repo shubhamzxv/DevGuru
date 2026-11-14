@@ -1,0 +1,8 @@
+{
+  "name": "Django",
+  "icon": "🎸",
+  "tagline": "MVT, ORM, admin and DRF",
+  "order": 3,
+  "playground": "none",
+  "modules": []
+}

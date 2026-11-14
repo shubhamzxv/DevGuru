@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-padding-top: 4rem;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+  }
+
+  /* One clear focus ring everywhere (keyboard users). */
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-white dark:ring-brand-400 dark:ring-offset-slate-950;
+  }
+
+  /* Code must stay readable on phones: never below 14px. */
+  pre,
+  code {
+    font-size: max(14px, 0.875rem);
+  }
+}
+
+@layer components {
+  /* Minimum 44px touch target for anything tappable. */
+  .tap {
+    @apply inline-flex min-h-11 min-w-11 items-center justify-center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

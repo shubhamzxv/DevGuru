@@ -1,0 +1,8 @@
+{
+  "name": "Python",
+  "icon": "🐍",
+  "tagline": "From variables to async/await",
+  "order": 1,
+  "playground": "python",
+  "modules": []
+}

@@ -1,0 +1,8 @@
+{
+  "name": "REST APIs & HTTP",
+  "icon": "🌐",
+  "tagline": "Requests, status codes, auth",
+  "order": 5,
+  "playground": "http",
+  "modules": []
+}

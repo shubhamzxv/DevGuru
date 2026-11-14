@@ -1,0 +1,8 @@
+{
+  "name": "Linux & Bash",
+  "icon": "🐧",
+  "tagline": "Commands, permissions, scripts",
+  "order": 9,
+  "playground": "terminal",
+  "modules": []
+}
