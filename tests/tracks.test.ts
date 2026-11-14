@@ -21,8 +21,8 @@ describe('buildTracks', () => {
 });
 
 describe('track registry (real content folder)', () => {
-  it('finds all 10 starting tracks, Python first', () => {
-    expect(TRACKS).toHaveLength(10);
+  it('finds at least the 10 starting tracks, Python first', () => {
+    expect(TRACKS.length).toBeGreaterThanOrEqual(10);
     expect(TRACKS[0]?.slug).toBe('python');
   });
 

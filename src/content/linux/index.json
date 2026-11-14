@@ -4,5 +4,161 @@
   "tagline": "Commands, permissions, scripts",
   "order": 9,
   "playground": "terminal",
-  "modules": []
+  "modules": [
+    {
+      "title": "Basics",
+      "topics": [
+        {
+          "id": "linux-what-is-linux",
+          "slug": "what-is-linux",
+          "title": "What is Linux?"
+        },
+        {
+          "id": "linux-file-system",
+          "slug": "file-system",
+          "title": "The file system (/, /home, /etc)"
+        },
+        {
+          "id": "linux-navigation",
+          "slug": "navigation",
+          "title": "Navigation (pwd, ls, cd)"
+        },
+        {
+          "id": "linux-file-commands",
+          "slug": "file-commands",
+          "title": "Files and folders (touch, mkdir, cp, mv, rm)"
+        },
+        {
+          "id": "linux-viewing-files",
+          "slug": "viewing-files",
+          "title": "Viewing files (cat, less, head, tail)"
+        },
+        {
+          "id": "linux-editing-files",
+          "slug": "editing-files",
+          "title": "Editing files (nano, vim basics)"
+        }
+      ]
+    },
+    {
+      "title": "Permissions and users",
+      "topics": [
+        {
+          "id": "linux-permissions",
+          "slug": "permissions",
+          "title": "Permissions (chmod, chown)"
+        },
+        {
+          "id": "linux-users-and-groups",
+          "slug": "users-and-groups",
+          "title": "Users and groups"
+        },
+        {
+          "id": "linux-sudo",
+          "slug": "sudo",
+          "title": "sudo"
+        }
+      ]
+    },
+    {
+      "title": "Processes and system",
+      "topics": [
+        {
+          "id": "linux-processes",
+          "slug": "processes",
+          "title": "Processes (ps, top, kill)"
+        },
+        {
+          "id": "linux-services",
+          "slug": "services",
+          "title": "Services (systemctl)"
+        },
+        {
+          "id": "linux-disk-and-memory",
+          "slug": "disk-and-memory",
+          "title": "Disk and memory (df, du, free)"
+        }
+      ]
+    },
+    {
+      "title": "Text power tools",
+      "topics": [
+        {
+          "id": "linux-pipes-and-redirection",
+          "slug": "pipes-and-redirection",
+          "title": "Pipes and redirection"
+        },
+        {
+          "id": "linux-grep",
+          "slug": "grep",
+          "title": "grep"
+        },
+        {
+          "id": "linux-find",
+          "slug": "find",
+          "title": "find"
+        },
+        {
+          "id": "linux-text-tools",
+          "slug": "text-tools",
+          "title": "sed, awk, cut, sort, uniq"
+        }
+      ]
+    },
+    {
+      "title": "Environment and network",
+      "topics": [
+        {
+          "id": "linux-environment-variables",
+          "slug": "environment-variables",
+          "title": "Environment variables"
+        },
+        {
+          "id": "linux-package-managers",
+          "slug": "package-managers",
+          "title": "Installing software (apt, yum)"
+        },
+        {
+          "id": "linux-networking-commands",
+          "slug": "networking-commands",
+          "title": "Networking (curl, ping, ports)"
+        },
+        {
+          "id": "linux-ssh",
+          "slug": "ssh",
+          "title": "SSH and scp"
+        }
+      ]
+    },
+    {
+      "title": "Shell scripting",
+      "topics": [
+        {
+          "id": "linux-shell-scripts",
+          "slug": "shell-scripts",
+          "title": "Your first shell script"
+        },
+        {
+          "id": "linux-bash-variables-and-loops",
+          "slug": "bash-variables-and-loops",
+          "title": "Variables, if and loops in Bash"
+        },
+        {
+          "id": "linux-functions-and-exit-codes",
+          "slug": "functions-and-exit-codes",
+          "title": "Functions and exit codes"
+        },
+        {
+          "id": "linux-cron",
+          "slug": "cron",
+          "title": "cron jobs"
+        },
+        {
+          "id": "linux-interview-revision",
+          "slug": "interview-revision",
+          "title": "Linux interview revision"
+        }
+      ]
+    }
+  ]
 }

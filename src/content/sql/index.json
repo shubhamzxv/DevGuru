@@ -4,5 +4,351 @@
   "tagline": "SELECT, JOINs, window functions",
   "order": 2,
   "playground": "sql",
-  "modules": []
+  "modules": [
+    {
+      "title": "Database basics",
+      "topics": [
+        {
+          "id": "sql-what-is-a-database",
+          "slug": "what-is-a-database",
+          "title": "What is a database?"
+        },
+        {
+          "id": "sql-tables-rows-columns",
+          "slug": "tables-rows-columns",
+          "title": "Tables, rows and columns"
+        },
+        {
+          "id": "sql-data-types",
+          "slug": "data-types",
+          "title": "Data types"
+        },
+        {
+          "id": "sql-sql-vs-nosql",
+          "slug": "sql-vs-nosql",
+          "title": "SQL vs NoSQL"
+        },
+        {
+          "id": "sql-sqlite-mysql-postgresql",
+          "slug": "sqlite-mysql-postgresql",
+          "title": "SQLite vs MySQL vs PostgreSQL"
+        }
+      ]
+    },
+    {
+      "title": "Reading data",
+      "topics": [
+        {
+          "id": "sql-select",
+          "slug": "select",
+          "title": "SELECT"
+        },
+        {
+          "id": "sql-where",
+          "slug": "where",
+          "title": "WHERE"
+        },
+        {
+          "id": "sql-operators",
+          "slug": "operators",
+          "title": "AND, OR, NOT, IN, BETWEEN, LIKE"
+        },
+        {
+          "id": "sql-null-values",
+          "slug": "null-values",
+          "title": "NULL values"
+        },
+        {
+          "id": "sql-order-by",
+          "slug": "order-by",
+          "title": "ORDER BY"
+        },
+        {
+          "id": "sql-limit-offset",
+          "slug": "limit-offset",
+          "title": "LIMIT and OFFSET"
+        },
+        {
+          "id": "sql-distinct",
+          "slug": "distinct",
+          "title": "DISTINCT"
+        },
+        {
+          "id": "sql-case-expressions",
+          "slug": "case-expressions",
+          "title": "CASE expressions"
+        }
+      ]
+    },
+    {
+      "title": "Functions",
+      "topics": [
+        {
+          "id": "sql-string-functions",
+          "slug": "string-functions",
+          "title": "String functions"
+        },
+        {
+          "id": "sql-number-and-date-functions",
+          "slug": "number-and-date-functions",
+          "title": "Number and date functions"
+        },
+        {
+          "id": "sql-aggregate-functions",
+          "slug": "aggregate-functions",
+          "title": "Aggregate functions (COUNT, SUM, AVG, MIN, MAX)"
+        }
+      ]
+    },
+    {
+      "title": "Grouping",
+      "topics": [
+        {
+          "id": "sql-group-by",
+          "slug": "group-by",
+          "title": "GROUP BY"
+        },
+        {
+          "id": "sql-having",
+          "slug": "having",
+          "title": "HAVING"
+        },
+        {
+          "id": "sql-where-vs-having",
+          "slug": "where-vs-having",
+          "title": "WHERE vs HAVING"
+        }
+      ]
+    },
+    {
+      "title": "Joins",
+      "topics": [
+        {
+          "id": "sql-joins-overview",
+          "slug": "joins-overview",
+          "title": "How JOINs work"
+        },
+        {
+          "id": "sql-inner-join",
+          "slug": "inner-join",
+          "title": "INNER JOIN"
+        },
+        {
+          "id": "sql-left-join",
+          "slug": "left-join",
+          "title": "LEFT JOIN"
+        },
+        {
+          "id": "sql-right-and-full-join",
+          "slug": "right-and-full-join",
+          "title": "RIGHT and FULL JOIN"
+        },
+        {
+          "id": "sql-self-join",
+          "slug": "self-join",
+          "title": "SELF JOIN"
+        },
+        {
+          "id": "sql-cross-join",
+          "slug": "cross-join",
+          "title": "CROSS JOIN"
+        },
+        {
+          "id": "sql-union",
+          "slug": "union",
+          "title": "UNION and UNION ALL"
+        }
+      ]
+    },
+    {
+      "title": "Advanced queries",
+      "topics": [
+        {
+          "id": "sql-subqueries",
+          "slug": "subqueries",
+          "title": "Subqueries"
+        },
+        {
+          "id": "sql-correlated-subqueries",
+          "slug": "correlated-subqueries",
+          "title": "Correlated subqueries"
+        },
+        {
+          "id": "sql-exists-vs-in",
+          "slug": "exists-vs-in",
+          "title": "EXISTS vs IN"
+        },
+        {
+          "id": "sql-ctes",
+          "slug": "ctes",
+          "title": "CTEs (WITH)"
+        },
+        {
+          "id": "sql-recursive-ctes",
+          "slug": "recursive-ctes",
+          "title": "Recursive CTEs"
+        },
+        {
+          "id": "sql-window-functions",
+          "slug": "window-functions",
+          "title": "Window functions"
+        },
+        {
+          "id": "sql-ranking-functions",
+          "slug": "ranking-functions",
+          "title": "ROW_NUMBER, RANK and DENSE_RANK"
+        },
+        {
+          "id": "sql-lag-lead",
+          "slug": "lag-lead",
+          "title": "LAG, LEAD and running totals"
+        }
+      ]
+    },
+    {
+      "title": "Changing data",
+      "topics": [
+        {
+          "id": "sql-insert",
+          "slug": "insert",
+          "title": "INSERT"
+        },
+        {
+          "id": "sql-update",
+          "slug": "update",
+          "title": "UPDATE"
+        },
+        {
+          "id": "sql-delete",
+          "slug": "delete",
+          "title": "DELETE"
+        },
+        {
+          "id": "sql-delete-truncate-drop",
+          "slug": "delete-truncate-drop",
+          "title": "DELETE vs TRUNCATE vs DROP"
+        },
+        {
+          "id": "sql-create-alter-table",
+          "slug": "create-alter-table",
+          "title": "CREATE and ALTER TABLE"
+        }
+      ]
+    },
+    {
+      "title": "Database design",
+      "topics": [
+        {
+          "id": "sql-constraints",
+          "slug": "constraints",
+          "title": "Constraints"
+        },
+        {
+          "id": "sql-keys",
+          "slug": "keys",
+          "title": "Primary and foreign keys"
+        },
+        {
+          "id": "sql-relationships",
+          "slug": "relationships",
+          "title": "Relationships (one-to-one, one-to-many, many-to-many)"
+        },
+        {
+          "id": "sql-normalization",
+          "slug": "normalization",
+          "title": "Normalization"
+        }
+      ]
+    },
+    {
+      "title": "Performance",
+      "topics": [
+        {
+          "id": "sql-indexes",
+          "slug": "indexes",
+          "title": "Indexes"
+        },
+        {
+          "id": "sql-indexing-in-mysql",
+          "slug": "indexing-in-mysql",
+          "title": "Indexing in MySQL"
+        },
+        {
+          "id": "sql-explain",
+          "slug": "explain",
+          "title": "Reading a query plan (EXPLAIN)"
+        },
+        {
+          "id": "sql-explain-vs-explain-analyze",
+          "slug": "explain-vs-explain-analyze",
+          "title": "EXPLAIN vs EXPLAIN ANALYZE"
+        },
+        {
+          "id": "sql-query-profiling",
+          "slug": "query-profiling",
+          "title": "Query profiling"
+        },
+        {
+          "id": "sql-query-optimization",
+          "slug": "query-optimization",
+          "title": "Query optimization"
+        }
+      ]
+    },
+    {
+      "title": "Transactions and more",
+      "topics": [
+        {
+          "id": "sql-transactions-acid",
+          "slug": "transactions-acid",
+          "title": "Transactions and ACID"
+        },
+        {
+          "id": "sql-isolation-levels",
+          "slug": "isolation-levels",
+          "title": "Isolation levels and locks"
+        },
+        {
+          "id": "sql-views",
+          "slug": "views",
+          "title": "Views"
+        },
+        {
+          "id": "sql-stored-procedures-triggers",
+          "slug": "stored-procedures-triggers",
+          "title": "Stored procedures and triggers (overview)"
+        }
+      ]
+    },
+    {
+      "title": "Interview queries",
+      "topics": [
+        {
+          "id": "sql-nth-highest-salary",
+          "slug": "nth-highest-salary",
+          "title": "2nd and Nth highest salary"
+        },
+        {
+          "id": "sql-find-duplicates",
+          "slug": "find-duplicates",
+          "title": "Find and delete duplicates"
+        },
+        {
+          "id": "sql-top-n-per-group",
+          "slug": "top-n-per-group",
+          "title": "Top N per group"
+        },
+        {
+          "id": "sql-employee-manager",
+          "slug": "employee-manager",
+          "title": "Employees earning more than their manager"
+        },
+        {
+          "id": "sql-interview-revision",
+          "slug": "interview-revision",
+          "title": "SQL interview revision"
+        }
+      ]
+    }
+  ]
 }

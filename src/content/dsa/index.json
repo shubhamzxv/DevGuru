@@ -4,5 +4,176 @@
   "tagline": "Big-O, patterns, interview prep",
   "order": 10,
   "playground": "python",
-  "modules": []
+  "modules": [
+    {
+      "title": "Foundations",
+      "topics": [
+        {
+          "id": "dsa-big-o",
+          "slug": "big-o",
+          "title": "Big-O notation"
+        },
+        {
+          "id": "dsa-time-vs-space",
+          "slug": "time-vs-space",
+          "title": "Time vs space complexity"
+        }
+      ]
+    },
+    {
+      "title": "Arrays, strings and hashing",
+      "topics": [
+        {
+          "id": "dsa-arrays-and-lists",
+          "slug": "arrays-and-lists",
+          "title": "Arrays and lists"
+        },
+        {
+          "id": "dsa-strings",
+          "slug": "strings",
+          "title": "Strings"
+        },
+        {
+          "id": "dsa-hashing",
+          "slug": "hashing",
+          "title": "Hashing (dict and set)"
+        },
+        {
+          "id": "dsa-two-pointers",
+          "slug": "two-pointers",
+          "title": "Two pointers"
+        },
+        {
+          "id": "dsa-sliding-window",
+          "slug": "sliding-window",
+          "title": "Sliding window"
+        },
+        {
+          "id": "dsa-prefix-sum",
+          "slug": "prefix-sum",
+          "title": "Prefix sum"
+        }
+      ]
+    },
+    {
+      "title": "Stacks, queues and linked lists",
+      "topics": [
+        {
+          "id": "dsa-stacks",
+          "slug": "stacks",
+          "title": "Stacks"
+        },
+        {
+          "id": "dsa-queues",
+          "slug": "queues",
+          "title": "Queues and deque"
+        },
+        {
+          "id": "dsa-linked-lists",
+          "slug": "linked-lists",
+          "title": "Linked lists"
+        }
+      ]
+    },
+    {
+      "title": "Recursion, sorting and searching",
+      "topics": [
+        {
+          "id": "dsa-recursion",
+          "slug": "recursion",
+          "title": "Recursion"
+        },
+        {
+          "id": "dsa-backtracking",
+          "slug": "backtracking",
+          "title": "Backtracking basics"
+        },
+        {
+          "id": "dsa-basic-sorts",
+          "slug": "basic-sorts",
+          "title": "Bubble, selection and insertion sort"
+        },
+        {
+          "id": "dsa-merge-sort",
+          "slug": "merge-sort",
+          "title": "Merge sort"
+        },
+        {
+          "id": "dsa-quick-sort",
+          "slug": "quick-sort",
+          "title": "Quick sort"
+        },
+        {
+          "id": "dsa-binary-search",
+          "slug": "binary-search",
+          "title": "Binary search"
+        }
+      ]
+    },
+    {
+      "title": "Trees and graphs",
+      "topics": [
+        {
+          "id": "dsa-binary-trees",
+          "slug": "binary-trees",
+          "title": "Binary trees"
+        },
+        {
+          "id": "dsa-tree-traversals",
+          "slug": "tree-traversals",
+          "title": "Tree traversals"
+        },
+        {
+          "id": "dsa-binary-search-trees",
+          "slug": "binary-search-trees",
+          "title": "Binary search trees"
+        },
+        {
+          "id": "dsa-heaps",
+          "slug": "heaps",
+          "title": "Heaps and priority queues"
+        },
+        {
+          "id": "dsa-graphs",
+          "slug": "graphs",
+          "title": "Graphs"
+        },
+        {
+          "id": "dsa-bfs",
+          "slug": "bfs",
+          "title": "Breadth-first search (BFS)"
+        },
+        {
+          "id": "dsa-dfs",
+          "slug": "dfs",
+          "title": "Depth-first search (DFS)"
+        }
+      ]
+    },
+    {
+      "title": "Problem-solving patterns",
+      "topics": [
+        {
+          "id": "dsa-dynamic-programming",
+          "slug": "dynamic-programming",
+          "title": "Dynamic programming basics"
+        },
+        {
+          "id": "dsa-greedy",
+          "slug": "greedy",
+          "title": "Greedy basics"
+        },
+        {
+          "id": "dsa-common-patterns",
+          "slug": "common-patterns",
+          "title": "Common interview patterns"
+        },
+        {
+          "id": "dsa-interview-revision",
+          "slug": "interview-revision",
+          "title": "Top interview problems"
+        }
+      ]
+    }
+  ]
 }

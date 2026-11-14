@@ -4,5 +4,156 @@
   "tagline": "Fast APIs with Pydantic",
   "order": 4,
   "playground": "none",
-  "modules": []
+  "modules": [
+    {
+      "title": "Basics",
+      "topics": [
+        {
+          "id": "fastapi-what-is-fastapi",
+          "slug": "what-is-fastapi",
+          "title": "What is FastAPI?"
+        },
+        {
+          "id": "fastapi-first-app",
+          "slug": "first-app",
+          "title": "First app and Uvicorn"
+        },
+        {
+          "id": "fastapi-path-parameters",
+          "slug": "path-parameters",
+          "title": "Path parameters"
+        },
+        {
+          "id": "fastapi-query-parameters",
+          "slug": "query-parameters",
+          "title": "Query parameters"
+        },
+        {
+          "id": "fastapi-request-body",
+          "slug": "request-body",
+          "title": "Request body"
+        }
+      ]
+    },
+    {
+      "title": "Pydantic and responses",
+      "topics": [
+        {
+          "id": "fastapi-pydantic-models",
+          "slug": "pydantic-models",
+          "title": "Pydantic models"
+        },
+        {
+          "id": "fastapi-validation",
+          "slug": "validation",
+          "title": "Validation"
+        },
+        {
+          "id": "fastapi-response-models",
+          "slug": "response-models",
+          "title": "Response models"
+        },
+        {
+          "id": "fastapi-status-codes-and-errors",
+          "slug": "status-codes-and-errors",
+          "title": "Status codes and HTTPException"
+        }
+      ]
+    },
+    {
+      "title": "Dependency injection",
+      "topics": [
+        {
+          "id": "fastapi-dependency-injection",
+          "slug": "dependency-injection",
+          "title": "Dependency injection (Depends)"
+        },
+        {
+          "id": "fastapi-dependencies-advanced",
+          "slug": "dependencies-advanced",
+          "title": "Sub-dependencies, yield and database sessions"
+        }
+      ]
+    },
+    {
+      "title": "Async and background work",
+      "topics": [
+        {
+          "id": "fastapi-async-routes",
+          "slug": "async-routes",
+          "title": "async def vs def routes"
+        },
+        {
+          "id": "fastapi-background-tasks",
+          "slug": "background-tasks",
+          "title": "Background tasks"
+        },
+        {
+          "id": "fastapi-middleware-and-cors",
+          "slug": "middleware-and-cors",
+          "title": "Middleware and CORS"
+        }
+      ]
+    },
+    {
+      "title": "Structure and data",
+      "topics": [
+        {
+          "id": "fastapi-routers",
+          "slug": "routers",
+          "title": "APIRouter and project structure"
+        },
+        {
+          "id": "fastapi-database-sqlalchemy",
+          "slug": "database-sqlalchemy",
+          "title": "Database with SQLAlchemy"
+        }
+      ]
+    },
+    {
+      "title": "Security",
+      "topics": [
+        {
+          "id": "fastapi-auth-basics",
+          "slug": "auth-basics",
+          "title": "Authentication basics (OAuth2 password flow)"
+        },
+        {
+          "id": "fastapi-jwt",
+          "slug": "jwt",
+          "title": "JWT tokens"
+        }
+      ]
+    },
+    {
+      "title": "Docs, testing and deployment",
+      "topics": [
+        {
+          "id": "fastapi-openapi-docs",
+          "slug": "openapi-docs",
+          "title": "OpenAPI docs (Swagger UI)"
+        },
+        {
+          "id": "fastapi-testing",
+          "slug": "testing",
+          "title": "Testing with TestClient"
+        },
+        {
+          "id": "fastapi-deployment",
+          "slug": "deployment",
+          "title": "Deployment basics"
+        },
+        {
+          "id": "fastapi-fastapi-vs-django",
+          "slug": "fastapi-vs-django",
+          "title": "FastAPI vs Django"
+        },
+        {
+          "id": "fastapi-interview-revision",
+          "slug": "interview-revision",
+          "title": "FastAPI interview revision"
+        }
+      ]
+    }
+  ]
 }

@@ -4,5 +4,171 @@
   "tagline": "Requests, status codes, auth",
   "order": 5,
   "playground": "http",
-  "modules": []
+  "modules": [
+    {
+      "title": "How the web works",
+      "topics": [
+        {
+          "id": "rest-client-server",
+          "slug": "client-server",
+          "title": "Client and server"
+        },
+        {
+          "id": "rest-request-response",
+          "slug": "request-response",
+          "title": "HTTP request and response"
+        },
+        {
+          "id": "rest-urls-and-endpoints",
+          "slug": "urls-and-endpoints",
+          "title": "URLs, endpoints and resources"
+        },
+        {
+          "id": "rest-http-vs-https",
+          "slug": "http-vs-https",
+          "title": "HTTP vs HTTPS"
+        }
+      ]
+    },
+    {
+      "title": "HTTP details",
+      "topics": [
+        {
+          "id": "rest-http-methods",
+          "slug": "http-methods",
+          "title": "HTTP methods"
+        },
+        {
+          "id": "rest-status-codes",
+          "slug": "status-codes",
+          "title": "Status codes"
+        },
+        {
+          "id": "rest-headers",
+          "slug": "headers",
+          "title": "Headers"
+        },
+        {
+          "id": "rest-json",
+          "slug": "json",
+          "title": "JSON"
+        },
+        {
+          "id": "rest-query-params-and-body",
+          "slug": "query-params-and-body",
+          "title": "Query params vs request body"
+        }
+      ]
+    },
+    {
+      "title": "REST API design",
+      "topics": [
+        {
+          "id": "rest-rest-principles",
+          "slug": "rest-principles",
+          "title": "REST principles"
+        },
+        {
+          "id": "rest-resource-naming",
+          "slug": "resource-naming",
+          "title": "Naming resources"
+        },
+        {
+          "id": "rest-idempotency",
+          "slug": "idempotency",
+          "title": "Idempotency and safe methods"
+        },
+        {
+          "id": "rest-put-vs-patch",
+          "slug": "put-vs-patch",
+          "title": "PUT vs PATCH"
+        },
+        {
+          "id": "rest-pagination",
+          "slug": "pagination",
+          "title": "Pagination"
+        },
+        {
+          "id": "rest-filtering-and-sorting",
+          "slug": "filtering-and-sorting",
+          "title": "Filtering and sorting"
+        },
+        {
+          "id": "rest-versioning",
+          "slug": "versioning",
+          "title": "Versioning"
+        },
+        {
+          "id": "rest-error-responses",
+          "slug": "error-responses",
+          "title": "Error responses"
+        }
+      ]
+    },
+    {
+      "title": "Security",
+      "topics": [
+        {
+          "id": "rest-api-keys",
+          "slug": "api-keys",
+          "title": "API keys"
+        },
+        {
+          "id": "rest-sessions-vs-tokens",
+          "slug": "sessions-vs-tokens",
+          "title": "Sessions vs tokens"
+        },
+        {
+          "id": "rest-jwt",
+          "slug": "jwt",
+          "title": "JWT"
+        },
+        {
+          "id": "rest-oauth",
+          "slug": "oauth",
+          "title": "OAuth 2.0 basics"
+        },
+        {
+          "id": "rest-cors",
+          "slug": "cors",
+          "title": "CORS"
+        },
+        {
+          "id": "rest-rate-limiting",
+          "slug": "rate-limiting",
+          "title": "Rate limiting"
+        }
+      ]
+    },
+    {
+      "title": "Beyond the basics",
+      "topics": [
+        {
+          "id": "rest-http-caching",
+          "slug": "http-caching",
+          "title": "HTTP caching (ETag, Cache-Control)"
+        },
+        {
+          "id": "rest-webhooks",
+          "slug": "webhooks",
+          "title": "Webhooks"
+        },
+        {
+          "id": "rest-rest-vs-graphql-vs-grpc",
+          "slug": "rest-vs-graphql-vs-grpc",
+          "title": "REST vs GraphQL vs gRPC"
+        },
+        {
+          "id": "rest-testing-apis",
+          "slug": "testing-apis",
+          "title": "Testing APIs (curl, Postman)"
+        },
+        {
+          "id": "rest-interview-revision",
+          "slug": "interview-revision",
+          "title": "REST and HTTP interview revision"
+        }
+      ]
+    }
+  ]
 }

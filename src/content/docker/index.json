@@ -4,5 +4,131 @@
   "tagline": "Images, containers, compose",
   "order": 8,
   "playground": "terminal",
-  "modules": []
+  "modules": [
+    {
+      "title": "Basics",
+      "topics": [
+        {
+          "id": "docker-what-is-docker",
+          "slug": "what-is-docker",
+          "title": "What is Docker?"
+        },
+        {
+          "id": "docker-containers-vs-vms",
+          "slug": "containers-vs-vms",
+          "title": "Containers vs virtual machines"
+        },
+        {
+          "id": "docker-first-container",
+          "slug": "first-container",
+          "title": "Your first container (docker run)"
+        },
+        {
+          "id": "docker-images-and-containers",
+          "slug": "images-and-containers",
+          "title": "Images and containers"
+        }
+      ]
+    },
+    {
+      "title": "Building images",
+      "topics": [
+        {
+          "id": "docker-dockerfile",
+          "slug": "dockerfile",
+          "title": "Dockerfile"
+        },
+        {
+          "id": "docker-layers-and-caching",
+          "slug": "layers-and-caching",
+          "title": "Layers and build cache"
+        },
+        {
+          "id": "docker-cmd-vs-entrypoint",
+          "slug": "cmd-vs-entrypoint",
+          "title": "CMD vs ENTRYPOINT"
+        },
+        {
+          "id": "docker-multi-stage-builds",
+          "slug": "multi-stage-builds",
+          "title": "Multi-stage builds"
+        },
+        {
+          "id": "docker-registries",
+          "slug": "registries",
+          "title": "Docker Hub and registries"
+        }
+      ]
+    },
+    {
+      "title": "Running containers",
+      "topics": [
+        {
+          "id": "docker-container-commands",
+          "slug": "container-commands",
+          "title": "Container commands (ps, stop, rm, logs, exec)"
+        },
+        {
+          "id": "docker-ports",
+          "slug": "ports",
+          "title": "Ports"
+        },
+        {
+          "id": "docker-volumes",
+          "slug": "volumes",
+          "title": "Volumes"
+        },
+        {
+          "id": "docker-networks",
+          "slug": "networks",
+          "title": "Networks"
+        },
+        {
+          "id": "docker-environment-variables",
+          "slug": "environment-variables",
+          "title": "Environment variables"
+        }
+      ]
+    },
+    {
+      "title": "Docker Compose",
+      "topics": [
+        {
+          "id": "docker-docker-compose",
+          "slug": "docker-compose",
+          "title": "docker-compose"
+        },
+        {
+          "id": "docker-compose-example",
+          "slug": "compose-example",
+          "title": "Compose example: Django + PostgreSQL + Redis"
+        }
+      ]
+    },
+    {
+      "title": "Production",
+      "topics": [
+        {
+          "id": "docker-best-practices",
+          "slug": "best-practices",
+          "title": "Best practices"
+        },
+        {
+          "id": "docker-smaller-safer-images",
+          "slug": "smaller-safer-images",
+          "title": "Smaller, safer images"
+        },
+        {
+          "id": "docker-docker-vs-kubernetes",
+          "slug": "docker-vs-kubernetes",
+          "title": "Docker vs Kubernetes (overview)"
+        },
+        {
+          "id": "docker-interview-revision",
+          "slug": "interview-revision",
+          "title": "Docker interview revision"
+        }
+      ]
+    }
+  ]
 }

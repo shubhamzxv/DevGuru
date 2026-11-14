@@ -1,0 +1,144 @@
+{
+  "name": "System Design Basics",
+  "icon": "🏗️",
+  "tagline": "Microservices, caching, queues, scaling",
+  "order": 11,
+  "playground": "diagram",
+  "modules": [
+    {
+      "title": "Foundations",
+      "topics": [
+        {
+          "id": "system-design-what-is-system-design",
+          "slug": "what-is-system-design",
+          "title": "What is system design?"
+        },
+        {
+          "id": "system-design-scalability",
+          "slug": "scalability",
+          "title": "Scalability (vertical vs horizontal)"
+        },
+        {
+          "id": "system-design-latency-throughput-availability",
+          "slug": "latency-throughput-availability",
+          "title": "Latency, throughput and availability"
+        },
+        {
+          "id": "system-design-load-balancing",
+          "slug": "load-balancing",
+          "title": "Load balancing"
+        }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "topics": [
+        {
+          "id": "system-design-monolith-vs-microservices",
+          "slug": "monolith-vs-microservices",
+          "title": "Monolith vs microservices"
+        },
+        {
+          "id": "system-design-service-communication",
+          "slug": "service-communication",
+          "title": "How microservices communicate (REST, gRPC, queues)"
+        },
+        {
+          "id": "system-design-api-gateway",
+          "slug": "api-gateway",
+          "title": "API gateway"
+        },
+        {
+          "id": "system-design-message-queues",
+          "slug": "message-queues",
+          "title": "Message queues (Kafka, RabbitMQ, SQS)"
+        },
+        {
+          "id": "system-design-event-driven-architecture",
+          "slug": "event-driven-architecture",
+          "title": "Event-driven architecture"
+        }
+      ]
+    },
+    {
+      "title": "Data and caching",
+      "topics": [
+        {
+          "id": "system-design-choosing-a-database",
+          "slug": "choosing-a-database",
+          "title": "Choosing a database (SQL vs NoSQL)"
+        },
+        {
+          "id": "system-design-caching",
+          "slug": "caching",
+          "title": "Caching basics"
+        },
+        {
+          "id": "system-design-redis",
+          "slug": "redis",
+          "title": "Redis cache"
+        },
+        {
+          "id": "system-design-cache-strategies",
+          "slug": "cache-strategies",
+          "title": "Cache strategies and invalidation"
+        },
+        {
+          "id": "system-design-replication-and-sharding",
+          "slug": "replication-and-sharding",
+          "title": "Replication and sharding"
+        },
+        {
+          "id": "system-design-cap-theorem",
+          "slug": "cap-theorem",
+          "title": "CAP theorem"
+        }
+      ]
+    },
+    {
+      "title": "Reliability",
+      "topics": [
+        {
+          "id": "system-design-rate-limiting",
+          "slug": "rate-limiting",
+          "title": "Rate limiting"
+        },
+        {
+          "id": "system-design-retries-and-circuit-breakers",
+          "slug": "retries-and-circuit-breakers",
+          "title": "Retries, timeouts and circuit breakers"
+        },
+        {
+          "id": "system-design-observability",
+          "slug": "observability",
+          "title": "Logging, monitoring and tracing"
+        }
+      ]
+    },
+    {
+      "title": "Interview practice",
+      "topics": [
+        {
+          "id": "system-design-explaining-your-projects",
+          "slug": "explaining-your-projects",
+          "title": "How to explain your own microservices"
+        },
+        {
+          "id": "system-design-design-url-shortener",
+          "slug": "design-url-shortener",
+          "title": "Design a URL shortener"
+        },
+        {
+          "id": "system-design-design-notification-system",
+          "slug": "design-notification-system",
+          "title": "Design a notification system"
+        },
+        {
+          "id": "system-design-interview-revision",
+          "slug": "interview-revision",
+          "title": "System design interview revision"
+        }
+      ]
+    }
+  ]
+}

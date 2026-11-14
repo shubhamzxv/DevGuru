@@ -4,5 +4,386 @@
   "tagline": "From variables to async/await",
   "order": 1,
   "playground": "python",
-  "modules": []
+  "modules": [
+    {
+      "title": "Getting started",
+      "topics": [
+        {
+          "id": "python-what-is-python",
+          "slug": "what-is-python",
+          "title": "What is Python?"
+        },
+        {
+          "id": "python-syntax-and-indentation",
+          "slug": "syntax-and-indentation",
+          "title": "Syntax and indentation"
+        },
+        {
+          "id": "python-variables",
+          "slug": "variables",
+          "title": "Variables"
+        },
+        {
+          "id": "python-data-types",
+          "slug": "data-types",
+          "title": "Data types"
+        },
+        {
+          "id": "python-numbers-and-operators",
+          "slug": "numbers-and-operators",
+          "title": "Numbers and operators"
+        },
+        {
+          "id": "python-input-and-output",
+          "slug": "input-and-output",
+          "title": "Input and output (print, input)"
+        },
+        {
+          "id": "python-type-conversion",
+          "slug": "type-conversion",
+          "title": "Type conversion"
+        }
+      ]
+    },
+    {
+      "title": "Strings",
+      "topics": [
+        {
+          "id": "python-strings",
+          "slug": "strings",
+          "title": "Strings"
+        },
+        {
+          "id": "python-string-methods",
+          "slug": "string-methods",
+          "title": "String methods"
+        },
+        {
+          "id": "python-string-formatting",
+          "slug": "string-formatting",
+          "title": "String formatting (f-strings)"
+        }
+      ]
+    },
+    {
+      "title": "Collections",
+      "topics": [
+        {
+          "id": "python-lists",
+          "slug": "lists",
+          "title": "Lists"
+        },
+        {
+          "id": "python-list-methods-and-slicing",
+          "slug": "list-methods-and-slicing",
+          "title": "List methods and slicing"
+        },
+        {
+          "id": "python-tuples",
+          "slug": "tuples",
+          "title": "Tuples"
+        },
+        {
+          "id": "python-list-vs-tuple",
+          "slug": "list-vs-tuple",
+          "title": "List vs tuple"
+        },
+        {
+          "id": "python-sets",
+          "slug": "sets",
+          "title": "Sets"
+        },
+        {
+          "id": "python-dictionaries",
+          "slug": "dictionaries",
+          "title": "Dictionaries"
+        },
+        {
+          "id": "python-comprehensions",
+          "slug": "comprehensions",
+          "title": "Comprehensions"
+        }
+      ]
+    },
+    {
+      "title": "Control flow",
+      "topics": [
+        {
+          "id": "python-conditions",
+          "slug": "conditions",
+          "title": "Conditions (if, elif, else)"
+        },
+        {
+          "id": "python-for-loops",
+          "slug": "for-loops",
+          "title": "for loops"
+        },
+        {
+          "id": "python-while-loops",
+          "slug": "while-loops",
+          "title": "while loops"
+        },
+        {
+          "id": "python-break-continue-pass",
+          "slug": "break-continue-pass",
+          "title": "break, continue and pass"
+        },
+        {
+          "id": "python-match-case",
+          "slug": "match-case",
+          "title": "match-case"
+        }
+      ]
+    },
+    {
+      "title": "Functions",
+      "topics": [
+        {
+          "id": "python-functions",
+          "slug": "functions",
+          "title": "Functions"
+        },
+        {
+          "id": "python-arguments-and-defaults",
+          "slug": "arguments-and-defaults",
+          "title": "Arguments and default values"
+        },
+        {
+          "id": "python-args-and-kwargs",
+          "slug": "args-and-kwargs",
+          "title": "*args and **kwargs"
+        },
+        {
+          "id": "python-lambda-functions",
+          "slug": "lambda-functions",
+          "title": "Lambda functions"
+        },
+        {
+          "id": "python-scope-and-closures",
+          "slug": "scope-and-closures",
+          "title": "Scope and closures (LEGB)"
+        },
+        {
+          "id": "python-map-filter-reduce",
+          "slug": "map-filter-reduce",
+          "title": "map, filter and reduce"
+        }
+      ]
+    },
+    {
+      "title": "Modules and files",
+      "topics": [
+        {
+          "id": "python-modules-and-imports",
+          "slug": "modules-and-imports",
+          "title": "Modules and imports"
+        },
+        {
+          "id": "python-packages-and-pip",
+          "slug": "packages-and-pip",
+          "title": "Packages, pip and virtual environments"
+        },
+        {
+          "id": "python-file-handling",
+          "slug": "file-handling",
+          "title": "File handling"
+        },
+        {
+          "id": "python-json-and-csv",
+          "slug": "json-and-csv",
+          "title": "Working with JSON and CSV"
+        },
+        {
+          "id": "python-python-and-sqlite",
+          "slug": "python-and-sqlite",
+          "title": "Python + SQL (sqlite3)"
+        }
+      ]
+    },
+    {
+      "title": "Errors",
+      "topics": [
+        {
+          "id": "python-exceptions",
+          "slug": "exceptions",
+          "title": "Exceptions (try, except, finally)"
+        },
+        {
+          "id": "python-custom-exceptions",
+          "slug": "custom-exceptions",
+          "title": "Raising and custom exceptions"
+        }
+      ]
+    },
+    {
+      "title": "Object-oriented programming",
+      "topics": [
+        {
+          "id": "python-classes-and-objects",
+          "slug": "classes-and-objects",
+          "title": "Classes and objects"
+        },
+        {
+          "id": "python-init-and-self",
+          "slug": "init-and-self",
+          "title": "__init__ and self"
+        },
+        {
+          "id": "python-instance-class-static-methods",
+          "slug": "instance-class-static-methods",
+          "title": "Instance, class and static methods"
+        },
+        {
+          "id": "python-inheritance",
+          "slug": "inheritance",
+          "title": "Inheritance"
+        },
+        {
+          "id": "python-polymorphism",
+          "slug": "polymorphism",
+          "title": "Polymorphism"
+        },
+        {
+          "id": "python-encapsulation-and-properties",
+          "slug": "encapsulation-and-properties",
+          "title": "Encapsulation and @property"
+        },
+        {
+          "id": "python-dunder-methods",
+          "slug": "dunder-methods",
+          "title": "Dunder (magic) methods"
+        },
+        {
+          "id": "python-abstract-classes",
+          "slug": "abstract-classes",
+          "title": "Abstract classes (ABC)"
+        }
+      ]
+    },
+    {
+      "title": "Advanced Python",
+      "topics": [
+        {
+          "id": "python-iterators",
+          "slug": "iterators",
+          "title": "Iterators"
+        },
+        {
+          "id": "python-generators",
+          "slug": "generators",
+          "title": "Generators"
+        },
+        {
+          "id": "python-decorators",
+          "slug": "decorators",
+          "title": "Decorators"
+        },
+        {
+          "id": "python-decorator-vs-generator",
+          "slug": "decorator-vs-generator",
+          "title": "Decorator vs generator"
+        },
+        {
+          "id": "python-context-managers",
+          "slug": "context-managers",
+          "title": "Context managers (with)"
+        },
+        {
+          "id": "python-typing",
+          "slug": "typing",
+          "title": "Type hints (typing)"
+        },
+        {
+          "id": "python-dataclasses",
+          "slug": "dataclasses",
+          "title": "Dataclasses"
+        }
+      ]
+    },
+    {
+      "title": "Memory and internals",
+      "topics": [
+        {
+          "id": "python-mutability",
+          "slug": "mutability",
+          "title": "Mutable vs immutable"
+        },
+        {
+          "id": "python-equality-vs-identity",
+          "slug": "equality-vs-identity",
+          "title": "== vs is"
+        },
+        {
+          "id": "python-shallow-vs-deep-copy",
+          "slug": "shallow-vs-deep-copy",
+          "title": "Shallow copy vs deep copy"
+        },
+        {
+          "id": "python-memory-management",
+          "slug": "memory-management",
+          "title": "Memory management (reference counting, garbage collection)"
+        },
+        {
+          "id": "python-gil",
+          "slug": "gil",
+          "title": "The GIL"
+        }
+      ]
+    },
+    {
+      "title": "Concurrency",
+      "topics": [
+        {
+          "id": "python-multithreading",
+          "slug": "multithreading",
+          "title": "Multithreading"
+        },
+        {
+          "id": "python-multiprocessing",
+          "slug": "multiprocessing",
+          "title": "Multiprocessing"
+        },
+        {
+          "id": "python-multithreading-vs-multiprocessing",
+          "slug": "multithreading-vs-multiprocessing",
+          "title": "Multithreading vs multiprocessing"
+        },
+        {
+          "id": "python-async-await",
+          "slug": "async-await",
+          "title": "async / await"
+        },
+        {
+          "id": "python-asyncio",
+          "slug": "asyncio",
+          "title": "asyncio in practice"
+        }
+      ]
+    },
+    {
+      "title": "Best practices",
+      "topics": [
+        {
+          "id": "python-pep8-and-clean-code",
+          "slug": "pep8-and-clean-code",
+          "title": "PEP 8 and clean code"
+        },
+        {
+          "id": "python-logging",
+          "slug": "logging",
+          "title": "Logging"
+        },
+        {
+          "id": "python-testing-with-pytest",
+          "slug": "testing-with-pytest",
+          "title": "Testing with pytest"
+        },
+        {
+          "id": "python-interview-revision",
+          "slug": "interview-revision",
+          "title": "Python interview revision"
+        }
+      ]
+    }
+  ]
 }

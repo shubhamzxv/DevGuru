@@ -4,5 +4,201 @@
   "tagline": "IAM, EC2, S3, Lambda and more",
   "order": 6,
   "playground": "diagram",
-  "modules": []
+  "modules": [
+    {
+      "title": "Cloud basics",
+      "topics": [
+        {
+          "id": "aws-what-is-cloud",
+          "slug": "what-is-cloud",
+          "title": "What is cloud computing?"
+        },
+        {
+          "id": "aws-regions-and-azs",
+          "slug": "regions-and-azs",
+          "title": "Regions and Availability Zones"
+        },
+        {
+          "id": "aws-shared-responsibility",
+          "slug": "shared-responsibility",
+          "title": "Shared responsibility model"
+        },
+        {
+          "id": "aws-pricing-basics",
+          "slug": "pricing-basics",
+          "title": "Pricing basics and the free tier"
+        }
+      ]
+    },
+    {
+      "title": "Security and access",
+      "topics": [
+        {
+          "id": "aws-iam-users-and-policies",
+          "slug": "iam-users-and-policies",
+          "title": "IAM users, groups and policies"
+        },
+        {
+          "id": "aws-iam-roles",
+          "slug": "iam-roles",
+          "title": "IAM roles"
+        }
+      ]
+    },
+    {
+      "title": "Compute",
+      "topics": [
+        {
+          "id": "aws-ec2",
+          "slug": "ec2",
+          "title": "EC2"
+        },
+        {
+          "id": "aws-security-groups",
+          "slug": "security-groups",
+          "title": "Security groups and key pairs"
+        },
+        {
+          "id": "aws-load-balancing-and-auto-scaling",
+          "slug": "load-balancing-and-auto-scaling",
+          "title": "Load balancers and Auto Scaling"
+        },
+        {
+          "id": "aws-lambda",
+          "slug": "lambda",
+          "title": "Lambda"
+        },
+        {
+          "id": "aws-containers-on-aws",
+          "slug": "containers-on-aws",
+          "title": "Containers on AWS (ECS, Fargate) overview"
+        }
+      ]
+    },
+    {
+      "title": "Storage",
+      "topics": [
+        {
+          "id": "aws-s3",
+          "slug": "s3",
+          "title": "S3"
+        },
+        {
+          "id": "aws-s3-permissions-and-lifecycle",
+          "slug": "s3-permissions-and-lifecycle",
+          "title": "S3 permissions, versioning and lifecycle"
+        },
+        {
+          "id": "aws-ebs-and-efs",
+          "slug": "ebs-and-efs",
+          "title": "EBS and EFS"
+        }
+      ]
+    },
+    {
+      "title": "Databases",
+      "topics": [
+        {
+          "id": "aws-rds",
+          "slug": "rds",
+          "title": "RDS"
+        },
+        {
+          "id": "aws-dynamodb",
+          "slug": "dynamodb",
+          "title": "DynamoDB"
+        },
+        {
+          "id": "aws-elasticache",
+          "slug": "elasticache",
+          "title": "ElastiCache (Redis)"
+        }
+      ]
+    },
+    {
+      "title": "Networking and delivery",
+      "topics": [
+        {
+          "id": "aws-vpc",
+          "slug": "vpc",
+          "title": "VPC basics (subnets, route tables, gateways)"
+        },
+        {
+          "id": "aws-route-53",
+          "slug": "route-53",
+          "title": "Route 53"
+        },
+        {
+          "id": "aws-cloudfront",
+          "slug": "cloudfront",
+          "title": "CloudFront"
+        },
+        {
+          "id": "aws-api-gateway",
+          "slug": "api-gateway",
+          "title": "API Gateway"
+        }
+      ]
+    },
+    {
+      "title": "Messaging and monitoring",
+      "topics": [
+        {
+          "id": "aws-sqs",
+          "slug": "sqs",
+          "title": "SQS"
+        },
+        {
+          "id": "aws-sns",
+          "slug": "sns",
+          "title": "SNS"
+        },
+        {
+          "id": "aws-sqs-vs-sns-vs-eventbridge",
+          "slug": "sqs-vs-sns-vs-eventbridge",
+          "title": "SQS vs SNS vs EventBridge"
+        },
+        {
+          "id": "aws-cloudwatch",
+          "slug": "cloudwatch",
+          "title": "CloudWatch"
+        }
+      ]
+    },
+    {
+      "title": "Deploying and architectures",
+      "topics": [
+        {
+          "id": "aws-amplify",
+          "slug": "amplify",
+          "title": "Amplify Hosting"
+        },
+        {
+          "id": "aws-infrastructure-as-code",
+          "slug": "infrastructure-as-code",
+          "title": "Infrastructure as code (CloudFormation, CDK)"
+        },
+        {
+          "id": "aws-static-site-architecture",
+          "slug": "static-site-architecture",
+          "title": "Static site (S3 + CloudFront)"
+        },
+        {
+          "id": "aws-serverless-api-architecture",
+          "slug": "serverless-api-architecture",
+          "title": "Serverless API (API Gateway + Lambda + DynamoDB)"
+        },
+        {
+          "id": "aws-three-tier-architecture",
+          "slug": "three-tier-architecture",
+          "title": "Three-tier web app"
+        },
+        {
+          "id": "aws-interview-revision",
+          "slug": "interview-revision",
+          "title": "AWS interview revision"
+        }
+      ]
+    }
+  ]
 }

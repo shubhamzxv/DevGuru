@@ -4,5 +4,226 @@
   "tagline": "MVT, ORM, admin and DRF",
   "order": 3,
   "playground": "none",
-  "modules": []
+  "modules": [
+    {
+      "title": "Basics",
+      "topics": [
+        {
+          "id": "django-what-is-django",
+          "slug": "what-is-django",
+          "title": "What is Django?"
+        },
+        {
+          "id": "django-mvt-architecture",
+          "slug": "mvt-architecture",
+          "title": "MVT architecture"
+        },
+        {
+          "id": "django-project-vs-app",
+          "slug": "project-vs-app",
+          "title": "Project vs app"
+        },
+        {
+          "id": "django-settings",
+          "slug": "settings",
+          "title": "Settings"
+        },
+        {
+          "id": "django-request-response-flow",
+          "slug": "request-response-flow",
+          "title": "How a request flows through Django"
+        }
+      ]
+    },
+    {
+      "title": "Models and ORM",
+      "topics": [
+        {
+          "id": "django-models",
+          "slug": "models",
+          "title": "Models"
+        },
+        {
+          "id": "django-fields-and-relationships",
+          "slug": "fields-and-relationships",
+          "title": "Fields and relationships"
+        },
+        {
+          "id": "django-migrations",
+          "slug": "migrations",
+          "title": "Migrations"
+        },
+        {
+          "id": "django-orm-queries",
+          "slug": "orm-queries",
+          "title": "ORM queries (filter, get, exclude)"
+        },
+        {
+          "id": "django-q-and-f-objects",
+          "slug": "q-and-f-objects",
+          "title": "Q and F objects"
+        },
+        {
+          "id": "django-aggregate-annotate",
+          "slug": "aggregate-annotate",
+          "title": "aggregate and annotate"
+        },
+        {
+          "id": "django-select-related-prefetch-related",
+          "slug": "select-related-prefetch-related",
+          "title": "select_related vs prefetch_related (N+1 problem)"
+        },
+        {
+          "id": "django-managers-and-querysets",
+          "slug": "managers-and-querysets",
+          "title": "Managers and QuerySets"
+        }
+      ]
+    },
+    {
+      "title": "Views, URLs and templates",
+      "topics": [
+        {
+          "id": "django-urls",
+          "slug": "urls",
+          "title": "URLs"
+        },
+        {
+          "id": "django-function-based-views",
+          "slug": "function-based-views",
+          "title": "Function-based views (FBV)"
+        },
+        {
+          "id": "django-class-based-views",
+          "slug": "class-based-views",
+          "title": "Class-based views (CBV)"
+        },
+        {
+          "id": "django-templates",
+          "slug": "templates",
+          "title": "Templates"
+        },
+        {
+          "id": "django-static-and-media",
+          "slug": "static-and-media",
+          "title": "Static and media files"
+        }
+      ]
+    },
+    {
+      "title": "Forms and admin",
+      "topics": [
+        {
+          "id": "django-forms",
+          "slug": "forms",
+          "title": "Forms and ModelForms"
+        },
+        {
+          "id": "django-admin",
+          "slug": "admin",
+          "title": "Admin"
+        }
+      ]
+    },
+    {
+      "title": "Auth and internals",
+      "topics": [
+        {
+          "id": "django-authentication",
+          "slug": "authentication",
+          "title": "Authentication (users, login, logout)"
+        },
+        {
+          "id": "django-permissions-and-groups",
+          "slug": "permissions-and-groups",
+          "title": "Permissions and groups"
+        },
+        {
+          "id": "django-sessions-and-cookies",
+          "slug": "sessions-and-cookies",
+          "title": "Sessions and cookies"
+        },
+        {
+          "id": "django-middleware",
+          "slug": "middleware",
+          "title": "Middleware"
+        },
+        {
+          "id": "django-signals",
+          "slug": "signals",
+          "title": "Signals"
+        }
+      ]
+    },
+    {
+      "title": "Django REST Framework",
+      "topics": [
+        {
+          "id": "django-drf-intro",
+          "slug": "drf-intro",
+          "title": "What is Django REST Framework?"
+        },
+        {
+          "id": "django-serializers",
+          "slug": "serializers",
+          "title": "Serializers"
+        },
+        {
+          "id": "django-api-views",
+          "slug": "api-views",
+          "title": "APIView and generic views"
+        },
+        {
+          "id": "django-viewsets-and-routers",
+          "slug": "viewsets-and-routers",
+          "title": "ViewSets and routers"
+        },
+        {
+          "id": "django-drf-permissions",
+          "slug": "drf-permissions",
+          "title": "Authentication and permissions in DRF"
+        },
+        {
+          "id": "django-pagination-and-filtering",
+          "slug": "pagination-and-filtering",
+          "title": "Pagination and filtering"
+        }
+      ]
+    },
+    {
+      "title": "Production",
+      "topics": [
+        {
+          "id": "django-caching",
+          "slug": "caching",
+          "title": "Caching in Django"
+        },
+        {
+          "id": "django-celery",
+          "slug": "celery",
+          "title": "Background tasks with Celery (overview)"
+        },
+        {
+          "id": "django-testing",
+          "slug": "testing",
+          "title": "Testing Django apps"
+        },
+        {
+          "id": "django-security",
+          "slug": "security",
+          "title": "Security (CSRF, XSS, SQL injection)"
+        },
+        {
+          "id": "django-deployment",
+          "slug": "deployment",
+          "title": "Deployment basics (Gunicorn, Nginx, env vars)"
+        },
+        {
+          "id": "django-interview-revision",
+          "slug": "interview-revision",
+          "title": "Django interview revision"
+        }
+      ]
+    }
+  ]
 }

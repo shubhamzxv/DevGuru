@@ -3,3 +3,5 @@ node_modules
 public/pyodide
 public/wasm
 package-lock.json
+*.mdx
+dist.zip

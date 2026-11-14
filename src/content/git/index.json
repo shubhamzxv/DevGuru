@@ -4,5 +4,176 @@
   "tagline": "Commits, branches, merges, PRs",
   "order": 7,
   "playground": "git",
-  "modules": []
+  "modules": [
+    {
+      "title": "Basics",
+      "topics": [
+        {
+          "id": "git-what-is-git",
+          "slug": "what-is-git",
+          "title": "What is Git?"
+        },
+        {
+          "id": "git-install-and-config",
+          "slug": "install-and-config",
+          "title": "Install and configure"
+        },
+        {
+          "id": "git-init",
+          "slug": "init",
+          "title": "git init"
+        },
+        {
+          "id": "git-three-areas",
+          "slug": "three-areas",
+          "title": "Working directory, staging area, repository"
+        },
+        {
+          "id": "git-add-and-commit",
+          "slug": "add-and-commit",
+          "title": "add and commit"
+        },
+        {
+          "id": "git-status-log-diff",
+          "slug": "status-log-diff",
+          "title": "status, log and diff"
+        },
+        {
+          "id": "git-gitignore",
+          "slug": "gitignore",
+          "title": ".gitignore"
+        }
+      ]
+    },
+    {
+      "title": "Branching",
+      "topics": [
+        {
+          "id": "git-branches",
+          "slug": "branches",
+          "title": "Branches"
+        },
+        {
+          "id": "git-merge",
+          "slug": "merge",
+          "title": "Merge"
+        },
+        {
+          "id": "git-merge-conflicts",
+          "slug": "merge-conflicts",
+          "title": "Merge conflicts"
+        },
+        {
+          "id": "git-rebase",
+          "slug": "rebase",
+          "title": "Rebase"
+        },
+        {
+          "id": "git-merge-vs-rebase",
+          "slug": "merge-vs-rebase",
+          "title": "Merge vs rebase"
+        },
+        {
+          "id": "git-stash",
+          "slug": "stash",
+          "title": "Stash"
+        },
+        {
+          "id": "git-cherry-pick",
+          "slug": "cherry-pick",
+          "title": "Cherry-pick"
+        }
+      ]
+    },
+    {
+      "title": "Undoing things",
+      "topics": [
+        {
+          "id": "git-restore-and-amend",
+          "slug": "restore-and-amend",
+          "title": "restore and commit --amend"
+        },
+        {
+          "id": "git-reset",
+          "slug": "reset",
+          "title": "Reset"
+        },
+        {
+          "id": "git-revert",
+          "slug": "revert",
+          "title": "Revert"
+        },
+        {
+          "id": "git-reset-vs-revert",
+          "slug": "reset-vs-revert",
+          "title": "Reset vs revert"
+        },
+        {
+          "id": "git-reflog",
+          "slug": "reflog",
+          "title": "Reflog"
+        }
+      ]
+    },
+    {
+      "title": "Remotes and GitHub",
+      "topics": [
+        {
+          "id": "git-remotes",
+          "slug": "remotes",
+          "title": "Remotes"
+        },
+        {
+          "id": "git-push-pull-fetch",
+          "slug": "push-pull-fetch",
+          "title": "push, pull and fetch"
+        },
+        {
+          "id": "git-fetch-vs-pull",
+          "slug": "fetch-vs-pull",
+          "title": "fetch vs pull"
+        },
+        {
+          "id": "git-github-basics",
+          "slug": "github-basics",
+          "title": "GitHub: repositories, forks and clones"
+        },
+        {
+          "id": "git-pull-requests",
+          "slug": "pull-requests",
+          "title": "Pull requests"
+        },
+        {
+          "id": "git-tags-and-releases",
+          "slug": "tags-and-releases",
+          "title": "Tags and releases"
+        }
+      ]
+    },
+    {
+      "title": "Workflows",
+      "topics": [
+        {
+          "id": "git-workflows",
+          "slug": "workflows",
+          "title": "Workflows (feature branch, Git Flow, trunk-based)"
+        },
+        {
+          "id": "git-commit-messages",
+          "slug": "commit-messages",
+          "title": "Good commit messages"
+        },
+        {
+          "id": "git-github-actions",
+          "slug": "github-actions",
+          "title": "GitHub Actions basics"
+        },
+        {
+          "id": "git-interview-revision",
+          "slug": "interview-revision",
+          "title": "Git interview revision"
+        }
+      ]
+    }
+  ]
 }

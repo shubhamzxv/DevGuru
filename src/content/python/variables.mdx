@@ -1,0 +1,236 @@
+---
+id: python-variables
+title: Variables
+summary: A variable is a name that points to a value, so you can use that value again later.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of the steel **dabbas** (boxes) in an Indian kitchen. Each one has a label: "Sugar", "Rice", "Dal".
+
+The label is not the sugar. It only tells you which box to open. A Python **variable** is that label. The **value** is what is inside the box.
+
+</Analogy>
+
+## Simple explanation
+
+A **variable** is a name you give to a value. You make one with the `=` sign.
+
+This step is called **assignment**. It means "let this name point to this value". It does not mean "equal" like in maths.
+
+Python has **dynamic typing**. This means you do not write the type (number, text) yourself. Python looks at the value and decides.
+
+The same name can point to a new value later. The old value is simply left behind.
+
+Rules for names:
+
+- Use letters, digits and `_` only. Example: `total_price`
+- A name cannot start with a digit. `2nd_name` is not allowed
+- Names are **case sensitive**. `age` and `Age` are two different variables
+- Do not use Python's own words such as `class`, `for` or `if`
+
+<Visual caption="The name age points to the value 25. After age = age + 1 it points to a new value, 26.">
+  <svg viewBox="0 0 320 120" width="320" height="120" role="img" aria-label="The name age first points to 25, then to 26">
+    <rect x="10" y="40" width="80" height="40" rx="8" fill="#e0e7ff" stroke="#4f46e5" strokeWidth="2" />
+    <text x="50" y="65" textAnchor="middle" fontSize="16" fontFamily="monospace" fill="#1e1b4b">age</text>
+    <line x1="90" y1="55" x2="205" y2="30" stroke="#94a3b8" strokeWidth="2" strokeDasharray="5 4" />
+    <line x1="90" y1="65" x2="205" y2="90" stroke="#4f46e5" strokeWidth="2" />
+    <rect x="210" y="10" width="90" height="40" rx="8" fill="#f1f5f9" stroke="#94a3b8" strokeWidth="2" />
+    <text x="255" y="35" textAnchor="middle" fontSize="16" fontFamily="monospace" fill="#475569">25 (old)</text>
+    <rect x="210" y="70" width="90" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" strokeWidth="2" />
+    <text x="255" y="95" textAnchor="middle" fontSize="16" fontFamily="monospace" fill="#14532d">26 (new)</text>
+  </svg>
+</Visual>
+
+## Code example
+
+```python
+name = "Asha"        # a string (text)
+age = 25             # an integer (whole number)
+price = 99.5         # a float (decimal number)
+is_student = True    # a boolean (True or False)
+
+print(name, age)     # print() shows values on the screen
+print(type(price))   # type() tells you the kind of value
+
+age = age + 1        # read the old value, add 1, store the result
+print(age)
+
+a, b = 10, 20        # make two variables in one line
+a, b = b, a          # swap them
+print(a, b)
+```
+
+```output
+Asha 25
+<class 'float'>
+26
+20 10
+```
+
+<Playground kind="python">
+
+```python
+city = "Delhi"
+temperature = 31
+
+print("City:", city)
+print("Tomorrow:", temperature + 2)
+
+# Try it: change the city and the temperature, then run again.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using a variable before giving it a value">
+
+<Wrong>
+
+```python
+print(total)   # NameError: name 'total' is not defined
+total = 100
+```
+
+</Wrong>
+
+<Right>
+
+```python
+total = 100
+print(total)   # 100
+```
+
+</Right>
+
+Python reads your code from top to bottom. The name must exist before you use it.
+
+</Mistake>
+
+<Mistake title="Mixing up = and ==">
+
+<Wrong>
+
+```python
+marks = 40
+if marks = 40:      # SyntaxError
+    print("Pass")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+marks = 40
+if marks == 40:     # == compares two values
+    print("Pass")
+```
+
+</Right>
+
+One `=` stores a value. Two `==` ask the question "are these equal?".
+
+</Mistake>
+
+<Mistake title="Forgetting that names are case sensitive">
+
+<Wrong>
+
+```python
+Price = 50
+print(price)   # NameError: name 'price' is not defined
+```
+
+</Wrong>
+
+<Right>
+
+```python
+price = 50
+print(price)   # 50
+```
+
+</Right>
+
+Use small letters with underscores for variable names, like `total_price`. This style is called **snake_case**.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a variable in Python?">
+
+A variable is a **name that refers to an object** in memory. It is a label, not a box that holds the value. So two names can point to the same object.
+
+</QA>
+
+<QA q="Is Python statically typed or dynamically typed?">
+
+**Dynamically typed.** The type belongs to the value, not to the name, and it is checked while the program runs. So `x = 5` and later `x = "five"` is allowed.
+
+</QA>
+
+<QA q="What is the difference between == and is?">
+
+`==` checks if two **values are equal**. `is` checks if two names point to the **same object in memory**.
+
+```python
+a = [1, 2]
+b = [1, 2]
+print(a == b)   # True  (same content)
+print(a is b)   # False (two different lists)
+```
+
+Use `is` mainly for `None`, like `if x is None:`.
+
+</QA>
+
+<QA q="What happens when you write a = b = [] and then a.append(1)?">
+
+Both names point to the **same list**, so `b` also shows `[1]`. To get two separate lists, write `a = []` and `b = []` on two lines.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which variable name is valid in Python?',
+      options: ['2nd_place', 'second-place', 'second_place', 'class'],
+      answer: 2,
+      why: 'Names can use letters, digits and underscores, cannot start with a digit, and cannot be a Python keyword like class.',
+    },
+    {
+      q: 'What does this print?  x = 5  then  x = x + 2  then  print(x)',
+      options: ['5', '7', 'x + 2', 'An error'],
+      answer: 1,
+      why: 'Python first works out x + 2 using the old value (5), then stores the result (7) back in x.',
+    },
+    {
+      q: 'After  a = 10  and  A = 20,  what is the value of a?',
+      options: ['10', '20', '30', 'An error'],
+      answer: 0,
+      why: 'Names are case sensitive, so a and A are two different variables.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Create a variable | `age = 25` |
+| Change it | `age = age + 1` or `age += 1` |
+| Check its type | `type(age)` |
+| Many at once | `a, b = 10, 20` |
+| Swap two | `a, b = b, a` |
+| Same value to many | `x = y = 0` |
+| Naming style | `total_price` (snake_case) |
+
+</CheatSheet>

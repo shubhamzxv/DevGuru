@@ -1,8 +1,19 @@
 import { Link } from 'react-router-dom';
 import ProgressRing from '../components/layout/ProgressRing';
-import { TRACKS } from '../registry/tracks';
+import { useProgress } from '../hooks/useProgress';
+import { topicKey, writtenTopics } from '../registry/topics';
+import { TRACKS, type Track } from '../registry/tracks';
+
+function percentDone(track: Track, completed: string[]): number {
+  const available = writtenTopics(track);
+  if (available.length === 0) return 0;
+  const done = available.filter((topic) => completed.includes(topicKey(track.slug, topic.id)));
+  return (done.length / available.length) * 100;
+}
 
 export default function Home() {
+  const progress = useProgress();
+
   return (
     <div className="mx-auto max-w-5xl">
       <section className="rounded-2xl bg-gradient-to-br from-brand-600 to-brand-800 px-5 py-8 text-white sm:px-8 sm:py-12">
@@ -36,9 +47,21 @@ export default function Home() {
         <h2 id="continue-heading" className="text-lg font-bold">
           Continue learning
         </h2>
-        <p className="mt-2 rounded-xl border border-slate-200 bg-white p-4 text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-          You have not started a topic yet. Pick a track below to begin.
-        </p>
+        {progress.lastVisited ? (
+          <Link
+            to={progress.lastVisited.path}
+            className="mt-2 flex min-h-14 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 font-medium hover:border-brand-400 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-brand-500"
+          >
+            <span>{progress.lastVisited.title}</span>
+            <span aria-hidden="true" className="text-brand-600 dark:text-brand-400">
+              →
+            </span>
+          </Link>
+        ) : (
+          <p className="mt-2 rounded-xl border border-slate-200 bg-white p-4 text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+            You have not started a topic yet. Pick a track below to begin.
+          </p>
+        )}
       </section>
 
       <section aria-labelledby="tracks-heading" className="mt-8">
@@ -61,8 +84,7 @@ export default function Home() {
                     {track.tagline}
                   </span>
                 </span>
-                {/* Real progress is wired up in Step 6 */}
-                <ProgressRing percent={0} label={track.name} />
+                <ProgressRing percent={percentDone(track, progress.completed)} label={track.name} />
               </Link>
             </li>
           ))}
