@@ -1,0 +1,273 @@
+---
+id: python-abstract-classes
+title: Abstract classes (ABC)
+summary: An abstract class is a base class that cannot be used directly and that forces its child classes to write certain methods.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a job application form. The form itself is not an application. It only has blank fields marked "must fill": name, phone, experience. Every candidate must fill them, each in their own way.
+
+An **abstract class** is that form. It lists what must be written, and each child class fills it in.
+
+</Analogy>
+
+## Simple explanation
+
+An **abstract class** is a class that is not complete on purpose. You cannot make an object from it. It exists only to be a parent.
+
+It contains one or more **abstract methods**. An abstract method has a name but no real body. It says: "every child class **must** write this method".
+
+In Python you build one with the `abc` module (ABC means Abstract Base Class):
+
+- Inherit from `ABC`
+- Mark the required methods with `@abstractmethod`
+
+What Python then guarantees:
+
+- Creating an object of the abstract class raises a `TypeError`
+- Creating an object of a child that forgot an abstract method also raises a `TypeError`
+
+An abstract class can also have normal methods with real code. All children get those for free.
+
+Use an abstract class when several classes must follow the same **contract** (the same set of methods), for example every payment gateway must have `pay()` and `refund()`. A class used this way is often called an **interface**.
+
+## Code example
+
+```python
+from abc import ABC, abstractmethod
+
+class PaymentGateway(ABC):                 # abstract class: inherit from ABC
+    def __init__(self, merchant):
+        self.merchant = merchant
+
+    @abstractmethod
+    def pay(self, amount):                 # every child MUST write this
+        ...
+
+    @abstractmethod
+    def refund(self, amount):
+        ...
+
+    def receipt(self, amount):             # normal method: shared by all children
+        return f"{self.merchant} received Rs {amount} via {type(self).__name__}"
+
+class Razorpay(PaymentGateway):
+    def pay(self, amount):
+        return f"Razorpay charged Rs {amount}"
+
+    def refund(self, amount):
+        return f"Razorpay refunded Rs {amount}"
+
+gateway = Razorpay("DevGuru Store")
+print(gateway.pay(499))
+print(gateway.receipt(499))                # inherited from the abstract class
+
+try:
+    PaymentGateway("Shop")                 # the abstract class itself cannot be used
+except TypeError as error:
+    print("Error:", error)
+
+class HalfDone(PaymentGateway):
+    def pay(self, amount):                 # refund() is missing
+        return "paid"
+
+try:
+    HalfDone("Shop")
+except TypeError as error:
+    print("Error:", error)
+
+print(isinstance(gateway, PaymentGateway))
+```
+
+```output
+Razorpay charged Rs 499
+DevGuru Store received Rs 499 via Razorpay
+Error: Can't instantiate abstract class PaymentGateway without an implementation for abstract methods 'pay', 'refund'
+Error: Can't instantiate abstract class HalfDone without an implementation for abstract method 'refund'
+True
+```
+
+<Playground kind="python">
+
+```python
+from abc import ABC, abstractmethod
+
+class Shape(ABC):
+    @abstractmethod
+    def area(self):
+        ...
+
+    def describe(self):
+        return f"{type(self).__name__} with area {self.area()}"
+
+class Rectangle(Shape):
+    def __init__(self, w, h):
+        self.w, self.h = w, h
+
+    def area(self):
+        return self.w * self.h
+
+print(Rectangle(4, 5).describe())
+
+# Try it: add a  Triangle  class, first without area(), then with it.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting to inherit from ABC">
+
+<Wrong>
+
+```python
+from abc import abstractmethod
+
+class Report:                  # no ABC here
+    @abstractmethod
+    def export(self):
+        ...
+
+print(Report().export())   # None: nothing was enforced
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from abc import ABC, abstractmethod
+
+class Report(ABC):
+    @abstractmethod
+    def export(self):
+        ...
+
+try:
+    Report()
+except TypeError:
+    print("cannot create Report")   # cannot create Report
+```
+
+</Right>
+
+`@abstractmethod` works only when the class inherits from `ABC`.
+
+</Mistake>
+
+<Mistake title="Not writing every abstract method in the child">
+
+<Wrong>
+
+```python
+from abc import ABC, abstractmethod
+
+class Storage(ABC):
+    @abstractmethod
+    def save(self): ...
+    @abstractmethod
+    def load(self): ...
+
+class DiskStorage(Storage):
+    def save(self):
+        return "saved"
+
+DiskStorage()   # TypeError: Can't instantiate abstract class DiskStorage
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from abc import ABC, abstractmethod
+
+class Storage(ABC):
+    @abstractmethod
+    def save(self): ...
+    @abstractmethod
+    def load(self): ...
+
+class DiskStorage(Storage):
+    def save(self):
+        return "saved"
+
+    def load(self):
+        return "loaded"
+
+print(DiskStorage().load())   # loaded
+```
+
+</Right>
+
+A child stays abstract until it writes **all** the abstract methods.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is an abstract class?">
+
+A class that cannot be instantiated and is meant to be subclassed. It declares abstract methods that every concrete subclass must implement, and it may also contain shared concrete methods. In Python it is created by inheriting from `abc.ABC` and using `@abstractmethod`.
+
+</QA>
+
+<QA q="What is the difference between an abstract class and an interface?">
+
+An interface only declares methods, with no implementation. An abstract class can mix abstract methods with implemented ones and can hold state. Python has no separate `interface` keyword; an ABC with only abstract methods plays that role, and `typing.Protocol` offers interface-style checking through duck typing.
+
+</QA>
+
+<QA q="When is the missing method detected?">
+
+When you try to **create an object**, not when the class is defined. Python raises `TypeError: Can't instantiate abstract class ...` and names the missing methods.
+
+</QA>
+
+<QA q="What is abstraction in OOP?">
+
+Showing only the essential features and hiding the details. The caller knows **what** an object can do (`gateway.pay(500)`) without knowing **how** each gateway does it. Abstract classes are one tool for this.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What happens when you create an object of an abstract class?',
+      options: ['It works normally', 'Python raises a TypeError', 'You get None', 'The class is deleted'],
+      answer: 1,
+      why: 'A class with unimplemented abstract methods cannot be instantiated.',
+    },
+    {
+      q: 'Which decorator marks a method that every child must write?',
+      options: ['@staticmethod', '@property', '@abstractmethod', '@classmethod'],
+      answer: 2,
+      why: '@abstractmethod, from the abc module, marks a required method.',
+    },
+    {
+      q: 'Can an abstract class contain a normal method with real code?',
+      options: ['Yes', 'No', 'Only if it is static', 'Only in Python 2'],
+      answer: 0,
+      why: 'Abstract classes can mix abstract methods with ordinary methods that children inherit.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Import | `from abc import ABC, abstractmethod` |
+| Abstract class | `class Base(ABC):` |
+| Required method | `@abstractmethod` above `def run(self): ...` |
+| Shared method | A normal `def` inside the abstract class |
+| Concrete child | Write every abstract method |
+| Create `Base()` | `TypeError` |
+
+</CheatSheet>

@@ -1,0 +1,244 @@
+---
+id: sql-self-join
+title: SELF JOIN
+summary: A self join joins a table to itself, to relate one row of the table to another row of the same table.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of an office staff list where each line has a column "reports to", holding another employee's ID. To write the manager's **name** next to each person, you look up that ID **in the same list**.
+
+One list, used twice: once for the employee and once for the manager. That is a **self join**.
+
+</Analogy>
+
+## Simple explanation
+
+A **self join** is not a special keyword. It is a normal join where **both sides are the same table**.
+
+It is used when rows of a table refer to other rows of the same table. In our `employees` table, `manager_id` holds the `id` of another employee.
+
+Because the table appears twice, you **must** give it two different **aliases**. Think of them as two copies:
+
+- `e` is the employee
+- `m` is the manager
+
+`FROM employees AS e JOIN employees AS m ON e.manager_id = m.id`
+
+Choose the kind of join as usual:
+
+- `INNER JOIN` shows only employees who have a manager
+- `LEFT JOIN` also shows the people at the top, with NULL as their manager
+
+Other uses of a self join:
+
+- Find **pairs** of rows that share something, such as two employees in the same city
+- Compare a row with another row, such as "who earns more than their manager?"
+
+When you make pairs, add a condition like `a.id < b.id`. Without it, you get each pair twice (A-B and B-A) and every row paired with itself.
+
+## Code example
+
+```sql
+SELECT
+  e.name   AS employee,
+  m.name   AS manager                -- from the second copy of the table
+FROM employees AS e                  -- copy 1: the employee
+JOIN employees AS m                  -- copy 2: the manager
+  ON e.manager_id = m.id             -- employee's manager_id = manager's id
+WHERE e.department_id = 2
+ORDER BY e.id;
+```
+
+```output
+employee    | manager
+------------+------------
+Ravi Kumar  | Vikram Shah
+Priya Iyer  | Vikram Shah
+Imran Ali   | Ravi Kumar
+Divya Menon | Ravi Kumar
+```
+
+```sql
+SELECT
+  e.name                             AS employee,
+  COALESCE(m.name, 'no manager')     AS manager
+FROM employees AS e
+LEFT JOIN employees AS m ON e.manager_id = m.id   -- LEFT JOIN keeps the people at the top
+WHERE e.id IN (1, 4, 16, 20)
+ORDER BY e.id;
+```
+
+```output
+employee       | manager
+---------------+-----------
+Anita Rao      | no manager
+Rohit Verma    | Anita Rao
+Farah Sheikh   | no manager
+Zoya Fernandes | no manager
+```
+
+```sql
+SELECT
+  a.name   AS employee_1,
+  b.name   AS employee_2,
+  a.salary
+FROM employees AS a
+JOIN employees AS b
+  ON a.salary = b.salary             -- pairs with the same salary
+ AND a.id < b.id;                    -- each pair once, and nobody with themselves
+```
+
+```output
+employee_1  | employee_2    | salary
+------------+---------------+-------
+Rohit Verma | Asha Kulkarni | 140000
+Arjun Mehta | Sana Khan     | 72000
+```
+
+<Playground kind="sql">
+
+```sql
+-- How many people report directly to each manager?
+SELECT
+  m.name      AS manager,
+  COUNT(*)    AS direct_reports
+FROM employees AS e
+JOIN employees AS m ON e.manager_id = m.id
+GROUP BY m.id, m.name
+ORDER BY direct_reports DESC;
+
+-- Try it: list pairs of customers who live in the same city.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Not using two different aliases">
+
+<Wrong>
+
+```sql
+SELECT name FROM employees JOIN employees ON manager_id = id;   -- Error: ambiguous column name
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT e.name, m.name AS manager
+FROM employees AS e JOIN employees AS m ON e.manager_id = m.id LIMIT 3;
+```
+
+</Right>
+
+The database cannot tell the two copies apart. Give each one its own alias.
+
+</Mistake>
+
+<Mistake title="Getting every pair twice">
+
+<Wrong>
+
+```sql
+SELECT a.name, b.name
+FROM employees AS a JOIN employees AS b ON a.salary = b.salary;   -- 25 rows: self-pairs and mirrored pairs
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT a.name, b.name
+FROM employees AS a JOIN employees AS b ON a.salary = b.salary AND a.id < b.id;   -- 2 rows
+```
+
+</Right>
+
+`a.id < b.id` removes "Rohit with Rohit" and keeps only one of "Rohit, Asha" and "Asha, Rohit".
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a self join?">
+
+A join of a table with itself, using table aliases to treat it as two separate tables. It is used for hierarchical data stored in one table (employee and manager, category and parent category) and for comparing rows within the same table.
+
+</QA>
+
+<QA q="Write a query to show each employee with their manager's name.">
+
+```sql
+SELECT e.name AS employee, m.name AS manager
+FROM employees AS e
+LEFT JOIN employees AS m ON e.manager_id = m.id
+LIMIT 4;
+```
+
+`LEFT JOIN` keeps employees who have no manager.
+
+</QA>
+
+<QA q="Write a query to find employees who earn more than their manager.">
+
+Join each employee to the manager's row and compare the two salaries.
+
+```sql
+SELECT e.name, e.salary, m.name AS manager, m.salary AS manager_salary
+FROM employees AS e
+JOIN employees AS m ON e.manager_id = m.id
+WHERE e.salary > m.salary;
+```
+
+</QA>
+
+<QA q="How would you show the whole reporting chain, not just one level?">
+
+A self join goes only one level up. For a chain of unknown depth, use a **recursive CTE** (`WITH RECURSIVE`), which keeps joining the table to its own previous result until no more rows are found.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is required in a self join?',
+      options: ['A special SELF keyword', 'Two different aliases for the same table', 'Two databases', 'A FULL JOIN'],
+      answer: 1,
+      why: 'The table appears twice, so each copy needs its own alias.',
+    },
+    {
+      q: 'In  employees e JOIN employees m ON e.manager_id = m.id  what does m represent?',
+      options: ['The employee', 'The manager', 'The department', 'A temporary table on disk'],
+      answer: 1,
+      why: "The row from m is the one whose id equals the employee's manager_id.",
+    },
+    {
+      q: 'Why add  a.id < b.id  when finding pairs?',
+      options: ['To sort the result', 'To avoid self-pairs and duplicate mirrored pairs', 'To make it faster only', 'It is required syntax'],
+      answer: 1,
+      why: 'It keeps each pair once and stops a row from matching itself.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Employee with manager | `FROM employees e JOIN employees m ON e.manager_id = m.id` |
+| Include top-level rows | Use `LEFT JOIN` |
+| Earn more than manager | `... WHERE e.salary > m.salary` |
+| Pairs sharing a value | `ON a.city = b.city AND a.id < b.id` |
+| Reports per manager | `GROUP BY m.id` with `COUNT(*)` |
+| Many levels | Recursive CTE |
+
+</CheatSheet>

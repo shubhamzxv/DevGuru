@@ -1,0 +1,303 @@
+---
+id: python-encapsulation-and-properties
+title: Encapsulation and @property
+summary: Encapsulation keeps an object's data safe behind methods, and @property lets a method be used like a simple attribute.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of an ATM. You cannot open the machine and take notes from the cash tray. You use the screen and the keypad, and the machine checks your PIN and balance first.
+
+The cash is protected inside, and you get a safe way to reach it. That is **encapsulation**.
+
+</Analogy>
+
+## Simple explanation
+
+**Encapsulation** means keeping data and the methods that work on it together in one class, and controlling how the data is changed from outside.
+
+Python does not have true private attributes. It uses naming conventions:
+
+- `name` is **public**. Anyone can use it
+- `_name` (one underscore) means "internal, please do not touch". It is only a signal to other developers
+- `__name` (two underscores) triggers **name mangling**. Python renames it to `_ClassName__name`, which makes accidental access from outside harder
+
+A **property** makes a method look like an attribute. You read it without brackets: `account.balance`.
+
+- `@property` defines the **getter**, which runs when you read the value
+- `@name.setter` defines the **setter**, which runs when you assign a value. This is the place to validate
+
+A property with no setter is **read-only**.
+
+Start with plain public attributes. Switch to a property later if you need a check or a calculation. Code that uses the class does not need to change.
+
+## Code example
+
+```python
+class BankAccount:
+    def __init__(self, owner, balance):
+        self.owner = owner               # public
+        self._balance = 0                # internal: one underscore
+        self.__pin = "4321"              # name-mangled: two underscores
+        self.balance = balance           # goes through the setter below
+
+    @property
+    def balance(self):                   # getter: runs on account.balance
+        return self._balance
+
+    @balance.setter
+    def balance(self, amount):           # setter: runs on account.balance = ...
+        if amount < 0:
+            raise ValueError("balance cannot be negative")
+        self._balance = amount
+
+    @property
+    def status(self):                    # read-only, calculated each time
+        return "premium" if self._balance >= 100000 else "regular"
+
+account = BankAccount("Asha", 5000)
+print(account.balance)                   # looks like an attribute, runs the getter
+
+account.balance = 150000                 # runs the setter
+print(account.balance, account.status)
+
+try:
+    account.balance = -10                # the setter rejects it
+except ValueError as error:
+    print("Rejected:", error)
+
+try:
+    account.status = "gold"              # no setter: read-only
+except AttributeError:
+    print("status is read-only")
+
+print(hasattr(account, "__pin"), hasattr(account, "_BankAccount__pin"))
+```
+
+```output
+5000
+150000 premium
+Rejected: balance cannot be negative
+status is read-only
+False True
+```
+
+<Playground kind="python">
+
+```python
+class Product:
+    def __init__(self, name, price):
+        self.name = name
+        self.price = price
+
+    @property
+    def price(self):
+        return self._price
+
+    @price.setter
+    def price(self, value):
+        if value <= 0:
+            raise ValueError("price must be positive")
+        self._price = value
+
+    @property
+    def price_with_gst(self):
+        return round(self._price * 1.18, 2)
+
+pen = Product("Pen", 10)
+pen.price = 12
+print(pen.price, pen.price_with_gst)
+
+# Try it: set pen.price = 0 and read the error.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using the same name inside the property">
+
+<Wrong>
+
+```python
+class User:
+    def __init__(self, age):
+        self.age = age
+
+    @property
+    def age(self):
+        return self.age       # calls itself again and again
+
+    @age.setter
+    def age(self, value):
+        self._age = value
+
+print(User(20).age)   # RecursionError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class User:
+    def __init__(self, age):
+        self.age = age
+
+    @property
+    def age(self):
+        return self._age      # read the internal attribute
+
+    @age.setter
+    def age(self, value):
+        self._age = value
+
+print(User(20).age)   # 20
+```
+
+</Right>
+
+Inside the getter, `self.age` calls the getter again. Store the real value under another name, such as `_age`.
+
+</Mistake>
+
+<Mistake title="Calling a property with brackets">
+
+<Wrong>
+
+```python
+class Circle:
+    def __init__(self, radius):
+        self.radius = radius
+
+    @property
+    def diameter(self):
+        return self.radius * 2
+
+print(Circle(5).diameter())   # TypeError: 'int' object is not callable
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Circle:
+    def __init__(self, radius):
+        self.radius = radius
+
+    @property
+    def diameter(self):
+        return self.radius * 2
+
+print(Circle(5).diameter)   # 10
+```
+
+</Right>
+
+A property is read like an attribute, without `()`.
+
+</Mistake>
+
+<Mistake title="Thinking two underscores make data secret">
+
+<Wrong>
+
+```python
+class Vault:
+    def __init__(self):
+        self.__code = 1234
+
+print(Vault()._Vault__code)   # 1234
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Vault:
+    def __init__(self):
+        self._code = 1234     # a clear "internal" signal is enough
+
+print(hasattr(Vault(), "_code"))   # True
+```
+
+</Right>
+
+Name mangling only prevents accidents and name clashes in subclasses. It is not security. Never keep real secrets in code.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is encapsulation?">
+
+Bundling data and the methods that operate on it into one unit (a class), and restricting direct access to the internal state. Outside code uses a controlled interface, so the object can protect its own rules, such as "balance is never negative".
+
+</QA>
+
+<QA q="Does Python have private variables?">
+
+Not strictly. A single leading underscore is a convention for "internal". A double leading underscore triggers name mangling to `_ClassName__attr`, which avoids clashes in subclasses but can still be accessed. Python relies on the idea "we are all consenting adults".
+
+</QA>
+
+<QA q="What is @property and why use it?">
+
+A decorator that turns a method into a managed attribute. It lets you add validation or computed values while callers keep the simple `obj.attr` syntax. You can start with a public attribute and convert it later without breaking any calling code.
+
+</QA>
+
+<QA q="What is the difference between a getter, a setter and a deleter?">
+
+The getter (`@property`) runs on read. The setter (`@x.setter`) runs on assignment. The deleter (`@x.deleter`) runs on `del obj.x`. All three share the same method name.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does a single leading underscore, as in _balance, mean?',
+      options: [
+        'Python blocks access to it',
+        'It is a convention: internal, do not use from outside',
+        'It is a constant',
+        'It is a class attribute',
+      ],
+      answer: 1,
+      why: 'One underscore is only a signal to developers. Python does not enforce it.',
+    },
+    {
+      q: 'How do you read a property called area on the object box?',
+      options: ['box.area()', 'box.area', 'box->area', 'area(box)'],
+      answer: 1,
+      why: 'A property is used like an attribute, without brackets.',
+    },
+    {
+      q: 'What happens when you assign to a property that has no setter?',
+      options: ['The value is saved', 'Nothing happens', 'AttributeError is raised', 'The property is deleted'],
+      answer: 2,
+      why: 'Without a setter, the property is read-only, so assigning raises AttributeError.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Public | `self.name` |
+| Internal (convention) | `self._name` |
+| Name-mangled | `self.__name` |
+| Getter | `@property` above `def x(self):` |
+| Setter | `@x.setter` above `def x(self, value):` |
+| Read-only | A property with no setter |
+| Use it | `obj.x` and `obj.x = 5` |
+
+</CheatSheet>

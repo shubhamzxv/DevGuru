@@ -1,0 +1,249 @@
+---
+id: sql-limit-offset
+title: LIMIT and OFFSET
+summary: LIMIT sets the maximum number of rows to return, and OFFSET skips rows from the start, which together give you pages of results.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a shopping app that shows 10 products per page. Page 1 shows products 1 to 10. For page 2, the app skips the first 10 and shows the next 10.
+
+`LIMIT` is "how many per page". `OFFSET` is "how many to skip".
+
+</Analogy>
+
+## Simple explanation
+
+`LIMIT n` returns at most `n` rows. It is the last clause of a query.
+
+`OFFSET m` skips the first `m` rows before returning any.
+
+Together they do **pagination**, which means showing results page by page:
+
+`LIMIT page_size OFFSET (page_number - 1) * page_size`
+
+So with 5 rows per page, page 3 is `LIMIT 5 OFFSET 10`.
+
+Always use `ORDER BY` with `LIMIT`. Without a fixed order, "the first 5 rows" has no meaning, and pages can repeat or miss rows.
+
+`LIMIT` is also the way to get **top N** results: sort, then keep the first few.
+
+The syntax differs a little between databases:
+
+| Database | Top 5 rows |
+| --- | --- |
+| SQLite, MySQL, PostgreSQL | `LIMIT 5` |
+| SQL Server | `SELECT TOP 5 ...` |
+| Oracle, standard SQL | `FETCH FIRST 5 ROWS ONLY` |
+
+A large `OFFSET` is slow. To skip 100,000 rows, the database still has to read all of them. For deep pages, real systems use **keyset pagination**: remember the last id you showed and ask for rows after it.
+
+## Code example
+
+```sql
+SELECT id, name, price
+FROM products
+ORDER BY id
+LIMIT 4;                         -- page 1: the first 4 rows
+```
+
+```output
+id | name                | price
+---+---------------------+-------
+1  | Wireless Mouse      | 599.0
+2  | Mechanical Keyboard | 2499.0
+3  | USB-C Cable         | 299.0
+4  | Bluetooth Speaker   | 1899.0
+```
+
+```sql
+SELECT id, name, price
+FROM products
+ORDER BY id
+LIMIT 4 OFFSET 4;                -- page 2: skip 4, then take 4
+```
+
+```output
+id | name           | price
+---+----------------+------
+5  | Notebook A5    | 80.0
+6  | Gel Pen Pack   | 120.0
+7  | Desk Organizer | 450.0
+8  | Cotton T-Shirt | 499.0
+```
+
+```sql
+SELECT id, name, price
+FROM products
+WHERE id > 8                     -- keyset pagination: continue after the last id shown
+ORDER BY id
+LIMIT 4;
+```
+
+```output
+id | name               | price
+---+--------------------+-------
+9  | Running Shoes      | 2999.0
+10 | Steel Water Bottle | 650.0
+11 | Table Lamp         | 1250.0
+12 | Yoga Mat           | 899.0
+```
+
+<Playground kind="sql">
+
+```sql
+-- The 3 most expensive products
+SELECT name, price
+FROM products
+ORDER BY price DESC
+LIMIT 3;
+
+-- Try it: show the 4th, 5th and 6th most expensive products.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using LIMIT without ORDER BY">
+
+<Wrong>
+
+```sql
+SELECT name FROM customers LIMIT 3 OFFSET 3;   -- "page 2" of an undefined order
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM customers ORDER BY id LIMIT 3 OFFSET 3;
+```
+
+</Right>
+
+Pages are only stable when the rows are sorted by something unique, such as the id.
+
+</Mistake>
+
+<Mistake title="Using the page number as the offset">
+
+<Wrong>
+
+```sql
+SELECT id FROM orders ORDER BY id LIMIT 5 OFFSET 2;   -- starts at row 3, not at page 2
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT id FROM orders ORDER BY id LIMIT 5 OFFSET 5;   -- page 2 = skip (2 - 1) * 5 rows
+```
+
+</Right>
+
+`OFFSET` counts **rows**, not pages. Use `(page - 1) * page_size`.
+
+</Mistake>
+
+<Mistake title="Putting LIMIT before ORDER BY">
+
+<Wrong>
+
+```sql
+SELECT name FROM products LIMIT 3 ORDER BY price;   -- Error: syntax error
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM products ORDER BY price LIMIT 3;
+```
+
+</Right>
+
+`LIMIT` always comes last.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you implement pagination in SQL?">
+
+With `ORDER BY` on a stable column plus `LIMIT page_size OFFSET (page - 1) * page_size`. This is offset pagination. It is simple, but slow for deep pages and can skip or repeat rows if data changes between requests.
+
+</QA>
+
+<QA q="What is keyset (cursor) pagination and why is it better?">
+
+The client sends the last value it saw, and the query asks for rows after it: `WHERE id > :last_id ORDER BY id LIMIT 20`. With an index on `id`, the database jumps straight to the right place, so every page is equally fast, and inserts do not shift the pages. The trade-off is that you cannot jump to an arbitrary page number.
+
+</QA>
+
+<QA q="How do you find the second highest salary using LIMIT?">
+
+Sort the distinct salaries in descending order, skip one and take one.
+
+```sql
+SELECT DISTINCT salary FROM employees ORDER BY salary DESC LIMIT 1 OFFSET 1;
+```
+
+</QA>
+
+<QA q="What is the equivalent of LIMIT in SQL Server and Oracle?">
+
+SQL Server uses `SELECT TOP n`, or `OFFSET m ROWS FETCH NEXT n ROWS ONLY` after `ORDER BY`. Oracle (12c and later) and the SQL standard use `FETCH FIRST n ROWS ONLY`; older Oracle used `ROWNUM`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'With 10 rows per page, which clause gives page 3?',
+      options: ['LIMIT 10 OFFSET 3', 'LIMIT 3 OFFSET 10', 'LIMIT 10 OFFSET 20', 'LIMIT 30'],
+      answer: 2,
+      why: 'Page 3 skips two full pages: (3 - 1) * 10 = 20 rows.',
+    },
+    {
+      q: 'What does LIMIT 5 do?',
+      options: ['Skips 5 rows', 'Returns at most 5 rows', 'Returns exactly 5 columns', 'Sorts by 5 columns'],
+      answer: 1,
+      why: 'LIMIT caps the number of rows in the result.',
+    },
+    {
+      q: 'Why should LIMIT be used together with ORDER BY?',
+      options: [
+        'It is a syntax rule',
+        'Without a sort, which rows come first is not defined',
+        'LIMIT is slower without it',
+        'To remove duplicates',
+      ],
+      answer: 1,
+      why: 'Only a sort makes "the first N rows" a meaningful, repeatable set.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| First 10 rows | `LIMIT 10` |
+| Skip 20, take 10 | `LIMIT 10 OFFSET 20` |
+| Page p of size s | `LIMIT s OFFSET (p - 1) * s` |
+| Top 3 by price | `ORDER BY price DESC LIMIT 3` |
+| Second highest | `ORDER BY salary DESC LIMIT 1 OFFSET 1` |
+| Keyset page | `WHERE id > last_id ORDER BY id LIMIT 10` |
+| MySQL short form | `LIMIT 20, 10` (offset first, then count) |
+
+</CheatSheet>

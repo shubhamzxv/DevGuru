@@ -1,0 +1,255 @@
+---
+id: python-json-and-csv
+title: Working with JSON and CSV
+summary: JSON and CSV are two common text formats for data, and Python has built-in modules to read and write both.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+A **CSV** file is like a ration register: a simple table with rows and columns, one family per row.
+
+A **JSON** file is like a filled form with sections inside sections: name, address (with street, city and PIN), and a list of family members.
+
+</Analogy>
+
+## Simple explanation
+
+**JSON** (JavaScript Object Notation) is the format that APIs use to send data. It looks almost like a Python dictionary.
+
+The `json` module converts in both directions:
+
+- `json.dumps(data)` turns a Python object into a JSON **string**. This is called **serializing**
+- `json.loads(text)` turns a JSON string back into a Python object. This is called **parsing**
+- `json.dump(data, file)` and `json.load(file)` do the same with a file
+
+Tip: the functions with an **s** at the end work with **s**trings.
+
+Python types map to JSON types: `dict` to object, `list` and `tuple` to array, `None` to `null`, `True` to `true`.
+
+**CSV** (Comma-Separated Values) is a plain table. Each line is a row, and commas separate the columns. Excel and Google Sheets can open it.
+
+The `csv` module handles it:
+
+- `csv.writer` writes rows from lists
+- `csv.DictReader` reads each row as a dictionary, using the first line as the keys
+
+Every value read from a CSV file is a **string**. Convert numbers yourself.
+
+## Code example
+
+```python
+import csv
+import json
+
+user = {"name": "Asha", "age": 25, "skills": ["python", "sql"], "active": True, "manager": None}
+
+text = json.dumps(user)                       # Python object -> JSON string
+print(text)
+print(type(text).__name__)
+
+back = json.loads(text)                       # JSON string -> Python object
+print(back["skills"][0], back["manager"])
+
+print(json.dumps({"city": "Pune", "pin": 411001}, indent=2))   # pretty print
+
+with open("user.json", "w", encoding="utf-8") as f:
+    json.dump(user, f)                        # write JSON to a file
+with open("user.json", encoding="utf-8") as f:
+    print(json.load(f)["name"])               # read JSON from a file
+
+with open("items.csv", "w", newline="", encoding="utf-8") as f:
+    writer = csv.writer(f)
+    writer.writerow(["item", "price"])        # header row
+    writer.writerows([["pen", 10], ["bag", 700]])
+
+with open("items.csv", newline="", encoding="utf-8") as f:
+    for row in csv.DictReader(f):             # each row is a dict
+        print(row["item"], int(row["price"]) * 2)
+```
+
+```output
+{"name": "Asha", "age": 25, "skills": ["python", "sql"], "active": true, "manager": null}
+str
+python None
+{
+  "city": "Pune",
+  "pin": 411001
+}
+Asha
+pen 20
+bag 1400
+```
+
+<Playground kind="python">
+
+```python
+import json
+
+response = '{"status": "ok", "orders": [{"id": 1, "total": 250}, {"id": 2, "total": 400}]}'
+
+data = json.loads(response)
+totals = [order["total"] for order in data["orders"]]
+
+print("Status:", data["status"])
+print("Number of orders:", len(totals))
+print("Revenue:", sum(totals))
+
+# Try it: add a third order to the JSON text and run again.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using single quotes in JSON text">
+
+<Wrong>
+
+```python
+import json
+
+print(json.loads("{'name': 'Asha'}"))   # JSONDecodeError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import json
+
+print(json.loads('{"name": "Asha"}'))   # {'name': 'Asha'}
+```
+
+</Right>
+
+JSON allows only double quotes around keys and strings.
+
+</Mistake>
+
+<Mistake title="Mixing up dump and dumps">
+
+<Wrong>
+
+```python
+import json
+
+text = json.dump({"a": 1})   # TypeError: dump() missing 1 required positional argument: 'fp'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import json
+
+text = json.dumps({"a": 1})
+print(text)   # {"a": 1}
+```
+
+</Right>
+
+`dump` writes to a file and needs the file. `dumps` returns a string.
+
+</Mistake>
+
+<Mistake title="Forgetting that CSV values are strings">
+
+<Wrong>
+
+```python
+row = {"item": "pen", "price": "50"}   # as read from a CSV file
+print(row["price"] * 2)   # 5050
+```
+
+</Wrong>
+
+<Right>
+
+```python
+row = {"item": "pen", "price": "50"}
+print(int(row["price"]) * 2)   # 100
+```
+
+</Right>
+
+The `csv` module never converts types. Use `int()` or `float()` on number columns.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between json.load() and json.loads()?">
+
+`json.load(file)` reads JSON from an open file object. `json.loads(text)` parses JSON from a string. In the same way, `json.dump()` writes to a file and `json.dumps()` returns a string.
+
+</QA>
+
+<QA q="How do Python types map to JSON types?">
+
+`dict` becomes an object, `list` and `tuple` become an array, `str` a string, `int` and `float` a number, `True` and `False` become `true` and `false`, and `None` becomes `null`. Going back, an array always becomes a `list`, so tuples are not preserved.
+
+</QA>
+
+<QA q="How do you serialize an object that JSON does not support, such as a datetime?">
+
+Pass a `default` function that converts unknown objects, for example to a string.
+
+```python
+import json
+from datetime import date
+
+print(json.dumps({"day": date(2026, 1, 26)}, default=str))   # {"day": "2026-01-26"}
+```
+
+</QA>
+
+<QA q="What is the difference between csv.reader and csv.DictReader?">
+
+`csv.reader` gives each row as a list, so you use positions like `row[1]`. `csv.DictReader` uses the header line as keys and gives each row as a dictionary, so you use names like `row["price"]`. `DictReader` is easier to read and survives column reordering.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which function turns a Python dict into a JSON string?',
+      options: ['json.load()', 'json.loads()', 'json.dump()', 'json.dumps()'],
+      answer: 3,
+      why: 'dumps means "dump to string". It returns the JSON text.',
+    },
+    {
+      q: 'What does Python None become in JSON?',
+      options: ['None', 'null', '0', '""'],
+      answer: 1,
+      why: 'JSON uses null for "no value".',
+    },
+    {
+      q: 'What type are the values you get from csv.DictReader?',
+      options: ['int', 'float', 'str', 'It depends on the column'],
+      answer: 2,
+      why: 'CSV is plain text, so every value arrives as a string.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Object to JSON string | `json.dumps(data)` |
+| JSON string to object | `json.loads(text)` |
+| Object to JSON file | `json.dump(data, f)` |
+| JSON file to object | `json.load(f)` |
+| Pretty JSON | `json.dumps(data, indent=2)` |
+| Write CSV rows | `csv.writer(f).writerows(rows)` |
+| Read CSV as dicts | `csv.DictReader(f)` |
+| Open a CSV file | `open("a.csv", newline="")` |
+
+</CheatSheet>

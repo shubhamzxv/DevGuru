@@ -1,0 +1,276 @@
+---
+id: sql-union
+title: UNION and UNION ALL
+summary: UNION stacks the results of two queries on top of each other and removes duplicates, while UNION ALL keeps every row.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of two guest lists for one function: one from the bride's side and one from the groom's side. To send invitations, you put both lists together into one long list.
+
+If you strike out names that appear on both, that is `UNION`. If you keep every line as it is, that is `UNION ALL`.
+
+</Analogy>
+
+## Simple explanation
+
+A JOIN puts tables **side by side** and adds columns. A **UNION** puts results **one below the other** and adds rows.
+
+`SELECT ... UNION SELECT ...`
+
+Rules for both queries:
+
+- They must return the **same number of columns**
+- The columns must have compatible types, in the same order
+- The column names in the result come from the **first** query
+
+The two forms:
+
+- `UNION` removes duplicate rows from the combined result. To do that it must sort or hash all the rows, which costs time
+- `UNION ALL` keeps everything. It is faster, because it just appends
+
+Use `UNION ALL` unless you really need duplicates removed.
+
+`ORDER BY` and `LIMIT` are written **once, at the very end**, and apply to the whole combined result.
+
+Two related operators compare results:
+
+- `INTERSECT` returns rows that appear in **both** results
+- `EXCEPT` returns rows of the first result that are **not** in the second (Oracle calls it `MINUS`)
+
+## Code example
+
+```sql
+SELECT city FROM customers
+UNION                                -- duplicates removed: each city once
+SELECT city FROM employees
+ORDER BY city                        -- sorts the whole combined result
+LIMIT 6;
+```
+
+```output
+city
+---------
+Ahmedabad
+Bengaluru
+Chennai
+Delhi
+Goa
+Hyderabad
+```
+
+```sql
+SELECT
+  (SELECT COUNT(*) FROM (SELECT city FROM customers UNION     SELECT city FROM employees)) AS with_union,
+  (SELECT COUNT(*) FROM (SELECT city FROM customers UNION ALL SELECT city FROM employees)) AS with_union_all;
+```
+
+```output
+with_union | with_union_all
+-----------+---------------
+11         | 31
+```
+
+```sql
+SELECT name, 'customer' AS kind FROM customers WHERE city = 'Pune'
+UNION ALL                            -- keep everything, and label where each row came from
+SELECT name, 'employee' FROM employees WHERE city = 'Pune'
+ORDER BY kind, name;
+```
+
+```output
+name           | kind
+---------------+---------
+Pooja Desai    | customer
+Arjun Mehta    | employee
+Asha Kulkarni  | employee
+Lakshmi Pillai | employee
+Manoj Yadav    | employee
+Tanvi Joshi    | employee
+```
+
+```sql
+SELECT city FROM customers
+INTERSECT                            -- cities that have both customers and employees
+SELECT city FROM employees
+ORDER BY city;
+```
+
+```output
+city
+---------
+Delhi
+Hyderabad
+Kochi
+Kolkata
+Mumbai
+Pune
+```
+
+<Playground kind="sql">
+
+```sql
+-- Cities where we have customers but no employees
+SELECT city FROM customers
+EXCEPT
+SELECT city FROM employees
+ORDER BY city;
+
+-- Try it: swap the two queries to find cities with employees but no customers.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Different numbers of columns">
+
+<Wrong>
+
+```sql
+SELECT name, city FROM customers
+UNION
+SELECT name FROM employees;   -- Error: SELECTs do not have the same number of result columns
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, city FROM customers
+UNION
+SELECT name, city FROM employees
+LIMIT 3;
+```
+
+</Right>
+
+Both sides must return the same number of columns. Add a placeholder such as `NULL` if one side lacks a column.
+
+</Mistake>
+
+<Mistake title="Using UNION when duplicates do not matter">
+
+<Wrong>
+
+```sql
+SELECT id, order_date FROM orders WHERE status = 'placed'
+UNION
+SELECT id, order_date FROM orders WHERE status = 'shipped';   -- the rows cannot overlap, but UNION still checks
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT id, order_date FROM orders WHERE status = 'placed'
+UNION ALL
+SELECT id, order_date FROM orders WHERE status = 'shipped';
+```
+
+</Right>
+
+When the two results cannot contain the same row, `UNION ALL` gives the same answer without the cost of removing duplicates.
+
+</Mistake>
+
+<Mistake title="Putting ORDER BY in the first query">
+
+<Wrong>
+
+```sql
+SELECT city FROM customers ORDER BY city
+UNION
+SELECT city FROM employees;   -- Error: ORDER BY clause should come after UNION
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT city FROM customers
+UNION
+SELECT city FROM employees
+ORDER BY city LIMIT 3;
+```
+
+</Right>
+
+Sort once, at the end of the whole statement.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between UNION and UNION ALL?">
+
+Both combine the result sets of two or more `SELECT` statements. `UNION` removes duplicate rows, which requires an extra sort or hash step. `UNION ALL` returns all rows including duplicates and is faster. Use `UNION ALL` when duplicates are impossible or acceptable.
+
+</QA>
+
+<QA q="What is the difference between UNION and JOIN?">
+
+`UNION` combines results **vertically**: it appends rows, and both queries must have the same column structure. `JOIN` combines tables **horizontally**: it adds columns from related tables based on a condition.
+
+</QA>
+
+<QA q="What are the rules for using UNION?">
+
+Each `SELECT` must have the same number of columns, with compatible data types in the same positions. Column names come from the first query. `ORDER BY` can appear only once, at the end.
+
+</QA>
+
+<QA q="What do INTERSECT and EXCEPT do?">
+
+`INTERSECT` returns only the rows present in both result sets. `EXCEPT` (`MINUS` in Oracle) returns rows from the first result that are not in the second. Both remove duplicates. MySQL supports them from version 8.0.31.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which operator keeps duplicate rows?',
+      options: ['UNION', 'UNION ALL', 'INTERSECT', 'EXCEPT'],
+      answer: 1,
+      why: 'UNION ALL appends everything. UNION removes duplicates.',
+    },
+    {
+      q: 'What must be the same in both queries of a UNION?',
+      options: ['The table names', 'The number of columns', 'The WHERE conditions', 'The number of rows'],
+      answer: 1,
+      why: 'Both sides need the same number of columns with compatible types.',
+    },
+    {
+      q: 'Which is usually faster?',
+      options: ['UNION', 'UNION ALL', 'They are always equal', 'INTERSECT'],
+      answer: 1,
+      why: 'UNION ALL skips the step that looks for duplicates.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Operator | Returns |
+| --- | --- |
+| `UNION` | Rows from both, duplicates removed |
+| `UNION ALL` | Rows from both, everything kept |
+| `INTERSECT` | Rows that are in both |
+| `EXCEPT` | Rows in the first but not in the second |
+
+| Rule | |
+| --- | --- |
+| Columns | Same count and compatible types |
+| Names | Taken from the first query |
+| Sorting | One `ORDER BY`, at the end |
+| Default choice | `UNION ALL` |
+
+</CheatSheet>

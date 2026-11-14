@@ -1,0 +1,239 @@
+---
+id: python-list-vs-tuple
+title: List vs tuple
+summary: A list can be changed and a tuple cannot. That one difference decides when to use each.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+A list is a to-do list written in pencil. You can add tasks, rub one out, or change the order.
+
+A tuple is a printed train ticket. The details are fixed. Because it never changes, others can trust it and reuse it safely.
+
+</Analogy>
+
+## Simple explanation
+
+Both a **list** and a **tuple** keep items in order, allow duplicates, and support indexing and slicing.
+
+The main difference is **mutability**. A list is mutable (it can change). A tuple is immutable (it cannot).
+
+This one difference leads to the others:
+
+| Point | List | Tuple |
+| --- | --- | --- |
+| Written with | `[1, 2]` | `(1, 2)` |
+| Can change? | Yes | No |
+| Methods | Many (`append`, `sort`, ...) | Two (`count`, `index`) |
+| Memory | More | Less |
+| Dictionary key? | No | Yes |
+| Best for | Items that grow or change | Fixed groups of values |
+
+A tuple is **hashable** when its items are. Hashable means Python can turn it into a fixed number, which is needed for dictionary keys and set items.
+
+Choose a list when the data will change, like a cart. Choose a tuple when it will not, like a latitude and longitude pair.
+
+## Code example
+
+```python
+import sys
+
+cart = ["rice", "dal"]             # list: will grow
+cart.append("milk")                # allowed
+print(cart)
+
+location = (28.61, 77.21)          # tuple: fixed pair
+print(location[0])
+
+big_list = [1, 2, 3, 4, 5]
+big_tuple = (1, 2, 3, 4, 5)
+print(sys.getsizeof(big_tuple) < sys.getsizeof(big_list))   # tuple is smaller
+
+stores = {(28.61, 77.21): "Delhi"}   # a tuple can be a dictionary key
+print(stores[location])
+
+print(hasattr(location, "append"))   # tuples have no append method
+print(list(location), tuple(cart))   # convert between the two
+```
+
+```output
+['rice', 'dal', 'milk']
+28.61
+True
+Delhi
+False
+[28.61, 77.21] ('rice', 'dal', 'milk')
+```
+
+<Playground kind="python">
+
+```python
+as_list = [1, 2, 3]
+as_tuple = (1, 2, 3)
+
+as_list[0] = 99
+print(as_list)
+
+try:
+    as_tuple[0] = 99
+except TypeError as error:
+    print("Tuple says:", error)
+
+# Try it: use as_tuple as a dictionary key, then try the same with as_list.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using a list as a dictionary key">
+
+<Wrong>
+
+```python
+prices = {["tea", "small"]: 10}   # TypeError: unhashable type: 'list'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+prices = {("tea", "small"): 10}
+print(prices[("tea", "small")])   # 10
+```
+
+</Right>
+
+Keys must be hashable. A list can change, so it is not allowed. Use a tuple.
+
+</Mistake>
+
+<Mistake title="Using a list for data that must not change">
+
+<Wrong>
+
+```python
+WEEKEND = ["Sat", "Sun"]
+WEEKEND.append("Mon")   # nothing stops this
+print(WEEKEND)   # ['Sat', 'Sun', 'Mon']
+```
+
+</Wrong>
+
+<Right>
+
+```python
+WEEKEND = ("Sat", "Sun")
+print(len(WEEKEND))   # 2
+```
+
+</Right>
+
+A tuple protects fixed data from accidental changes.
+
+</Mistake>
+
+<Mistake title="Thinking a tuple makes everything inside it fixed">
+
+<Wrong>
+
+```python
+record = ("Asha", [80, 90])
+record[1].append(100)
+print(record)   # ('Asha', [80, 90, 100])
+```
+
+</Wrong>
+
+<Right>
+
+```python
+record = ("Asha", (80, 90))
+print(record)   # ('Asha', (80, 90))
+```
+
+</Right>
+
+A tuple only fixes which objects it holds. A list inside it can still change, so use a tuple inside too.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a list and a tuple?">
+
+A list is mutable and a tuple is immutable. Because of that, a tuple uses less memory, is slightly faster to create and loop over, can be used as a dictionary key or set item, and has only two methods. A list has many methods for adding, removing and sorting.
+
+</QA>
+
+<QA q="When would you choose a tuple over a list?">
+
+When the data is a fixed group that should not change: coordinates, RGB colours, a database row, values returned from a function, or a key in a dictionary. It also tells other developers "do not modify this".
+
+</QA>
+
+<QA q="Why is a tuple faster and smaller than a list?">
+
+A list must be ready to grow, so Python gives it extra space and stores extra bookkeeping. A tuple has a fixed size, so Python stores exactly what is needed.
+
+</QA>
+
+<QA q="Can you sort a tuple?">
+
+Not in place, because it has no `sort()` method. Use `sorted()`, which returns a new list, and convert back if needed.
+
+```python
+t = (3, 1, 2)
+print(tuple(sorted(t)))   # (1, 2, 3)
+```
+
+</QA>
+
+<QA q="Is a tuple always hashable?">
+
+No. A tuple is hashable only if every item inside it is hashable. `(1, [2, 3])` cannot be a dictionary key because it contains a list.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which one can be used as a dictionary key?',
+      options: ['[1, 2]', '(1, 2)', '{1, 2}', '{"a": 1}'],
+      answer: 1,
+      why: 'Keys must be hashable. A tuple of numbers is hashable; lists, sets and dicts are not.',
+    },
+    {
+      q: 'You are storing the items in a shopping cart that users add and remove. Which type fits?',
+      options: ['tuple', 'list', 'str', 'int'],
+      answer: 1,
+      why: 'The cart changes, so it needs a mutable type: a list.',
+    },
+    {
+      q: 'Which methods does a tuple have?',
+      options: ['append and pop', 'sort and reverse', 'count and index', 'add and remove'],
+      answer: 2,
+      why: 'A tuple cannot change, so it only has the two read-only methods count() and index().',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| | List | Tuple |
+| --- | --- | --- |
+| Syntax | `[1, 2]` | `(1, 2)` |
+| Mutable | Yes | No |
+| Add an item | `a.append(3)` | Not possible |
+| Dictionary key | No | Yes |
+| Memory | More | Less |
+| Use for | Changing data | Fixed data |
+| Convert | `list(t)` | `tuple(a)` |
+
+</CheatSheet>

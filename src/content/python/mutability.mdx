@@ -1,0 +1,260 @@
+---
+id: python-mutability
+title: Mutable vs immutable
+summary: A mutable object can be changed after it is created, and an immutable object cannot.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a whiteboard and a printed certificate. On a whiteboard you can rub out a word and write a new one; it is still the same board. A printed certificate cannot be edited. To change a name, you must print a new certificate.
+
+A **mutable** object is the whiteboard. An **immutable** object is the certificate.
+
+</Analogy>
+
+## Simple explanation
+
+Every value in Python is an **object** stored somewhere in memory. A variable is only a **name** that points to an object.
+
+A **mutable** object can be changed **in place**. The object stays the same; only its contents change. Lists, dictionaries and sets are mutable.
+
+An **immutable** object can never change. Any "change" creates a **new** object, and the name is moved to point at it. Numbers, strings, tuples, booleans and `None` are immutable.
+
+`id(obj)` gives the identity of an object (think of it as its address). If the id stays the same after an operation, the object was changed in place. If the id is different, a new object was made.
+
+Why this matters:
+
+- **Two names, one object**: `b = a` does not copy. If the object is mutable, a change through `b` is also seen through `a`
+- **Functions**: a function receives the same object, not a copy. If it changes a list it was given, the caller's list changes
+- **Dictionary keys and set items** must be immutable (more exactly, **hashable**)
+- **Default arguments**: a mutable default is shared between calls
+
+## Code example
+
+```python
+numbers = [1, 2, 3]                  # list: mutable
+before = id(numbers)
+numbers.append(4)                    # changed in place
+print(numbers, id(numbers) == before)
+
+name = "asha"                        # str: immutable
+before = id(name)
+name = name.upper()                  # a new string is created
+print(name, id(name) == before)
+
+a = [1, 2]
+b = a                                # b is another name for the SAME list
+b.append(3)
+print(a, a is b)
+
+x = 10
+y = x                                # both names point to the same int
+y += 1                               # ints cannot change: y now points to a new int
+print(x, y)
+
+def add_item(cart):
+    cart.append("pen")               # changes the caller's list
+
+def rename(text):
+    text = text + "!"                # only the local name moves to a new string
+
+my_cart, my_text = [], "hi"
+add_item(my_cart)
+rename(my_text)
+print(my_cart, my_text)
+
+point = (1, [2, 3])                  # an immutable tuple holding a mutable list
+point[1].append(4)
+print(point)
+```
+
+```output
+[1, 2, 3, 4] True
+ASHA False
+[1, 2, 3] True
+10 11
+['pen'] hi
+(1, [2, 3, 4])
+```
+
+<Playground kind="python">
+
+```python
+original = {"name": "Asha", "skills": ["python"]}
+alias = original
+alias["skills"].append("sql")
+
+print(original["skills"])
+print("Same object?", alias is original)
+
+text = "hello"
+other = text
+other += " world"
+print(text, "|", other)
+
+# Try it: use  alias = original.copy()  and add a new key to alias only.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Thinking assignment makes a copy">
+
+<Wrong>
+
+```python
+defaults = ["read"]
+admin = defaults
+admin.append("delete")
+print(defaults)   # ['read', 'delete']
+```
+
+</Wrong>
+
+<Right>
+
+```python
+defaults = ["read"]
+admin = defaults.copy()
+admin.append("delete")
+print(defaults)   # ['read']
+```
+
+</Right>
+
+`admin = defaults` gives the same list a second name. Copy it when you need a separate list.
+
+</Mistake>
+
+<Mistake title="A function quietly changing its argument">
+
+<Wrong>
+
+```python
+def with_tax(prices):
+    for i in range(len(prices)):
+        prices[i] = round(prices[i] * 1.18)
+    return prices
+
+original = [100, 200]
+with_tax(original)
+print(original)   # [118, 236]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def with_tax(prices):
+    return [round(p * 1.18) for p in prices]
+
+original = [100, 200]
+with_tax(original)
+print(original)   # [100, 200]
+```
+
+</Right>
+
+Changing an argument in place surprises the caller. Build and return a new list.
+
+</Mistake>
+
+<Mistake title="Building a big string with += in a loop">
+
+<Wrong>
+
+```python
+result = ""
+for word in ["a", "b", "c"]:
+    result += word        # a new string object on every round
+print(result)   # abc
+```
+
+</Wrong>
+
+<Right>
+
+```python
+print("".join(["a", "b", "c"]))   # abc
+```
+
+</Right>
+
+Strings are immutable, so each `+=` copies everything so far. `join()` builds the result once.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between mutable and immutable objects?">
+
+A mutable object's contents can be modified after creation without changing its identity: `list`, `dict`, `set`, `bytearray` and most user-defined objects. An immutable object's value cannot change; operations return new objects: `int`, `float`, `bool`, `str`, `tuple`, `frozenset`, `bytes`.
+
+</QA>
+
+<QA q="Is Python pass-by-value or pass-by-reference?">
+
+It is **pass-by-object-reference** (also called pass by assignment). The function gets a reference to the same object. Mutating a mutable object is visible to the caller. Reassigning the parameter only rebinds the local name and does not affect the caller.
+
+</QA>
+
+<QA q="Why must dictionary keys be immutable?">
+
+A dictionary finds a key by its hash. If a key could change, its hash would change and the value could no longer be found. So keys must be hashable, which in practice means immutable, such as strings, numbers and tuples of immutables.
+
+</QA>
+
+<QA q="Is a tuple always immutable?">
+
+The tuple itself is: you cannot add, remove or replace its items. But if it contains a mutable object such as a list, that object can still change. Such a tuple is also not hashable.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which of these types is mutable?',
+      options: ['str', 'tuple', 'list', 'int'],
+      answer: 2,
+      why: 'A list can be changed in place. Strings, tuples and ints cannot.',
+    },
+    {
+      q: 'After  a = [1]  then  b = a  then  b.append(2),  what is a?',
+      options: ['[1]', '[1, 2]', '[2]', 'An error'],
+      answer: 1,
+      why: 'a and b are two names for the same list, so the change is seen through both.',
+    },
+    {
+      q: 'After  s = "hi"  then  t = s  then  t += "!",  what is s?',
+      options: ['"hi!"', '"hi"', '"!"', 'An error'],
+      answer: 1,
+      why: 'Strings are immutable. t += "!" creates a new string for t, and s is untouched.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Mutable (can change) | Immutable (cannot change) |
+| --- | --- |
+| `list` | `int`, `float`, `bool` |
+| `dict` | `str` |
+| `set` | `tuple` |
+| `bytearray` | `frozenset`, `bytes` |
+| Most of your own objects | `None` |
+
+| Fact | Meaning |
+| --- | --- |
+| `b = a` | Same object, second name |
+| `a.copy()` | A new, separate object |
+| `id(a)` | Identity of the object |
+| Dict keys, set items | Must be immutable |
+
+</CheatSheet>

@@ -1,0 +1,255 @@
+---
+id: python-dictionaries
+title: Dictionaries
+summary: A dictionary stores pairs of key and value, so you can look up a value by its key.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of the contact list in your phone. You search by name, and you get the number. You do not scroll through every contact.
+
+A Python **dictionary** works the same way: name is the **key**, and number is the **value**.
+
+</Analogy>
+
+## Simple explanation
+
+A **dictionary** (type `dict`) stores **key-value pairs**. You write it with curly brackets, with a colon between each key and its value.
+
+You read a value by its key, not by a position.
+
+Rules to remember:
+
+- Keys are **unique**. Setting a key again replaces the old value
+- Keys must be **hashable**, such as strings, numbers or tuples. A list cannot be a key
+- Values can be anything, even lists or other dictionaries
+- A dictionary keeps the order in which you added the keys
+
+Common actions:
+
+- `user["name"]` reads a value and gives an error if the key is missing
+- `user.get("name")` reads a value and gives `None` if the key is missing
+- `user["city"] = "Pune"` adds a new pair or updates an old one
+- `del user["city"]` or `user.pop("city")` removes a pair
+- `user.items()` gives every key and value for a loop
+
+## Code example
+
+```python
+user = {"name": "Asha", "age": 25}       # two key-value pairs
+
+print(user["name"])                      # read by key
+print(user.get("email"))                 # missing key: None, no error
+print(user.get("email", "not set"))      # or a default value
+
+user["city"] = "Pune"                    # add a new pair
+user["age"] = 26                         # update an existing pair
+print(user)
+
+print("age" in user)                     # in checks the keys
+print(list(user.keys()))
+print(list(user.values()))
+
+for key, value in user.items():          # loop over pairs
+    print(key, "->", value)
+
+removed = user.pop("city")               # remove and return the value
+print(removed, len(user))
+```
+
+```output
+Asha
+None
+not set
+{'name': 'Asha', 'age': 26, 'city': 'Pune'}
+True
+['name', 'age', 'city']
+['Asha', 26, 'Pune']
+name -> Asha
+age -> 26
+city -> Pune
+Pune 2
+```
+
+<Playground kind="python">
+
+```python
+stock = {"pen": 40, "notebook": 12}
+
+stock["pen"] -= 5              # five pens sold
+stock["eraser"] = 30           # a new item arrives
+
+for item, quantity in stock.items():
+    print(f"{item:<10}{quantity:>4}")
+
+# Try it: print the item with the smallest quantity using min(stock, key=stock.get).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Reading a key that does not exist">
+
+<Wrong>
+
+```python
+user = {"name": "Asha"}
+print(user["email"])   # KeyError: 'email'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+user = {"name": "Asha"}
+print(user.get("email", "not set"))   # not set
+```
+
+</Right>
+
+Square brackets raise a `KeyError` for a missing key. `get()` returns a default.
+
+</Mistake>
+
+<Mistake title="Using a list as a key">
+
+<Wrong>
+
+```python
+seats = {[1, "A"]: "Asha"}   # TypeError: unhashable type: 'list'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+seats = {(1, "A"): "Asha"}
+print(seats[(1, "A")])   # Asha
+```
+
+</Right>
+
+Keys must be hashable. Use a tuple.
+
+</Mistake>
+
+<Mistake title="Deleting keys while looping over the dictionary">
+
+<Wrong>
+
+```python
+marks = {"Asha": 80, "Ravi": 30}
+for name in marks:
+    if marks[name] < 40:
+        del marks[name]   # RuntimeError: dictionary changed size during iteration
+```
+
+</Wrong>
+
+<Right>
+
+```python
+marks = {"Asha": 80, "Ravi": 30}
+for name in list(marks):
+    if marks[name] < 40:
+        del marks[name]
+print(marks)   # {'Asha': 80}
+```
+
+</Right>
+
+Loop over a copy of the keys with `list(marks)` when you delete inside the loop.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does a dictionary work internally?">
+
+A dictionary is a **hash table**. Python runs `hash()` on the key to get a number, and uses that number to find the slot where the value is stored. That is why lookups, inserts and deletes take O(1) time on average, and why keys must be hashable.
+
+</QA>
+
+<QA q="What is the difference between d[key] and d.get(key)?">
+
+`d[key]` raises a `KeyError` if the key is missing. `d.get(key)` returns `None`, or the default you pass as the second argument.
+
+</QA>
+
+<QA q="Are dictionaries ordered?">
+
+Yes. Since Python 3.7, a dictionary keeps keys in the order they were inserted. Before that, the order was not guaranteed.
+
+</QA>
+
+<QA q="How do you merge two dictionaries?">
+
+Use the `|` operator (Python 3.9+) or unpack both with `**`. For the same key, the value on the right wins.
+
+```python
+a = {"x": 1, "y": 2}
+b = {"y": 20, "z": 30}
+print(a | b)          # {'x': 1, 'y': 20, 'z': 30}
+print({**a, **b})     # {'x': 1, 'y': 20, 'z': 30}
+```
+
+</QA>
+
+<QA q="How do you count how many times each item appears?">
+
+Use `Counter` from the `collections` module, or a dictionary with `get()`.
+
+```python
+from collections import Counter
+
+print(Counter("banana").most_common(1))   # [('a', 3)]
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does {"a": 1}.get("b") return?',
+      options: ['0', 'None', 'An error', '"b"'],
+      answer: 1,
+      why: 'get() returns None when the key is missing and no default is given.',
+    },
+    {
+      q: 'What is d after  d = {"a": 1}  and  d["a"] = 5?',
+      options: ['{"a": 1, "a": 5}', '{"a": 5}', '{"a": 6}', 'An error'],
+      answer: 1,
+      why: 'Keys are unique, so setting an existing key replaces its value.',
+    },
+    {
+      q: 'Which value cannot be used as a dictionary key?',
+      options: ['"name"', '42', '(1, 2)', '[1, 2]'],
+      answer: 3,
+      why: 'A list is mutable and not hashable, so it cannot be a key.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Make a dict | `d = {"a": 1}` |
+| Read (error if missing) | `d["a"]` |
+| Read (safe) | `d.get("a", 0)` |
+| Add or update | `d["b"] = 2` |
+| Remove | `d.pop("b")` or `del d["b"]` |
+| Has this key? | `"a" in d` |
+| All keys / values | `d.keys()`, `d.values()` |
+| Loop over pairs | `for k, v in d.items():` |
+| Merge | `a \| b` |
+
+</CheatSheet>

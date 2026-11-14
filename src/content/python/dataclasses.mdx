@@ -1,0 +1,306 @@
+---
+id: python-dataclasses
+title: Dataclasses
+summary: A dataclass is a class for holding data, where Python writes __init__, __repr__ and __eq__ for you.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a rubber stamp for a visiting card. Without it, you write your name, phone and address by hand on every card. With the stamp, you fill in the details once and it prints the same layout every time.
+
+A **dataclass** is that stamp. You list the fields once, and Python writes the repeated code.
+
+</Analogy>
+
+## Simple explanation
+
+Many classes exist only to hold data: a user, a product, an order. For each one you would write an `__init__` that copies every argument to `self`, a `__repr__` for printing, and an `__eq__` for comparing. That is a lot of repeated code, often called **boilerplate**.
+
+The `@dataclass` decorator generates it for you. You only list the fields with their **type hints**.
+
+From the fields, Python creates:
+
+- `__init__`, so you can write `Product("Pen", 10)`
+- `__repr__`, so printing shows `Product(name='Pen', price=10)`
+- `__eq__`, so two objects with the same values are equal
+
+Useful options:
+
+- A field can have a default value, like `stock: int = 0`. Fields with defaults come after fields without
+- For a list or dict default, write `field(default_factory=list)`. A plain `[]` is not allowed
+- `@dataclass(frozen=True)` makes objects **immutable**: they cannot be changed after creation, and they become hashable
+- `@dataclass(order=True)` adds `<` and `>`, comparing fields in order
+- `__post_init__` runs after the generated `__init__`. Use it to validate or to compute extra fields
+
+A dataclass is still a normal class. You can add methods and properties.
+
+## Code example
+
+```python
+from dataclasses import asdict, dataclass, field
+
+@dataclass
+class Product:
+    name: str                              # fields with type hints
+    price: float
+    stock: int = 0                         # a default value
+    tags: list[str] = field(default_factory=list)   # a new list for each object
+
+    def total_value(self) -> float:        # normal methods are allowed
+        return self.price * self.stock
+
+pen = Product("Pen", 10.0, 50)             # __init__ was written for us
+print(pen)                                 # so was __repr__
+print(pen == Product("Pen", 10.0, 50))     # and __eq__
+print(pen.total_value())
+
+pen.tags.append("stationery")
+print(Product("Bag", 700.0).tags)          # other objects are not affected
+print(asdict(pen))                         # convert to a dictionary
+
+@dataclass(frozen=True)                    # immutable
+class Point:
+    x: int
+    y: int
+
+p = Point(2, 3)
+try:
+    p.x = 10
+except AttributeError as error:
+    print("Frozen:", type(error).__name__)
+print({p: "home"}[Point(2, 3)])            # frozen dataclasses can be dict keys
+
+@dataclass
+class Order:
+    quantity: int
+    unit_price: float
+    total: float = field(init=False)       # not passed in; computed below
+
+    def __post_init__(self):               # runs after __init__
+        if self.quantity <= 0:
+            raise ValueError("quantity must be positive")
+        self.total = self.quantity * self.unit_price
+
+print(Order(3, 99.5))
+```
+
+```output
+Product(name='Pen', price=10.0, stock=50, tags=[])
+True
+500.0
+[]
+{'name': 'Pen', 'price': 10.0, 'stock': 50, 'tags': ['stationery']}
+Frozen: FrozenInstanceError
+home
+Order(quantity=3, unit_price=99.5, total=298.5)
+```
+
+<Playground kind="python">
+
+```python
+from dataclasses import dataclass
+
+@dataclass(order=True)
+class Student:
+    marks: int
+    name: str
+
+students = [Student(82, "Asha"), Student(67, "Ravi"), Student(91, "Meera")]
+
+print(max(students))
+for student in sorted(students, reverse=True):
+    print(student.name, student.marks)
+
+# Try it: add a field  city  with the default value "Delhi".
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using a list as a default value">
+
+<Wrong>
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Cart:
+    items: list = []   # ValueError: mutable default <class 'list'> for field items is not allowed
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class Cart:
+    items: list = field(default_factory=list)
+
+print(Cart().items)   # []
+```
+
+</Right>
+
+A shared default list would leak between objects, so dataclasses refuse it. Use `default_factory`.
+
+</Mistake>
+
+<Mistake title="Leaving out the type hint">
+
+<Wrong>
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class User:
+    name: str
+    role = "member"        # no hint: not a field, only a class attribute
+
+print(User("Asha", "admin"))   # TypeError: User.__init__() takes 2 positional arguments but 3 were given
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class User:
+    name: str
+    role: str = "member"
+
+print(User("Asha", "admin"))   # User(name='Asha', role='admin')
+```
+
+</Right>
+
+Only names with a type hint become fields.
+
+</Mistake>
+
+<Mistake title="Putting a field without a default after one with a default">
+
+<Wrong>
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class User:
+    role: str = "member"
+    name: str          # TypeError: non-default argument 'name' follows default argument 'role'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class User:
+    name: str
+    role: str = "member"
+
+print(User("Asha"))   # User(name='Asha', role='member')
+```
+
+</Right>
+
+The generated `__init__` follows normal function rules: required parameters first.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a dataclass?">
+
+A class decorated with `@dataclass` (Python 3.7+) that automatically gets `__init__`, `__repr__` and `__eq__` generated from its annotated fields. It reduces boilerplate for classes whose main job is to store data.
+
+</QA>
+
+<QA q="What is the difference between a dataclass and a namedtuple?">
+
+A namedtuple is an immutable tuple with named fields; it supports indexing and unpacking. A dataclass is a regular class: mutable by default, supports defaults, methods, inheritance and `__post_init__`, and can be made immutable with `frozen=True`.
+
+</QA>
+
+<QA q="What is the difference between a dataclass and a Pydantic model?">
+
+A dataclass only stores what it is given; the type hints are not checked. A Pydantic model **validates and converts** the data at run time and raises an error for bad input. Use dataclasses for internal data, and Pydantic for data that comes from outside, such as API requests.
+
+</QA>
+
+<QA q="What does frozen=True do?">
+
+It makes instances immutable: assigning to a field raises `FrozenInstanceError`. Because the values cannot change, Python also generates `__hash__`, so the objects can be used as dictionary keys and in sets.
+
+</QA>
+
+<QA q="What is __post_init__ used for?">
+
+It is called at the end of the generated `__init__`. It is the place for validation and for fields that are derived from other fields.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which methods does @dataclass generate by default?',
+      options: [
+        '__init__, __repr__ and __eq__',
+        'Only __init__',
+        '__add__ and __len__',
+        'None; you write them all',
+      ],
+      answer: 0,
+      why: 'By default it writes the initializer, the printable form and the equality check.',
+    },
+    {
+      q: 'How do you give a dataclass field a new empty list as its default?',
+      options: ['items: list = []', 'items: list = field(default_factory=list)', 'items = list', 'items: [] = None'],
+      answer: 1,
+      why: 'default_factory calls list() for each new object, so nothing is shared.',
+    },
+    {
+      q: 'What does @dataclass(frozen=True) do?',
+      options: [
+        'Makes the class faster',
+        'Makes objects immutable after creation',
+        'Hides the fields',
+        'Sorts the fields',
+      ],
+      answer: 1,
+      why: 'Frozen dataclasses raise an error when you try to change a field.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Make one | `@dataclass` above `class Item:` |
+| Field | `name: str` |
+| Default | `stock: int = 0` |
+| List default | `tags: list[str] = field(default_factory=list)` |
+| Immutable | `@dataclass(frozen=True)` |
+| Sortable | `@dataclass(order=True)` |
+| After-init logic | `def __post_init__(self):` |
+| To a dict | `asdict(obj)` |
+
+</CheatSheet>

@@ -117,10 +117,17 @@ export function MdxPre({ children }: ComponentProps<'pre'>) {
   if (isValidElement<CodeChildProps>(children) && typeof children.props.children === 'string') {
     const language = /language-([\w-]+)/.exec(children.props.className ?? '')?.[1];
     const code = children.props.children.replace(/\n$/, '');
+    // ```mysql and ```postgresql: coloured as SQL, but not runnable in the SQLite playground.
+    const otherEngine = language === 'mysql' || language === 'postgresql';
     return language === 'output' ? (
       <OutputBlock text={code} />
     ) : (
-      <CodeBlock code={code} language={language} />
+      <CodeBlock
+        code={code}
+        language={otherEngine ? 'sql' : language}
+        label={otherEngine ? language : undefined}
+        tryIt={!otherEngine}
+      />
     );
   }
   return <pre className="my-4 overflow-x-auto">{children}</pre>;

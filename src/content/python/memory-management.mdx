@@ -1,0 +1,300 @@
+---
+id: python-memory-management
+title: Memory management (reference counting, garbage collection)
+summary: Python manages memory for you by counting how many names point to each object and freeing objects that nobody uses any more.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a library book with a slip that counts how many people are holding a copy on loan. Each new borrower adds one. Each return removes one. When the count reaches zero, the book goes back on the shelf for others.
+
+Sometimes two members keep lending the same book to each other and never return it. So once in a while a librarian walks around and collects such forgotten books.
+
+The loan slip is **reference counting**. The librarian's round is the **garbage collector**.
+
+</Analogy>
+
+## Simple explanation
+
+In languages like C, the programmer must ask for memory and give it back. In Python, this is **automatic**.
+
+All Python objects live in a private area of memory called the **private heap**. The interpreter's **memory manager** controls it.
+
+Python (the standard CPython) uses two mechanisms to free memory.
+
+**1. Reference counting.** Every object stores a number: how many **references** (names, list slots, attributes) point to it.
+
+- The count goes up when you assign the object to a new name or put it in a container
+- The count goes down when a name is deleted, reassigned, or goes out of scope
+- When the count reaches **zero**, the object is destroyed **immediately** and its memory is freed
+
+**2. Garbage collection.** Reference counting cannot handle a **reference cycle**: two objects that point to each other. Their counts never reach zero, even when nothing else uses them. A separate **garbage collector** (the `gc` module) runs from time to time, finds such unreachable cycles, and frees them.
+
+The garbage collector is **generational**. New objects are checked often. Objects that survive are moved to older generations and checked less often, because old objects tend to stay.
+
+Small objects are also served from memory pools that Python keeps ready, which makes creating and destroying them fast.
+
+## Code example
+
+```python
+import gc
+import sys
+
+data = [1, 2, 3]
+base = sys.getrefcount(data)             # the count right now
+
+alias = data                             # one more name points to the list
+holder = {"key": data}                   # a dict value points to it too
+print(sys.getrefcount(data) - base)      # two more references
+
+del alias                                # remove one name
+holder.clear()                           # remove the dict's reference
+print(sys.getrefcount(data) - base)      # back to where we started
+
+class Node:
+    def __init__(self, name):
+        self.name = name
+        self.partner = None
+
+    def __del__(self):                   # runs when the object is destroyed
+        print("freed", self.name)
+
+solo = Node("solo")
+del solo                                 # count hits zero: freed at once
+
+a, b = Node("a"), Node("b")
+a.partner, b.partner = b, a              # a cycle: each points to the other
+del a, b                                 # counts do not reach zero
+print("after del: nothing freed yet")
+
+found = gc.collect()                     # the garbage collector finds the cycle
+print("collector found objects:", found > 0)
+print(gc.isenabled(), len(gc.get_threshold()))
+```
+
+```output
+2
+0
+freed solo
+after del: nothing freed yet
+freed a
+freed b
+collector found objects: True
+True 3
+```
+
+<Visual caption="A name adds 1 to an object's reference count. At zero, the object is freed. Two objects in a cycle keep each other at 1, so the garbage collector must free them.">
+  <svg viewBox="0 0 340 150" width="340" height="150" role="img" aria-label="Reference counting: one object with two names has count 2, and two objects in a cycle each keep the other alive">
+    <rect x="10" y="15" width="60" height="26" rx="6" fill="#e0e7ff" stroke="#4f46e5" strokeWidth="2" />
+    <text x="40" y="33" textAnchor="middle" fontSize="13" fontFamily="monospace" fill="#1e1b4b">data</text>
+    <rect x="10" y="55" width="60" height="26" rx="6" fill="#e0e7ff" stroke="#4f46e5" strokeWidth="2" />
+    <text x="40" y="73" textAnchor="middle" fontSize="13" fontFamily="monospace" fill="#1e1b4b">alias</text>
+    <line x1="70" y1="28" x2="118" y2="44" stroke="#4f46e5" strokeWidth="2" />
+    <line x1="70" y1="68" x2="118" y2="52" stroke="#4f46e5" strokeWidth="2" />
+    <rect x="120" y="28" width="92" height="40" rx="8" fill="#dcfce7" stroke="#16a34a" strokeWidth="2" />
+    <text x="166" y="46" textAnchor="middle" fontSize="12" fontFamily="monospace" fill="#14532d">[1, 2, 3]</text>
+    <text x="166" y="62" textAnchor="middle" fontSize="11" fill="#14532d">count = 2</text>
+    <rect x="60" y="105" width="70" height="34" rx="8" fill="#fee2e2" stroke="#dc2626" strokeWidth="2" />
+    <text x="95" y="126" textAnchor="middle" fontSize="12" fontFamily="monospace" fill="#7f1d1d">a (1)</text>
+    <rect x="210" y="105" width="70" height="34" rx="8" fill="#fee2e2" stroke="#dc2626" strokeWidth="2" />
+    <text x="245" y="126" textAnchor="middle" fontSize="12" fontFamily="monospace" fill="#7f1d1d">b (1)</text>
+    <line x1="130" y1="115" x2="210" y2="115" stroke="#dc2626" strokeWidth="2" />
+    <line x1="210" y1="130" x2="130" y2="130" stroke="#dc2626" strokeWidth="2" />
+    <text x="170" y="110" textAnchor="middle" fontSize="11" fill="#7f1d1d">cycle</text>
+  </svg>
+</Visual>
+
+<Playground kind="python">
+
+```python
+import sys
+
+a = "x" * 1000
+numbers = list(range(1000))
+squares_gen = (n * n for n in range(1000))
+
+print("string of 1000 chars:", sys.getsizeof(a), "bytes")
+print("list of 1000 ints:   ", sys.getsizeof(numbers), "bytes")
+print("generator:           ", sys.getsizeof(squares_gen), "bytes")
+
+# Try it: compare sys.getsizeof of a tuple and a list with the same items.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Thinking del destroys the object">
+
+<Wrong>
+
+```python
+a = [1, 2, 3]
+b = a
+del a
+print(b)   # [1, 2, 3]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+a = [1, 2, 3]
+b = a
+del a
+del b            # now no name points to the list, so it is freed
+print("freed")
+```
+
+</Right>
+
+`del` removes a **name**, not the object. The object is freed only when its last reference is gone.
+
+</Mistake>
+
+<Mistake title="Keeping big data alive in a global list">
+
+<Wrong>
+
+```python
+cache = []
+
+def handle(request):
+    cache.append(request * 1000)   # grows forever: a memory leak
+    return len(cache)
+
+print(handle("x"), handle("y"))   # 1 2
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from collections import deque
+
+cache = deque(maxlen=100)          # old items are dropped automatically
+
+def handle(request):
+    cache.append(request * 1000)
+    return len(cache)
+
+print(handle("x"), handle("y"))   # 1 2
+```
+
+</Right>
+
+Python cannot free objects that are still referenced. A list that only grows is the most common memory leak. Give caches a size limit.
+
+</Mistake>
+
+<Mistake title="Loading everything into memory at once">
+
+<Wrong>
+
+```python
+squares = [n * n for n in range(1000000)]   # one million numbers in memory
+print(sum(squares) > 0)   # True
+```
+
+</Wrong>
+
+<Right>
+
+```python
+squares = (n * n for n in range(1000000))   # one number at a time
+print(sum(squares) > 0)   # True
+```
+
+</Right>
+
+When you only need to loop once, a generator keeps memory use tiny.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does memory management work in Python?">
+
+Python uses a **private heap** for all objects, managed by the interpreter. CPython frees memory mainly through **reference counting**: each object tracks how many references point to it and is deallocated the moment the count reaches zero. A **cyclic garbage collector** handles reference cycles that counting cannot free. Small objects are allocated from pools by a specialised allocator (pymalloc) for speed.
+
+</QA>
+
+<QA q="What is reference counting?">
+
+A count stored in every object of how many references point to it. It increases on assignment, on being passed as an argument and on being stored in a container. It decreases when a reference is deleted, reassigned or goes out of scope. At zero, the object is destroyed immediately. You can inspect it with `sys.getrefcount()`.
+
+</QA>
+
+<QA q="Why does Python need a garbage collector if it has reference counting?">
+
+Because of **reference cycles**. If object A refers to B and B refers to A, their counts never drop to zero, even after all outside references are gone. The `gc` module periodically detects groups of objects that are unreachable from the program and frees them.
+
+</QA>
+
+<QA q="What is generational garbage collection?">
+
+The collector sorts objects into three generations by age. New objects start in generation 0, which is scanned most often. Objects that survive a collection move to an older generation, which is scanned less often. This is based on the observation that most objects die young, and it keeps collection cheap.
+
+</QA>
+
+<QA q="How can you reduce memory use in a Python program?">
+
+Use generators and iterators for large data, process files line by line, prefer tuples to lists for fixed data, use `__slots__` in classes with many instances, delete or scope large temporary objects, and avoid unbounded global caches. Profile with `tracemalloc` to find what is using memory.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'When is an object freed by reference counting?',
+      options: [
+        'When the program ends',
+        'When its reference count reaches zero',
+        'Every 10 seconds',
+        'When you call print()',
+      ],
+      answer: 1,
+      why: 'CPython destroys an object the moment nothing refers to it.',
+    },
+    {
+      q: 'What problem does the garbage collector solve that reference counting cannot?',
+      options: ['Slow loops', 'Reference cycles', 'Syntax errors', 'Large integers'],
+      answer: 1,
+      why: 'Objects that refer to each other never reach a count of zero, so the collector must find them.',
+    },
+    {
+      q: 'What does  del name  do?',
+      options: [
+        'Always destroys the object',
+        'Removes the name; the object is freed only if no other reference exists',
+        'Clears all memory',
+        'Stops the garbage collector',
+      ],
+      answer: 1,
+      why: 'del removes one reference. The object lives on while other references remain.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Meaning |
+| --- | --- |
+| Private heap | Where all Python objects live |
+| Reference count | Number of references to an object |
+| Count reaches 0 | Object is freed immediately |
+| Reference cycle | Objects that point to each other |
+| Garbage collector | Finds and frees unreachable cycles |
+| Generations | 0 (young, checked often) to 2 (old) |
+| `sys.getrefcount(x)` | See the count |
+| `gc.collect()` | Run the collector now |
+| `del x` | Remove the name `x` |
+
+</CheatSheet>

@@ -1,0 +1,260 @@
+---
+id: python-python-and-sqlite
+title: Python + SQL (sqlite3)
+summary: The built-in sqlite3 module lets Python create a database, run SQL queries and read the results.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a bank. You do not walk into the vault yourself. You fill a slip, hand it to the cashier, and the cashier brings back what you asked for.
+
+In Python, the **connection** is the bank counter, the SQL query is the slip, and the **cursor** is the cashier who runs it and brings back the rows.
+
+</Analogy>
+
+## Simple explanation
+
+**SQLite** is a small database that lives in a single file. Python includes the `sqlite3` module, so nothing needs to be installed.
+
+The steps are always the same:
+
+1. **Connect** with `sqlite3.connect("shop.db")`. Use `":memory:"` for a temporary database in RAM
+2. Run SQL with `execute()`
+3. **Commit** with `conn.commit()` to save changes made by INSERT, UPDATE or DELETE
+4. Read results with `fetchone()` (one row) or `fetchall()` (all rows). Each row is a tuple
+5. **Close** the connection
+
+Never build SQL by joining strings with user input. Use a **placeholder** `?` in the query and pass the values separately. This is called a **parameterized query**, and it protects you from **SQL injection** (an attack where input changes the meaning of your query).
+
+The same pattern works with MySQL and PostgreSQL. Only the connect line and the placeholder style change.
+
+## Code example
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")            # a temporary database in memory
+cur = conn.cursor()                           # the cursor runs the queries
+
+cur.execute("CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT, salary INTEGER)")
+
+cur.execute("INSERT INTO employees (name, salary) VALUES (?, ?)", ("Asha", 60000))   # ? placeholders
+cur.executemany(
+    "INSERT INTO employees (name, salary) VALUES (?, ?)",
+    [("Ravi", 45000), ("Meera", 75000)],      # many rows at once
+)
+conn.commit()                                 # save the changes
+
+cur.execute("SELECT name, salary FROM employees WHERE salary > ? ORDER BY salary", (50000,))
+print(cur.fetchall())                         # a list of tuples
+
+cur.execute("SELECT COUNT(*), MAX(salary) FROM employees")
+count, highest = cur.fetchone()               # one row, unpacked
+print(count, highest)
+
+for name, salary in cur.execute("SELECT name, salary FROM employees"):   # loop over rows
+    print(f"{name:<6}{salary:>7}")
+
+conn.close()                                  # always close the connection
+```
+
+```output
+[('Asha', 60000), ('Meera', 75000)]
+3 75000
+Asha    60000
+Ravi    45000
+Meera   75000
+```
+
+<Playground kind="python">
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+conn.execute("CREATE TABLE products (name TEXT, price INTEGER, stock INTEGER)")
+conn.executemany(
+    "INSERT INTO products VALUES (?, ?, ?)",
+    [("pen", 10, 200), ("bag", 700, 15), ("book", 150, 60)],
+)
+
+for row in conn.execute("SELECT name, price * stock AS value FROM products ORDER BY value DESC"):
+    print(row)
+
+# Try it: add a WHERE clause to show only products with stock above 50.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Building the query with string formatting">
+
+<Wrong>
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+conn.execute("CREATE TABLE users (name TEXT)")
+conn.executemany("INSERT INTO users VALUES (?)", [("Asha",), ("Ravi",)])
+
+name = "x' OR '1'='1"                       # input from an attacker
+rows = conn.execute(f"SELECT * FROM users WHERE name = '{name}'").fetchall()
+print(len(rows))   # 2
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+conn.execute("CREATE TABLE users (name TEXT)")
+conn.executemany("INSERT INTO users VALUES (?)", [("Asha",), ("Ravi",)])
+
+name = "x' OR '1'='1"
+rows = conn.execute("SELECT * FROM users WHERE name = ?", (name,)).fetchall()
+print(len(rows))   # 0
+```
+
+</Right>
+
+With an f-string, the input became part of the SQL and returned every user. With `?`, it is treated only as a value.
+
+</Mistake>
+
+<Mistake title="Passing one parameter without a tuple">
+
+<Wrong>
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+conn.execute("CREATE TABLE users (name TEXT)")
+conn.execute("SELECT * FROM users WHERE name = ?", ("Asha"))   # ProgrammingError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+conn.execute("CREATE TABLE users (name TEXT)")
+print(conn.execute("SELECT * FROM users WHERE name = ?", ("Asha",)).fetchall())   # []
+```
+
+</Right>
+
+`("Asha")` is just a string, so sqlite3 sees four separate characters. A one-item tuple needs a comma: `("Asha",)`.
+
+</Mistake>
+
+<Mistake title="Expecting fetchone() to give a plain value">
+
+<Wrong>
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+print(conn.execute("SELECT 2 + 3").fetchone())   # (5,)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+print(conn.execute("SELECT 2 + 3").fetchone()[0])   # 5
+```
+
+</Right>
+
+A row is always a tuple, even when it has one column. Take item `[0]`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you prevent SQL injection in Python?">
+
+Use parameterized queries. Put placeholders in the SQL (`?` in sqlite3, `%s` in MySQL and PostgreSQL drivers) and pass the values as a separate tuple. The driver sends them as data, so they can never change the query. An ORM such as Django's does this for you.
+
+</QA>
+
+<QA q="What is a cursor?">
+
+An object that runs SQL statements on a connection and holds the position in the result set. You call `execute()` on it and then fetch rows from it.
+
+</QA>
+
+<QA q="What is the difference between fetchone(), fetchall() and fetchmany()?">
+
+`fetchone()` returns the next row or `None`. `fetchall()` returns all remaining rows as a list. `fetchmany(n)` returns the next `n` rows. For big results, loop over the cursor or use `fetchmany()` so the whole result is not loaded into memory.
+
+</QA>
+
+<QA q="What do commit() and rollback() do?">
+
+`commit()` makes the changes of the current transaction permanent. `rollback()` cancels them. Without a commit, changes are lost when the connection closes.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which call saves an INSERT permanently?',
+      options: ['conn.save()', 'conn.commit()', 'cur.fetchall()', 'conn.close()'],
+      answer: 1,
+      why: 'commit() makes the changes of the current transaction permanent.',
+    },
+    {
+      q: 'What is the safe way to put a user value into a query?',
+      options: [
+        'Join it with +',
+        'Use an f-string',
+        'Use a ? placeholder and pass the value separately',
+        'Convert it to upper case first',
+      ],
+      answer: 2,
+      why: 'Placeholders keep the value as data, which prevents SQL injection.',
+    },
+    {
+      q: 'What does fetchall() return?',
+      options: ['A single tuple', 'A list of tuples', 'A dictionary', 'A string'],
+      answer: 1,
+      why: 'Each row is a tuple, and fetchall() gives all rows in a list.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | Code |
+| --- | --- |
+| Connect | `conn = sqlite3.connect("shop.db")` |
+| Run a query | `cur = conn.execute(sql, params)` |
+| Placeholder | `"... WHERE id = ?", (5,)` |
+| Many rows | `conn.executemany(sql, list_of_tuples)` |
+| Save | `conn.commit()` |
+| Undo | `conn.rollback()` |
+| One row | `cur.fetchone()` |
+| All rows | `cur.fetchall()` |
+| Close | `conn.close()` |
+
+</CheatSheet>

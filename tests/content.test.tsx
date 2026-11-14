@@ -60,7 +60,9 @@ describe('topic registry', () => {
 describe('CodeBlock', () => {
   it('highlights the extra languages (SQL, Bash)', () => {
     const sql = renderToStaticMarkup(
-      <CodeBlock code="SELECT name FROM employees;" language="sql" />,
+      <MemoryRouter>
+        <CodeBlock code="SELECT name FROM employees;" language="sql" />
+      </MemoryRouter>,
     );
     expect(sql).toContain('keyword');
     const bash = renderToStaticMarkup(<CodeBlock code={'echo "hi" # say hi'} language="bash" />);

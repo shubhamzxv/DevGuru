@@ -1,0 +1,249 @@
+---
+id: python-equality-vs-identity
+title: "== vs is"
+summary: "== checks whether two values are equal, and is checks whether two names point to the very same object."
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of two ten-rupee notes. They have the same value, so for buying chai they are **equal**. But they are two different pieces of paper, with different serial numbers. They are not the **same** note.
+
+`==` asks "same value?". `is` asks "same note?".
+
+</Analogy>
+
+## Simple explanation
+
+`==` checks **equality**. It compares the **values** of two objects. Behind the scenes it calls the `__eq__` method.
+
+`is` checks **identity**. It is true only when both names point to the **same object in memory**. It compares `id(a)` with `id(b)`.
+
+Two different lists with the same items are equal, but they are not identical.
+
+When to use which:
+
+- Use `==` to compare values. This is what you want almost always
+- Use `is` for the **singletons**: `None`, `True` and `False`. There is only one `None` object, so `x is None` is the correct and fastest check
+
+A trap: `is` sometimes seems to work for small numbers and short strings. Python **caches** small integers from -5 to 256 and reuses some strings to save memory. This is an internal optimisation. Never rely on it, and never use `is` to compare numbers or strings.
+
+The opposite operators are `!=` and `is not`.
+
+## Code example
+
+```python
+a = [1, 2, 3]
+b = [1, 2, 3]                      # a second list with the same items
+c = a                              # another name for the first list
+
+print(a == b)                      # same values
+print(a is b)                      # but two different objects
+print(a is c)                      # the same object
+print(id(a) == id(c), id(a) == id(b))
+
+result = None
+print(result is None)              # the right way to check for None
+print(result is not None)
+
+small_1, small_2 = int("100"), int("100")
+print(small_1 is small_2)          # small ints (-5 to 256) are cached
+
+big_1, big_2 = int("1000"), int("1000")
+print(big_1 == big_2)              # equal values
+print(big_1 is big_2)              # but separate objects: never use is for numbers
+
+class Money:
+    def __init__(self, amount):
+        self.amount = amount
+
+    def __eq__(self, other):       # we decide what "equal" means
+        return self.amount == other.amount
+
+print(Money(50) == Money(50), Money(50) is Money(50))
+```
+
+```output
+True
+False
+True
+True False
+True
+False
+True
+True
+False
+True False
+```
+
+<Playground kind="python">
+
+```python
+first = {"city": "Pune"}
+second = {"city": "Pune"}
+third = first
+
+print("first == second:", first == second)
+print("first is second:", first is second)
+print("first is third: ", first is third)
+
+third["city"] = "Delhi"
+print(first)
+
+# Try it: compare two empty lists with == and with is.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using is to compare values">
+
+<Wrong>
+
+```python
+price = int("1000")
+limit = int("1000")
+print(price is limit)   # False
+```
+
+</Wrong>
+
+<Right>
+
+```python
+price = int("1000")
+limit = int("1000")
+print(price == limit)   # True
+```
+
+</Right>
+
+`is` compares identity, not value. For numbers, strings, lists and dicts, use `==`.
+
+</Mistake>
+
+<Mistake title="Using == to check for None">
+
+<Wrong>
+
+```python
+class Always:
+    def __eq__(self, other):
+        return True          # a class can make == say anything
+
+value = Always()
+print(value == None)   # True
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Always:
+    def __eq__(self, other):
+        return True
+
+value = Always()
+print(value is None)   # False
+```
+
+</Right>
+
+`==` can be overridden by a class, so it may lie. `is None` cannot be fooled, and PEP 8 recommends it.
+
+</Mistake>
+
+<Mistake title="Expecting two empty lists to be the same object">
+
+<Wrong>
+
+```python
+a = []
+b = []
+print(a is b)   # False
+```
+
+</Wrong>
+
+<Right>
+
+```python
+a = []
+b = []
+print(a == b)   # True
+```
+
+</Right>
+
+Each `[]` creates a new list object. They are equal, but not identical.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between == and is?">
+
+`==` is the equality operator: it compares values by calling `__eq__`. `is` is the identity operator: it checks whether both operands refer to the same object, which means the same `id()`. Two objects can be equal without being identical.
+
+</QA>
+
+<QA q="Why does a is b return True for small integers but False for large ones?">
+
+CPython pre-creates and reuses integer objects from -5 to 256, so every use of those values points to the same object. Larger integers are usually created as new objects. This is an implementation detail of CPython and can vary, so `is` must not be used for value comparison.
+
+</QA>
+
+<QA q="When should you use is?">
+
+For comparing with singletons: `x is None`, `x is True`, `x is False`, and for sentinel objects you create yourself. Also when you really need to know whether two names refer to the same object, for example to detect aliasing.
+
+</QA>
+
+<QA q="What is string interning?">
+
+Python may store only one copy of certain strings (mainly short, identifier-like strings known at compile time) and reuse it. That is why `is` sometimes returns True for strings. You can force it with `sys.intern()`. It saves memory and speeds up dictionary lookups, but again must not be relied on for comparisons.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'With  a = [1, 2]  and  b = [1, 2],  what is  a == b  and  a is b?',
+      options: ['True and True', 'True and False', 'False and True', 'False and False'],
+      answer: 1,
+      why: 'The values are equal, but they are two separate list objects.',
+    },
+    {
+      q: 'Which is the recommended way to check for None?',
+      options: ['x == None', 'x is None', 'x = None', 'None(x)'],
+      answer: 1,
+      why: 'None is a singleton, so identity is the correct and safest check.',
+    },
+    {
+      q: 'What does  is  compare?',
+      options: ['Values', 'Types', 'Identity: whether both names point to the same object', 'Lengths'],
+      answer: 2,
+      why: 'is checks object identity, the same thing id() reports.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Operator | Question it asks | Use for |
+| --- | --- | --- |
+| `==` | Same value? | Numbers, strings, lists, dicts, objects |
+| `!=` | Different value? | The opposite of `==` |
+| `is` | Same object? | `None`, `True`, `False` |
+| `is not` | Different object? | `x is not None` |
+| `id(x)` | What is its identity? | Debugging |
+
+Rule: `==` for values, `is` only for `None`.
+
+</CheatSheet>

@@ -1,0 +1,211 @@
+---
+id: sql-select
+title: SELECT
+summary: SELECT reads data from a table and returns the columns you ask for.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of ordering at a restaurant. You do not ask the waiter to bring the whole kitchen. You read the menu and say "one dal, two rotis". You name exactly what you want and from where.
+
+`SELECT` is that order: which columns you want, `FROM` which table.
+
+</Analogy>
+
+## Simple explanation
+
+`SELECT` is the command that **reads** data. It never changes anything in the table.
+
+The basic shape is:
+
+`SELECT columns FROM table;`
+
+- After `SELECT`, list the columns you want, separated by commas
+- `*` means all columns
+- After `FROM`, name the table
+
+The result is itself a small table, called the **result set**.
+
+You can also:
+
+- Rename a column in the result with `AS`. The new name is called an **alias**
+- Calculate new values, such as `salary * 12`
+- Join text with `||` (in MySQL, use `CONCAT()`)
+
+SQL keywords are not case sensitive: `select` and `SELECT` are the same. Writing keywords in capitals is a habit that makes queries easier to read.
+
+In real applications, avoid `SELECT *`. Name the columns you need. It is faster, and your code does not break when someone adds a column.
+
+## Code example
+
+```sql
+SELECT
+  name,                                -- a column as it is
+  salary,
+  salary * 12        AS yearly_salary, -- a calculation with an alias
+  name || ' (' || city || ')' AS label -- joining text
+FROM employees
+LIMIT 5;                               -- only the first 5 rows
+```
+
+```output
+name          | salary | yearly_salary | label
+--------------+--------+---------------+------------------------
+Anita Rao     | 185000 | 2220000       | Anita Rao (Bengaluru)
+Vikram Shah   | 150000 | 1800000       | Vikram Shah (Mumbai)
+Meera Nair    | 120000 | 1440000       | Meera Nair (Delhi)
+Rohit Verma   | 140000 | 1680000       | Rohit Verma (Bengaluru)
+Asha Kulkarni | 140000 | 1680000       | Asha Kulkarni (Pune)
+```
+
+<Playground kind="sql">
+
+```sql
+SELECT name, category, price
+FROM products;
+
+-- Try it: add a column  price * 1.18 AS price_with_gst
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting the comma between columns">
+
+<Wrong>
+
+```sql
+SELECT name salary FROM employees LIMIT 2;   -- no error, but only ONE column, named "salary"
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, salary FROM employees LIMIT 2;
+```
+
+</Right>
+
+Without the comma, SQL reads `salary` as an alias for `name`. You silently get the wrong result.
+
+</Mistake>
+
+<Mistake title="Using double quotes for text values">
+
+<Wrong>
+
+```sql
+SELECT "Hello" AS greeting;   -- Error in PostgreSQL: column "Hello" does not exist (SQLite is lenient)
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT 'Hello' AS greeting;
+```
+
+</Right>
+
+In standard SQL, single quotes are for text values, and double quotes are for names of tables and columns.
+
+</Mistake>
+
+<Mistake title="Using SELECT * in application code">
+
+<Wrong>
+
+```sql
+SELECT * FROM employees LIMIT 2;   -- brings every column, needed or not
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT id, name, city FROM employees LIMIT 2;
+```
+
+</Right>
+
+Naming columns sends less data and keeps your code stable when the table changes.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the order in which a SELECT query is executed?">
+
+The database processes the clauses in this logical order: `FROM` (and `JOIN`), `WHERE`, `GROUP BY`, `HAVING`, `SELECT`, `DISTINCT`, `ORDER BY`, `LIMIT`. This is why an alias made in `SELECT` cannot be used in `WHERE`, but can be used in `ORDER BY`.
+
+</QA>
+
+<QA q="Why should you avoid SELECT *?">
+
+It fetches columns you do not need, which costs network, memory and sometimes prevents the use of a covering index. It also makes code fragile: adding, removing or reordering columns can break the application. In views and `INSERT ... SELECT` it can cause silent bugs.
+
+</QA>
+
+<QA q="What is an alias?">
+
+A temporary name for a column or table within one query, set with `AS` (the word `AS` is optional). Column aliases label the output; table aliases shorten long names and are required in self joins.
+
+</QA>
+
+<QA q="Is SQL case sensitive?">
+
+Keywords are not. Table and column names depend on the database and operating system (in MySQL on Linux, table names are case sensitive). Text comparisons depend on the collation: MySQL's default is case-insensitive, PostgreSQL's is case-sensitive.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which query returns the name and city of every customer?',
+      options: [
+        'SELECT name city FROM customers;',
+        'SELECT name, city FROM customers;',
+        'GET name, city FROM customers;',
+        'SELECT customers FROM name, city;',
+      ],
+      answer: 1,
+      why: 'Columns are separated by commas after SELECT, and the table follows FROM.',
+    },
+    {
+      q: 'What does AS do?',
+      options: ['Filters rows', 'Gives a column or table a temporary name', 'Sorts the result', 'Deletes a column'],
+      answer: 1,
+      why: 'AS creates an alias that is used in the result or inside the query.',
+    },
+    {
+      q: 'Does SELECT change the data in a table?',
+      options: ['Yes, always', 'No, it only reads', 'Only with *', 'Only with AS'],
+      answer: 1,
+      why: 'SELECT is read-only. INSERT, UPDATE and DELETE change data.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Query |
+| --- | --- |
+| All columns | `SELECT * FROM employees;` |
+| Some columns | `SELECT name, city FROM employees;` |
+| Rename | `SELECT name AS employee FROM employees;` |
+| Calculate | `SELECT salary * 12 AS yearly FROM employees;` |
+| Join text | `SELECT name \|\| ' - ' \|\| city FROM employees;` |
+| A fixed value | `SELECT 'hello', 2 + 3;` |
+| First rows only | `... LIMIT 5;` |
+
+</CheatSheet>

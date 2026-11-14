@@ -1,0 +1,238 @@
+---
+id: python-lists
+title: Lists
+summary: A list is an ordered collection of items that you can change by adding, removing or replacing items.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a shopping list on paper. The items are in an order. You can add an item at the end, cross one out, or change "1 kg rice" to "2 kg rice".
+
+A Python **list** is that shopping list.
+
+</Analogy>
+
+## Simple explanation
+
+A **list** holds many values in one variable. You write the values inside square brackets, separated by commas.
+
+A list is **ordered**. Each item keeps its position, and the position number is called the **index**. The first index is 0.
+
+A list is **mutable**. This means you can change it after you make it.
+
+A list can hold any types, even mixed, and even other lists. A list inside a list is called a **nested list**.
+
+Common actions:
+
+- `items[0]` reads an item, and `items[0] = "x"` replaces it
+- `items.append("x")` adds an item at the end
+- `len(items)` counts the items
+- `"x" in items` checks if an item is present
+- `for item in items:` visits every item
+
+## Code example
+
+```python
+cart = ["rice", "dal", "milk"]       # a list of three strings
+
+print(cart[0], cart[-1])             # first and last item
+print(len(cart))                     # how many items
+
+cart[1] = "moong dal"                # replace the item at index 1
+cart.append("sugar")                 # add at the end
+print(cart)
+
+print("milk" in cart)                # is it in the list?
+
+for item in cart:                    # visit every item
+    print("-", item)
+
+matrix = [[1, 2], [3, 4]]            # nested list: a list of lists
+print(matrix[1][0])                  # row 1, column 0
+```
+
+```output
+rice milk
+3
+['rice', 'moong dal', 'milk', 'sugar']
+True
+- rice
+- moong dal
+- milk
+- sugar
+3
+```
+
+<Playground kind="python">
+
+```python
+marks = [72, 85, 64, 90]
+
+print("Highest:", max(marks))
+print("Lowest:", min(marks))
+print("Average:", sum(marks) / len(marks))
+
+# Try it: append one more mark and run again.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Reading an index that does not exist">
+
+<Wrong>
+
+```python
+cart = ["rice", "dal"]
+print(cart[2])   # IndexError: list index out of range
+```
+
+</Wrong>
+
+<Right>
+
+```python
+cart = ["rice", "dal"]
+print(cart[-1])   # dal
+```
+
+</Right>
+
+A list with 2 items has indexes 0 and 1. Use `-1` for the last item.
+
+</Mistake>
+
+<Mistake title="Thinking b = a makes a copy">
+
+<Wrong>
+
+```python
+a = [1, 2, 3]
+b = a
+b.append(4)
+print(a)   # [1, 2, 3, 4]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+a = [1, 2, 3]
+b = a.copy()
+b.append(4)
+print(a)   # [1, 2, 3]
+```
+
+</Right>
+
+`b = a` gives the same list a second name. Use `a.copy()` to get a separate list.
+
+</Mistake>
+
+<Mistake title="Using append() to add many items">
+
+<Wrong>
+
+```python
+cart = ["rice"]
+cart.append(["dal", "milk"])
+print(cart)   # ['rice', ['dal', 'milk']]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+cart = ["rice"]
+cart.extend(["dal", "milk"])
+print(cart)   # ['rice', 'dal', 'milk']
+```
+
+</Right>
+
+`append()` adds one item, even if that item is a list. `extend()` adds each item.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a list in Python?">
+
+A list is an ordered, mutable collection. It can hold items of any type, allows duplicates, and grows or shrinks as needed. Inside, it is a dynamic array of references to objects.
+
+</QA>
+
+<QA q="What is the difference between append() and extend()?">
+
+`append(x)` adds `x` as a single item. `extend(iterable)` adds every item from the iterable one by one.
+
+</QA>
+
+<QA q="How do you remove duplicates from a list?">
+
+Convert it to a set. If the order must stay the same, use `dict.fromkeys()`.
+
+```python
+nums = [3, 1, 3, 2, 1]
+print(list(dict.fromkeys(nums)))   # [3, 1, 2]
+```
+
+</QA>
+
+<QA q="What is the time complexity of common list operations?">
+
+Reading by index and `append()` are O(1). Searching with `in`, `insert()` at the front, and `remove()` are O(n), because items must be checked or shifted.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is [10, 20, 30][1]?',
+      options: ['10', '20', '30', 'An error'],
+      answer: 1,
+      why: 'Indexes start at 0, so index 1 is the second item.',
+    },
+    {
+      q: 'After  nums = [1, 2]  and  nums.append(3),  what is len(nums)?',
+      options: ['2', '3', '4', 'An error'],
+      answer: 1,
+      why: 'append() adds one item at the end, so the list now has 3 items.',
+    },
+    {
+      q: 'Which statement about lists is true?',
+      options: [
+        'A list cannot be changed after it is made',
+        'A list can hold only one data type',
+        'A list keeps its items in order and can be changed',
+        'A list cannot hold another list',
+      ],
+      answer: 2,
+      why: 'Lists are ordered and mutable, and they can hold mixed types and other lists.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Make a list | `items = ["a", "b"]` |
+| Read an item | `items[0]` |
+| Last item | `items[-1]` |
+| Replace an item | `items[0] = "z"` |
+| Add at the end | `items.append("c")` |
+| Count items | `len(items)` |
+| Is it present? | `"a" in items` |
+| Visit each item | `for item in items:` |
+| Separate copy | `items.copy()` |
+
+</CheatSheet>

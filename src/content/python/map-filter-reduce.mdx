@@ -1,0 +1,241 @@
+---
+id: python-map-filter-reduce
+title: map, filter and reduce
+summary: map changes every item, filter keeps only some items, and reduce combines all items into one value.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a juice stall with a crate of oranges.
+
+- The seller peels **every** orange. That is **map**: do the same thing to each item
+- He throws out the rotten ones. That is **filter**: keep only the good items
+- He squeezes all of them into **one** glass of juice. That is **reduce**: combine everything into a single result
+
+</Analogy>
+
+## Simple explanation
+
+These three tools take a function and a collection. A function that takes another function as an argument is called a **higher-order function**.
+
+**map(function, items)** calls the function on every item and gives back the results.
+
+**filter(function, items)** calls the function on every item and keeps the items where it returned `True`.
+
+**reduce(function, items)** takes two items at a time and combines them, again and again, until one value is left. It lives in the `functools` module, so you must import it.
+
+`map()` and `filter()` do not return a list. They return a **lazy iterator**: it produces items only when asked. Wrap it in `list()` to see everything.
+
+In modern Python, a **comprehension** often reads better than `map()` or `filter()`. And for common cases of `reduce()`, the built-ins `sum()`, `max()` and `min()` are simpler.
+
+## Code example
+
+```python
+from functools import reduce
+
+prices = [100, 250, 80, 400]
+
+with_tax = map(lambda p: round(p * 1.18), prices)   # change every item
+print(list(with_tax))
+
+costly = filter(lambda p: p > 90, prices)           # keep items where the answer is True
+print(list(costly))
+
+total = reduce(lambda a, b: a + b, prices)          # ((100 + 250) + 80) + 400
+print(total)
+
+biggest = reduce(lambda a, b: a if a > b else b, prices)
+print(biggest)
+
+names = ["asha", "ravi"]
+print(list(map(str.title, names)))                  # pass an existing function
+
+print(list(map(lambda a, b: a + b, [1, 2], [10, 20])))   # map over two lists
+
+print([round(p * 1.18) for p in prices if p > 90])  # the same idea as a comprehension
+print(sum(prices), max(prices))                     # simpler than reduce
+```
+
+```output
+[118, 295, 94, 472]
+[100, 250, 400]
+830
+400
+['Asha', 'Ravi']
+[11, 22]
+[118, 295, 472]
+830 400
+```
+
+<Playground kind="python">
+
+```python
+from functools import reduce
+
+marks = [35, 82, 47, 91, 28]
+
+passed = list(filter(lambda m: m >= 40, marks))
+graced = list(map(lambda m: m + 5, marks))
+product = reduce(lambda a, b: a * b, [1, 2, 3, 4])
+
+print("Passed:", passed)
+print("With 5 grace marks:", graced)
+print("1 x 2 x 3 x 4 =", product)
+
+# Try it: use filter to keep only the marks above the average.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Printing a map object directly">
+
+<Wrong>
+
+```python
+result = map(lambda x: x * 2, [1, 2, 3])
+print(type(result).__name__)   # map
+```
+
+</Wrong>
+
+<Right>
+
+```python
+result = map(lambda x: x * 2, [1, 2, 3])
+print(list(result))   # [2, 4, 6]
+```
+
+</Right>
+
+`map()` returns a lazy iterator, not a list. Convert it with `list()`.
+
+</Mistake>
+
+<Mistake title="Reading a map or filter result twice">
+
+<Wrong>
+
+```python
+evens = filter(lambda x: x % 2 == 0, [1, 2, 3, 4])
+print(list(evens))
+print(list(evens))   # [] the second time
+```
+
+</Wrong>
+
+<Right>
+
+```python
+evens = list(filter(lambda x: x % 2 == 0, [1, 2, 3, 4]))
+print(evens)
+print(evens)   # [2, 4] both times
+```
+
+</Right>
+
+An iterator can be used only once. Store it as a list if you need it again.
+
+</Mistake>
+
+<Mistake title="Using reduce without importing it">
+
+<Wrong>
+
+```python
+print(reduce(lambda a, b: a + b, [1, 2, 3]))   # NameError: name 'reduce' is not defined
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from functools import reduce
+
+print(reduce(lambda a, b: a + b, [1, 2, 3]))   # 6
+```
+
+</Right>
+
+In Python 3, `reduce` is in the `functools` module.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between map, filter and reduce?">
+
+`map` transforms each item and returns the same number of items. `filter` selects items that pass a test and returns the same or fewer items. `reduce` combines all items into a single value.
+
+</QA>
+
+<QA q="What do map() and filter() return in Python 3?">
+
+Lazy iterators (a `map` object and a `filter` object), not lists. They compute each item only when needed, which saves memory. Use `list()` to get all the results at once.
+
+</QA>
+
+<QA q="Should you use map and filter or a list comprehension?">
+
+Comprehensions are usually preferred because they are easier to read, especially when a lambda would be needed. `map()` is still neat when you already have a function to apply, such as `map(int, values)`.
+
+```python
+print(list(map(int, ["1", "2", "3"])))   # [1, 2, 3]
+```
+
+</QA>
+
+<QA q="What does the third argument of reduce do?">
+
+It is the starting value. It is used first, and it is also the result when the list is empty. Without it, `reduce` on an empty list raises a `TypeError`.
+
+```python
+from functools import reduce
+
+print(reduce(lambda a, b: a + b, [], 0))   # 0
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does list(map(lambda x: x + 1, [1, 2, 3])) give?',
+      options: ['[1, 2, 3]', '[2, 3, 4]', '6', '[2]'],
+      answer: 1,
+      why: 'map applies the function to every item, adding 1 to each.',
+    },
+    {
+      q: 'What does list(filter(lambda x: x > 2, [1, 2, 3, 4])) give?',
+      options: ['[1, 2]', '[3, 4]', '[True, True]', '[2, 3, 4]'],
+      answer: 1,
+      why: 'filter keeps only the items for which the function returns True.',
+    },
+    {
+      q: 'Where does reduce live in Python 3?',
+      options: ['It is a built-in', 'In the math module', 'In the functools module', 'In the itertools module'],
+      answer: 2,
+      why: 'You must write: from functools import reduce.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Tool | Does | Example | Result |
+| --- | --- | --- | --- |
+| `map` | Change each item | `list(map(str, [1, 2]))` | `['1', '2']` |
+| `filter` | Keep some items | `list(filter(None, [0, 1, 2]))` | `[1, 2]` |
+| `reduce` | Combine into one | `reduce(lambda a, b: a * b, [2, 3, 4])` | `24` |
+| Comprehension | map + filter | `[x * 2 for x in nums if x > 0]` | a new list |
+
+Import first: `from functools import reduce`
+
+</CheatSheet>

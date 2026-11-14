@@ -1,0 +1,257 @@
+---
+id: python-conditions
+title: Conditions (if, elif, else)
+summary: Conditions let a program choose what to do, based on whether something is True or False.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a traffic signal. If the light is green, you go. If it is yellow, you slow down. Otherwise, you stop.
+
+A program makes choices in the same way, using `if`, `elif` and `else`.
+
+</Analogy>
+
+## Simple explanation
+
+A **condition** is a question whose answer is `True` or `False`, such as `marks >= 40`.
+
+An **if statement** runs a block of code only when its condition is true.
+
+- `if` checks the first condition
+- `elif` (short for "else if") checks another condition, only when the ones above were false
+- `else` runs when nothing above was true. It has no condition
+
+Python checks from top to bottom and runs **only the first block that matches**. Then it skips the rest.
+
+You can join conditions with `and`, `or` and `not`.
+
+A **ternary expression** is an `if`-`else` written in one line, used to pick one of two values.
+
+Empty values count as false. So `if items:` means "if the list is not empty".
+
+## Code example
+
+```python
+marks = 72
+
+if marks >= 90:                     # checked first
+    grade = "A"
+elif marks >= 60:                   # checked only if the first was False
+    grade = "B"
+elif marks >= 40:
+    grade = "C"
+else:                               # runs when nothing above matched
+    grade = "Fail"
+print(grade)
+
+age = 20
+has_id = True
+if age >= 18 and has_id:            # both must be True
+    print("Entry allowed")
+
+status = "adult" if age >= 18 else "minor"   # ternary: pick one of two values
+print(status)
+
+cart = []
+if not cart:                        # an empty list counts as False
+    print("Cart is empty")
+
+if 13 <= age <= 19:                 # chained comparison
+    print("Teenager")
+else:
+    print("Not a teenager")
+```
+
+```output
+B
+Entry allowed
+adult
+Cart is empty
+Not a teenager
+```
+
+<Playground kind="python">
+
+```python
+temperature = 34
+
+if temperature >= 40:
+    print("Heat wave. Stay indoors.")
+elif temperature >= 30:
+    print("Hot. Drink water.")
+elif temperature >= 20:
+    print("Pleasant.")
+else:
+    print("Cold. Wear a sweater.")
+
+# Try it: change the temperature to 12, then to 45.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using = when you mean ==">
+
+<Wrong>
+
+```python
+marks = 40
+if marks = 40:      # SyntaxError
+    print("Pass")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+marks = 40
+if marks == 40:
+    print("Pass")
+```
+
+</Right>
+
+`=` stores a value. `==` compares two values.
+
+</Mistake>
+
+<Mistake title="Putting the wider condition first">
+
+<Wrong>
+
+```python
+marks = 95
+if marks >= 40:
+    print("C")   # C
+elif marks >= 90:
+    print("A")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+marks = 95
+if marks >= 90:
+    print("A")   # A
+elif marks >= 40:
+    print("C")
+```
+
+</Right>
+
+Python stops at the first true condition. Check the strictest condition first.
+
+</Mistake>
+
+<Mistake title="Writing or without repeating the comparison">
+
+<Wrong>
+
+```python
+day = "Mon"
+if day == "Sat" or "Sun":
+    print("Weekend")   # Weekend
+```
+
+</Wrong>
+
+<Right>
+
+```python
+day = "Mon"
+if day in ("Sat", "Sun"):
+    print("Weekend")
+else:
+    print("Weekday")   # Weekday
+```
+
+</Right>
+
+`"Sun"` alone is a non-empty string, which is always true. Compare each value, or use `in`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between if-elif-else and several separate if statements?">
+
+In an `if`-`elif`-`else` chain, only the first matching block runs. With separate `if` statements, every condition is checked and several blocks can run.
+
+</QA>
+
+<QA q="What is a ternary operator in Python?">
+
+A one-line conditional expression: `value_if_true if condition else value_if_false`.
+
+```python
+age = 16
+print("adult" if age >= 18 else "minor")   # minor
+```
+
+</QA>
+
+<QA q="Which values are treated as False in a condition?">
+
+`False`, `None`, zero (`0`, `0.0`), and empty collections (`""`, `[]`, `()`, `{}`, `set()`). Everything else is treated as true.
+
+</QA>
+
+<QA q="What is short-circuit evaluation?">
+
+Python stops checking as soon as the result is known. In `a and b`, if `a` is false, `b` is never evaluated. In `a or b`, if `a` is true, `b` is never evaluated. This lets you write safe checks like `if user and user.is_active:`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'With marks = 75, what does this print?  if marks >= 60: print("B")  elif marks >= 40: print("C")',
+      options: ['B', 'C', 'B then C', 'Nothing'],
+      answer: 0,
+      why: 'The first condition is true, so its block runs and the elif is skipped.',
+    },
+    {
+      q: 'What is the result of  "yes" if 5 > 10 else "no"?',
+      options: ['"yes"', '"no"', 'True', 'An error'],
+      answer: 1,
+      why: '5 > 10 is False, so the expression gives the value after else.',
+    },
+    {
+      q: 'What does  if []:  do?',
+      options: [
+        'Runs the block, because a list exists',
+        'Skips the block, because an empty list is falsy',
+        'Raises an error',
+        'Runs the block twice',
+      ],
+      answer: 1,
+      why: 'An empty list counts as False in a condition.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| One check | `if x > 0:` |
+| Another check | `elif x == 0:` |
+| Everything else | `else:` |
+| Both true | `if a and b:` |
+| Any true | `if a or b:` |
+| Opposite | `if not a:` |
+| One of several values | `if x in ("a", "b"):` |
+| Range check | `if 1 <= x <= 10:` |
+| One-line choice | `y = "big" if x > 9 else "small"` |
+
+</CheatSheet>

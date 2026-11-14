@@ -1,0 +1,204 @@
+---
+id: sql-joins-overview
+title: How JOINs work
+summary: A JOIN combines rows from two tables by matching a column in one table with a column in the other.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a courier office with two registers. One lists parcels with a customer number. The other lists customers with their number, name and address. To deliver a parcel, the clerk takes the customer number from the first register and looks it up in the second.
+
+A **JOIN** is that lookup, done for every row.
+
+</Analogy>
+
+## Simple explanation
+
+Good databases split data into several tables. An employee row does not repeat the department name; it stores only `department_id`. This avoids copies of the same information.
+
+A **JOIN** puts the pieces back together in a query. It matches a row from one table with rows from another, using a condition.
+
+`FROM employees JOIN departments ON employees.department_id = departments.id`
+
+- The table after `FROM` is the **left** table. The table after `JOIN` is the **right** table
+- `ON` gives the **join condition**: which column of one must equal which column of the other
+- Usually you match a **foreign key** with the **primary key** it points to
+
+The kind of join decides what happens to rows that have **no match**:
+
+| Join | Keeps |
+| --- | --- |
+| `INNER JOIN` | Only rows with a match in both tables |
+| `LEFT JOIN` | Every left row, matched or not |
+| `RIGHT JOIN` | Every right row, matched or not |
+| `FULL JOIN` | Every row from both tables |
+| `CROSS JOIN` | Every left row paired with every right row |
+
+Where there is no match, the columns of the missing side are filled with `NULL`.
+
+Give tables short names, called **table aliases**, such as `employees AS e`. When both tables have a column with the same name, write `e.name` and `d.name` to say which one you mean.
+
+Use the buttons below to see what each join keeps.
+
+<JoinVisualizer type="inner" />
+
+## Code example
+
+```sql
+SELECT
+  e.name       AS employee,          -- e. means "from employees"
+  d.name       AS department,        -- d. means "from departments"
+  d.location
+FROM employees AS e                  -- left table, with the alias e
+JOIN departments AS d                -- right table, with the alias d
+  ON e.department_id = d.id          -- how the rows are matched
+ORDER BY e.id
+LIMIT 5;
+```
+
+```output
+employee      | department  | location
+--------------+-------------+----------
+Anita Rao     | Engineering | Bengaluru
+Vikram Shah   | Sales       | Mumbai
+Meera Nair    | Marketing   | Delhi
+Rohit Verma   | Engineering | Bengaluru
+Asha Kulkarni | Engineering | Bengaluru
+```
+
+<Playground kind="sql">
+
+```sql
+-- Join three tables: who ordered what?
+SELECT
+  c.name      AS customer,
+  o.order_date,
+  p.name      AS product,
+  oi.quantity
+FROM orders AS o
+JOIN customers   AS c  ON c.id = o.customer_id
+JOIN order_items AS oi ON oi.order_id = o.id
+JOIN products    AS p  ON p.id = oi.product_id
+ORDER BY o.order_date
+LIMIT 6;
+
+-- Try it: add  WHERE c.city = 'Delhi'  before ORDER BY.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting the join condition">
+
+<Wrong>
+
+```sql
+SELECT COUNT(*) FROM employees, departments;   -- 126 rows: every employee with every department
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT COUNT(*) FROM employees AS e JOIN departments AS d ON e.department_id = d.id;   -- 19 rows
+```
+
+</Right>
+
+Without a condition you get every possible pair. This is called a **Cartesian product**, and on big tables it can bring a server down.
+
+</Mistake>
+
+<Mistake title="Not saying which table a column comes from">
+
+<Wrong>
+
+```sql
+SELECT name FROM employees JOIN departments ON department_id = departments.id;   -- Error: ambiguous column name: name
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT e.name, d.name AS department
+FROM employees AS e JOIN departments AS d ON e.department_id = d.id LIMIT 3;
+```
+
+</Right>
+
+Both tables have a `name` column. Prefix it with the table alias.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a JOIN and what types are there?">
+
+A JOIN combines rows from two or more tables based on a related column. The types are INNER (matching rows only), LEFT OUTER (all left rows), RIGHT OUTER (all right rows), FULL OUTER (all rows from both), CROSS (every combination), and SELF (a table joined to itself).
+
+</QA>
+
+<QA q="What is the difference between INNER JOIN and OUTER JOIN?">
+
+An INNER JOIN returns only rows that satisfy the join condition in both tables. An OUTER JOIN (LEFT, RIGHT or FULL) also returns the unmatched rows from one or both tables, with NULLs for the missing side.
+
+</QA>
+
+<QA q="What is the difference between ON and WHERE in a join?">
+
+`ON` defines how rows are matched; `WHERE` filters the joined result. For an INNER JOIN the result is the same either way. For a LEFT JOIN it matters: a condition on the right table in `WHERE` removes the NULL-filled rows and silently turns it into an INNER JOIN; in `ON`, the unmatched left rows are kept.
+
+</QA>
+
+<QA q="How does the database execute a join?">
+
+The optimizer chooses an algorithm. A **nested loop join** looks up matching rows for each row of the outer table, ideally through an index. A **hash join** builds a hash table on one input and probes it with the other. A **merge join** walks two sorted inputs together. Indexes on the join columns are the biggest factor in join speed.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does the ON clause do?',
+      options: ['Sorts the result', 'Says how rows of the two tables are matched', 'Limits the rows', 'Renames a table'],
+      answer: 1,
+      why: 'ON holds the join condition, usually foreign key = primary key.',
+    },
+    {
+      q: 'Which join keeps only rows that have a match in both tables?',
+      options: ['LEFT JOIN', 'FULL JOIN', 'INNER JOIN', 'CROSS JOIN'],
+      answer: 2,
+      why: 'INNER JOIN drops any row without a partner.',
+    },
+    {
+      q: 'In an outer join, what fills the columns of the side that has no match?',
+      options: ['0', 'An empty string', 'NULL', 'The previous row'],
+      answer: 2,
+      why: 'Missing values from the unmatched side are shown as NULL.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Matching rows only | `a INNER JOIN b ON a.x = b.id` |
+| All of a | `a LEFT JOIN b ON a.x = b.id` |
+| All of b | `a RIGHT JOIN b ON a.x = b.id` |
+| All of both | `a FULL JOIN b ON a.x = b.id` |
+| Every pair | `a CROSS JOIN b` |
+| Table alias | `employees AS e` |
+| Pick a column | `e.name`, `d.name` |
+| Three tables | `a JOIN b ON ... JOIN c ON ...` |
+
+</CheatSheet>

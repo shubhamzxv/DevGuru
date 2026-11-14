@@ -1,0 +1,278 @@
+---
+id: python-instance-class-static-methods
+title: Instance, class and static methods
+summary: An instance method works on one object, a class method works on the class itself, and a static method is a plain helper kept inside the class.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a school.
+
+- "Show me **this student's** marks" is about one student. That is an **instance method**
+- "How many students does **the school** have?" is about the whole school. That is a **class method**
+- "Is 35 a pass mark?" needs no student and no school record. It is just a rule on the notice board. That is a **static method**
+
+</Analogy>
+
+## Simple explanation
+
+A class can have three kinds of methods. The difference is the first parameter.
+
+An **instance method** takes `self`. It can read and change the data of one object. This is the normal kind.
+
+A **class method** takes `cls`, which is the class itself. You mark it with `@classmethod`. It can read and change data shared by all objects. It is often used as an **alternative constructor**: another way to build an object.
+
+A **static method** takes neither. You mark it with `@staticmethod`. It is a normal function that lives inside the class because it belongs to the topic.
+
+There are also two kinds of data:
+
+- An **instance attribute** is set with `self.x` and is different for each object
+- A **class attribute** is written directly in the class body and is shared by all objects
+
+## Code example
+
+```python
+class Employee:
+    company = "DevGuru"                    # class attribute: shared by everyone
+    count = 0
+
+    def __init__(self, name, salary):
+        self.name = name                   # instance attributes: one set per object
+        self.salary = salary
+        Employee.count += 1
+
+    def yearly(self):                      # instance method: uses self
+        return self.salary * 12
+
+    @classmethod
+    def from_text(cls, text):              # class method: uses cls
+        name, salary = text.split(",")
+        return cls(name, int(salary))      # another way to build an object
+
+    @classmethod
+    def headcount(cls):
+        return f"{cls.company} has {cls.count} employees"
+
+    @staticmethod
+    def is_valid_salary(amount):           # static method: no self, no cls
+        return amount > 0
+
+asha = Employee("Asha", 50000)
+ravi = Employee.from_text("Ravi,40000")    # called on the class
+
+print(asha.yearly(), ravi.yearly())
+print(Employee.headcount())
+print(Employee.is_valid_salary(-5))
+print(asha.company, ravi.company)          # both read the shared class attribute
+```
+
+```output
+600000 480000
+DevGuru has 2 employees
+False
+DevGuru DevGuru
+```
+
+<Playground kind="python">
+
+```python
+class Temperature:
+    def __init__(self, celsius):
+        self.celsius = celsius
+
+    @classmethod
+    def from_fahrenheit(cls, f):
+        return cls(round((f - 32) * 5 / 9, 1))
+
+    @staticmethod
+    def is_fever(celsius):
+        return celsius >= 38
+
+    def describe(self):
+        return f"{self.celsius} C, fever: {Temperature.is_fever(self.celsius)}"
+
+print(Temperature(37.2).describe())
+print(Temperature.from_fahrenheit(101.3).describe())
+
+# Try it: add a class method  from_kelvin(k).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using a mutable class attribute for per-object data">
+
+<Wrong>
+
+```python
+class Cart:
+    items = []                 # shared by every cart
+
+    def add(self, item):
+        self.items.append(item)
+
+a, b = Cart(), Cart()
+a.add("pen")
+print(b.items)   # ['pen']
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Cart:
+    def __init__(self):
+        self.items = []        # a new list for each cart
+
+    def add(self, item):
+        self.items.append(item)
+
+a, b = Cart(), Cart()
+a.add("pen")
+print(b.items)   # []
+```
+
+</Right>
+
+A list in the class body is one list shared by all objects. Create per-object data in `__init__`.
+
+</Mistake>
+
+<Mistake title="Calling an instance method on the class">
+
+<Wrong>
+
+```python
+class Greeter:
+    def hello(self):
+        return "hello"
+
+print(Greeter.hello())   # TypeError: Greeter.hello() missing 1 required positional argument: 'self'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Greeter:
+    def hello(self):
+        return "hello"
+
+print(Greeter().hello())   # hello
+```
+
+</Right>
+
+An instance method needs an object. Create one first.
+
+</Mistake>
+
+<Mistake title="Updating a class attribute through self">
+
+<Wrong>
+
+```python
+class Counter:
+    total = 0
+
+    def add(self):
+        self.total += 1        # creates a new instance attribute
+
+c = Counter()
+c.add()
+print(Counter.total)   # 0
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Counter:
+    total = 0
+
+    def add(self):
+        Counter.total += 1     # changes the shared value
+
+c = Counter()
+c.add()
+print(Counter.total)   # 1
+```
+
+</Right>
+
+Assigning through `self` makes a separate attribute on that one object. To change shared data, assign through the class.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between @classmethod and @staticmethod?">
+
+A class method receives the class as `cls`, so it can access class attributes and create instances, and it works correctly with subclasses. A static method receives nothing automatically; it cannot touch class or instance state and is just a function grouped inside the class.
+
+</QA>
+
+<QA q="When would you use a class method?">
+
+Mostly for **factory methods** (alternative constructors) such as `datetime.fromtimestamp()` or `dict.fromkeys()`, and for operations on shared class-level data like counters or configuration.
+
+</QA>
+
+<QA q="What is the difference between a class attribute and an instance attribute?">
+
+A class attribute is defined in the class body and shared by all instances. An instance attribute is set on `self` and belongs to one object. When you read `obj.x`, Python looks on the instance first and then on the class.
+
+</QA>
+
+<QA q="Can you call a static method on an object?">
+
+Yes. Static and class methods can be called on the class or on an instance. Calling them on the class is clearer.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is the first parameter of a class method?',
+      options: ['self', 'cls', 'It has none', 'this'],
+      answer: 1,
+      why: 'A class method receives the class itself, by convention named cls.',
+    },
+    {
+      q: 'Which decorator makes a method that receives neither self nor cls?',
+      options: ['@classmethod', '@property', '@staticmethod', '@abstractmethod'],
+      answer: 2,
+      why: '@staticmethod makes a plain function that lives inside the class.',
+    },
+    {
+      q: 'A class has  count = 0  in its body. Who shares this value?',
+      options: ['Only the first object', 'No object', 'All objects of the class', 'Only subclasses'],
+      answer: 2,
+      why: 'It is a class attribute, so every object reads the same value.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Kind | Decorator | First parameter | Can access |
+| --- | --- | --- | --- |
+| Instance method | none | `self` | Object and class data |
+| Class method | `@classmethod` | `cls` | Class data only |
+| Static method | `@staticmethod` | none | Neither |
+
+| Data | Where it is written | Shared? |
+| --- | --- | --- |
+| Instance attribute | `self.x = 1` in a method | No |
+| Class attribute | `x = 1` in the class body | Yes |
+
+</CheatSheet>

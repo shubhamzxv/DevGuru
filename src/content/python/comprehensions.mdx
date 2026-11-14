@@ -1,0 +1,246 @@
+---
+id: python-comprehensions
+title: Comprehensions
+summary: A comprehension builds a new list, set or dictionary from another collection in one short line.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a fruit seller sorting a basket of mangoes. In one pass he picks each mango, checks if it is ripe, and puts the ripe ones in a new box.
+
+A **comprehension** does the same: go through each item, check it, change it if needed, and collect the result.
+
+</Analogy>
+
+## Simple explanation
+
+A **comprehension** is a short way to build a collection from a loop.
+
+A **list comprehension** has this shape:
+
+`[expression for item in collection if condition]`
+
+Read it as: "give me **expression** for each **item** in the **collection**, but only if the **condition** is true". The `if` part is optional.
+
+The same idea works for other types:
+
+- Curly brackets with one value make a **set comprehension**
+- Curly brackets with `key: value` make a **dict comprehension**
+- Round brackets make a **generator expression**, which produces items one at a time and saves memory
+
+Use a comprehension when the logic is simple. If it gets long or hard to read, write a normal `for` loop.
+
+## Code example
+
+```python
+numbers = [1, 2, 3, 4, 5, 6]
+
+squares = [n * n for n in numbers]               # change every item
+print(squares)
+
+evens = [n for n in numbers if n % 2 == 0]       # keep only some items
+print(evens)
+
+labels = ["even" if n % 2 == 0 else "odd" for n in numbers]   # if-else on each item
+print(labels)
+
+names = ["asha", "ravi", "meera"]
+lengths = {name: len(name) for name in names}    # dict comprehension
+print(lengths)
+
+first_letters = {name[0] for name in names}      # set comprehension
+print(sorted(first_letters))
+
+total = sum(n * n for n in numbers)              # generator expression
+print(total)
+
+pairs = [(x, y) for x in [1, 2] for y in ["a", "b"]]   # two loops
+print(pairs)
+```
+
+```output
+[1, 4, 9, 16, 25, 36]
+[2, 4, 6]
+['odd', 'even', 'odd', 'even', 'odd', 'even']
+{'asha': 4, 'ravi': 4, 'meera': 5}
+['a', 'm', 'r']
+91
+[(1, 'a'), (1, 'b'), (2, 'a'), (2, 'b')]
+```
+
+<Playground kind="python">
+
+```python
+prices = [120, 45, 300, 80, 15]
+
+cheap = [p for p in prices if p < 100]
+with_tax = [round(p * 1.18, 2) for p in prices]
+
+print("Under 100:", cheap)
+print("With 18% tax:", with_tax)
+
+# Try it: build a dict that maps each price to "cheap" or "costly".
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Putting the filter if in the wrong place">
+
+<Wrong>
+
+```python
+nums = [1, 2, 3, 4]
+evens = [n if n % 2 == 0 for n in nums]   # SyntaxError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+nums = [1, 2, 3, 4]
+evens = [n for n in nums if n % 2 == 0]
+print(evens)   # [2, 4]
+```
+
+</Right>
+
+A filter `if` goes at the end. Only an `if ... else` goes at the front.
+
+</Mistake>
+
+<Mistake title="Using a comprehension only for its side effect">
+
+<Wrong>
+
+```python
+names = ["asha", "ravi"]
+[print(name) for name in names]   # works, but builds a useless list
+```
+
+</Wrong>
+
+<Right>
+
+```python
+names = ["asha", "ravi"]
+for name in names:
+    print(name)
+```
+
+</Right>
+
+A comprehension is for building a collection. For actions like printing, use a normal loop.
+
+</Mistake>
+
+<Mistake title="Writing a comprehension that nobody can read">
+
+<Wrong>
+
+```python
+data = [[1, 2], [3, 4]]
+out = [x * 2 if x % 2 else x for row in data if sum(row) > 2 for x in row if x > 1]
+print(out)   # [2, 6, 4]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+data = [[1, 2], [3, 4]]
+out = []
+for row in data:
+    if sum(row) > 2:
+        for x in row:
+            if x > 1:
+                out.append(x * 2 if x % 2 else x)
+print(out)   # [2, 6, 4]
+```
+
+</Right>
+
+When there are many conditions and loops, a normal loop is clearer.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a list comprehension?">
+
+A compact way to create a list from an iterable, with an optional filter. `[n * 2 for n in nums if n > 0]` does the work of a `for` loop, an `if` and an `append()` in one line. It is also a little faster than the loop.
+
+</QA>
+
+<QA q="What is the difference between a list comprehension and a generator expression?">
+
+A list comprehension uses square brackets and builds the whole list in memory at once. A generator expression uses round brackets and produces one item at a time, only when asked. For large data, the generator saves memory.
+
+</QA>
+
+<QA q="How do you flatten a list of lists?">
+
+Use two `for` parts. They read in the same order as nested loops.
+
+```python
+matrix = [[1, 2], [3, 4]]
+print([x for row in matrix for x in row])   # [1, 2, 3, 4]
+```
+
+</QA>
+
+<QA q="How do you swap the keys and values of a dictionary?">
+
+Use a dict comprehension over `items()`.
+
+```python
+codes = {"IN": "India", "JP": "Japan"}
+print({v: k for k, v in codes.items()})   # {'India': 'IN', 'Japan': 'JP'}
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does [n * 2 for n in [1, 2, 3]] give?',
+      options: ['[1, 2, 3]', '[2, 4, 6]', '[1, 4, 9]', '6'],
+      answer: 1,
+      why: 'Each item is multiplied by 2 and collected into a new list.',
+    },
+    {
+      q: 'What does [n for n in range(6) if n % 2 == 1] give?',
+      options: ['[0, 2, 4]', '[1, 3, 5]', '[1, 2, 3]', '[0, 1, 2, 3, 4, 5]'],
+      answer: 1,
+      why: 'range(6) is 0 to 5, and the filter keeps only the odd numbers.',
+    },
+    {
+      q: 'Which brackets create a generator expression?',
+      options: ['[ ]', '{ }', '( )', '< >'],
+      answer: 2,
+      why: 'Round brackets make a generator expression, which produces items one at a time.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Change every item | `[x * 2 for x in items]` |
+| Keep some items | `[x for x in items if x > 0]` |
+| If-else per item | `["big" if x > 9 else "small" for x in items]` |
+| Set | `{x % 3 for x in items}` |
+| Dict | `{x: x * x for x in items}` |
+| Generator | `sum(x * x for x in items)` |
+| Flatten | `[x for row in grid for x in row]` |
+
+</CheatSheet>

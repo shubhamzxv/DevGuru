@@ -1,0 +1,259 @@
+---
+id: python-break-continue-pass
+title: break, continue and pass
+summary: break stops a loop, continue skips to the next round, and pass does nothing at all.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+You are checking a crate of eggs, one by one.
+
+- You find the special egg you were looking for, so you stop checking. That is **break**
+- You see a cracked egg, so you skip it and move to the next one. That is **continue**
+- You reach an empty slot and simply do nothing. That is **pass**
+
+</Analogy>
+
+## Simple explanation
+
+These three keywords control what happens inside a loop.
+
+**break** ends the loop immediately. Python jumps to the first line after the loop.
+
+**continue** ends only the current round. Python goes back to the top of the loop and starts the next round.
+
+**pass** does nothing. Python needs at least one line inside every block. When you have nothing to write yet, `pass` fills the gap.
+
+In a nested loop, `break` and `continue` affect only the **innermost** loop they are in.
+
+A loop can also have an `else` block. It runs only when the loop finished without a `break`.
+
+## Code example
+
+```python
+numbers = [4, 7, 10, 13, 16]
+
+for n in numbers:
+    if n > 10:
+        break                    # stop the whole loop
+    print("checked", n)
+
+for n in numbers:
+    if n % 2 == 1:
+        continue                 # skip odd numbers, go to the next round
+    print("even", n)
+
+for n in numbers:
+    if n == 7:
+        pass                     # placeholder: decide later what to do
+    else:
+        print("not seven", n)
+
+for n in numbers:                # for-else: search pattern
+    if n == 99:
+        print("found 99")
+        break
+else:
+    print("99 is not in the list")   # runs because there was no break
+```
+
+```output
+checked 4
+checked 7
+checked 10
+even 4
+even 10
+even 16
+not seven 4
+not seven 10
+not seven 13
+not seven 16
+99 is not in the list
+```
+
+<Playground kind="python">
+
+```python
+orders = [250, 0, 400, -1, 120]
+
+for amount in orders:
+    if amount < 0:
+        print("Bad data found. Stopping.")
+        break
+    if amount == 0:
+        continue
+    print("Processing order of Rs", amount)
+
+# Try it: remove the -1 and see which orders are processed.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using break outside a loop">
+
+<Wrong>
+
+```python
+marks = 30
+if marks < 40:
+    break        # SyntaxError: 'break' outside loop
+```
+
+</Wrong>
+
+<Right>
+
+```python
+for marks in [80, 30, 90]:
+    if marks < 40:
+        break
+    print(marks)
+```
+
+</Right>
+
+`break` and `continue` only work inside `for` and `while` loops.
+
+</Mistake>
+
+<Mistake title="Putting the counter update after continue">
+
+<Wrong>
+
+```python
+n = 0
+while n < 5:
+    if n == 2:
+        continue     # runs forever: n stays 2
+    n += 1
+```
+
+</Wrong>
+
+<Right>
+
+```python
+n = 0
+while n < 5:
+    n += 1
+    if n == 2:
+        continue
+    print(n, end=" ")
+```
+
+</Right>
+
+`continue` skips the rest of the block. If the update is below it, the update never happens.
+
+</Mistake>
+
+<Mistake title="Thinking pass skips the round">
+
+<Wrong>
+
+```python
+for n in [1, 2, 3]:
+    if n == 2:
+        pass
+    print(n, end=" ")   # prints 1 2 3
+```
+
+</Wrong>
+
+<Right>
+
+```python
+for n in [1, 2, 3]:
+    if n == 2:
+        continue
+    print(n, end=" ")   # prints 1 3
+```
+
+</Right>
+
+`pass` does nothing, so the code below it still runs. Use `continue` to skip.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between break, continue and pass?">
+
+`break` exits the loop completely. `continue` skips the rest of the current round and moves to the next one. `pass` is a do-nothing statement used as a placeholder where the syntax needs a block.
+
+</QA>
+
+<QA q="Where is pass used in real code?">
+
+In empty functions or classes that you will write later, and in `except` blocks where you deliberately ignore an error.
+
+```python
+class PaymentError(Exception):
+    pass
+```
+
+</QA>
+
+<QA q="How do you break out of nested loops?">
+
+`break` only leaves the inner loop. Common solutions are to put the loops in a function and use `return`, or to use a flag variable that the outer loop checks.
+
+```python
+def find(grid, target):
+    for row in grid:
+        for value in row:
+            if value == target:
+                return True
+    return False
+
+print(find([[1, 2], [3, 4]], 3))   # True
+```
+
+</QA>
+
+<QA q="When does the else of a loop run?">
+
+Only when the loop ends normally, meaning without `break`. If `break` runs, the `else` block is skipped.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does this print?  for n in [1, 2, 3]:  if n == 2: break;  print(n)',
+      options: ['1', '1 2', '1 3', '1 2 3'],
+      answer: 0,
+      why: 'When n is 2, break ends the loop, so only 1 is printed.',
+    },
+    {
+      q: 'What does this print?  for n in [1, 2, 3]:  if n == 2: continue;  print(n)',
+      options: ['1', '1 2', '1 3', '1 2 3'],
+      answer: 2,
+      why: 'continue skips the print for 2 and moves on to 3.',
+    },
+    {
+      q: 'What does pass do?',
+      options: ['Ends the loop', 'Skips one round', 'Nothing', 'Ends the program'],
+      answer: 2,
+      why: 'pass is a placeholder statement that does nothing.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Keyword | What it does | Use it when |
+| --- | --- | --- |
+| `break` | Leaves the loop now | You found what you wanted |
+| `continue` | Jumps to the next round | This item should be skipped |
+| `pass` | Nothing | A block is needed but empty |
+| loop `else` | Runs if there was no `break` | "Not found" after a search |
+
+</CheatSheet>

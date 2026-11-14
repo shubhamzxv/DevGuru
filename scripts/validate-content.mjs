@@ -82,6 +82,15 @@ for (const track of trackDirs) {
       writtenCount += 1;
 
       const text = readFileSync(mdxPath, 'utf8');
+      // The block between --- lines is YAML. An unquoted value with ": " in it breaks the build.
+      for (const line of text.split(/\r?\n/).slice(1, 8)) {
+        const unsafe = /^(title|summary): (?!["'])(.*: .*|[*&!|>@%-].*)$/.exec(line);
+        if (unsafe) {
+          errors.push(
+            `${label}.mdx: put the ${unsafe[1]} in double quotes (it has ": " or starts with a special character)`,
+          );
+        }
+      }
       const fm = parseFrontmatter(text);
       if (!fm) {
         errors.push(`${label}.mdx: the --- block at the top is missing`);

@@ -1,0 +1,255 @@
+---
+id: python-for-loops
+title: for loops
+summary: A for loop repeats a block of code once for each item in a collection.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a teacher taking attendance. She reads the register from the first name to the last, and does the same thing for each name: call it and mark it.
+
+A **for loop** does one action for every item in a list, one by one.
+
+</Analogy>
+
+## Simple explanation
+
+A **loop** repeats code. A **for loop** goes through a collection and runs its block once per item.
+
+Anything you can loop over is called an **iterable**. Lists, strings, tuples, sets, dictionaries and `range()` are all iterables.
+
+`range()` produces numbers:
+
+- `range(5)` gives 0, 1, 2, 3, 4. The end number is not included
+- `range(2, 6)` gives 2, 3, 4, 5
+- `range(0, 10, 2)` gives 0, 2, 4, 6, 8. The third number is the step
+
+Two helpers are used a lot:
+
+- `enumerate(items)` gives the position and the item together
+- `zip(a, b)` walks through two lists side by side
+
+A loop inside another loop is called a **nested loop**.
+
+## Code example
+
+```python
+fruits = ["mango", "banana", "guava"]
+
+for fruit in fruits:                       # one round per item
+    print(fruit)
+
+for number in range(1, 4):                 # 1, 2, 3 (4 is not included)
+    print(number, "x 5 =", number * 5)
+
+for index, fruit in enumerate(fruits, start=1):   # position and item together
+    print(index, fruit)
+
+prices = [60, 40, 30]
+for fruit, price in zip(fruits, prices):   # two lists side by side
+    print(f"{fruit}: Rs {price}")
+
+total = 0
+for price in prices:                       # add up the values
+    total += price
+print("Total:", total)
+
+for letter in "hi":                        # a string is also iterable
+    print(letter)
+```
+
+```output
+mango
+banana
+guava
+1 x 5 = 5
+2 x 5 = 10
+3 x 5 = 15
+1 mango
+2 banana
+3 guava
+mango: Rs 60
+banana: Rs 40
+guava: Rs 30
+Total: 130
+h
+i
+```
+
+<Playground kind="python">
+
+```python
+for row in range(1, 6):
+    print("*" * row)
+
+# Try it: print the triangle upside down using range(5, 0, -1).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Expecting range() to include the end number">
+
+<Wrong>
+
+```python
+for n in range(1, 5):
+    print(n, end=" ")   # prints 1 2 3 4, not 5
+```
+
+</Wrong>
+
+<Right>
+
+```python
+for n in range(1, 6):
+    print(n, end=" ")   # prints 1 2 3 4 5
+```
+
+</Right>
+
+`range(start, stop)` stops just before `stop`. Add 1 to include it.
+
+</Mistake>
+
+<Mistake title="Using range(len()) when you only need the items">
+
+<Wrong>
+
+```python
+names = ["Asha", "Ravi"]
+for i in range(len(names)):
+    print(names[i])
+```
+
+</Wrong>
+
+<Right>
+
+```python
+names = ["Asha", "Ravi"]
+for name in names:
+    print(name)
+```
+
+</Right>
+
+Loop over the items directly. If you also need the position, use `enumerate()`.
+
+</Mistake>
+
+<Mistake title="Trying to loop over a number">
+
+<Wrong>
+
+```python
+for n in 5:        # TypeError: 'int' object is not iterable
+    print(n)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+for n in range(5):
+    print(n, end=" ")
+```
+
+</Right>
+
+A number is not a collection. Use `range()` to count.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a for loop and a while loop?">
+
+A `for` loop goes through the items of an iterable, so you usually know how many rounds it will run. A `while` loop keeps running as long as a condition is true, so it fits cases where the number of rounds is not known in advance.
+
+</QA>
+
+<QA q="What does enumerate() do?">
+
+It pairs each item with a counter, so you get the index and the value without `range(len())`.
+
+```python
+for i, ch in enumerate("ab"):
+    print(i, ch)
+```
+
+</QA>
+
+<QA q="What does zip() do when the lists have different lengths?">
+
+It stops at the shortest one. Extra items in the longer list are ignored.
+
+```python
+print(list(zip([1, 2, 3], ["a", "b"])))   # [(1, 'a'), (2, 'b')]
+```
+
+</QA>
+
+<QA q="What is the else block of a for loop?">
+
+A `for` loop can have an `else`. It runs only when the loop finishes without hitting `break`. It is handy for "searched everything and did not find it".
+
+```python
+for n in [1, 3, 5]:
+    if n % 2 == 0:
+        break
+else:
+    print("No even number found")
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'How many times does the block run in  for i in range(3):?',
+      options: ['2', '3', '4', '0'],
+      answer: 1,
+      why: 'range(3) gives 0, 1 and 2, which is three values.',
+    },
+    {
+      q: 'What does list(range(2, 8, 2)) give?',
+      options: ['[2, 4, 6, 8]', '[2, 4, 6]', '[2, 3, 4, 5, 6, 7]', '[4, 6, 8]'],
+      answer: 1,
+      why: 'It starts at 2, steps by 2, and stops before 8.',
+    },
+    {
+      q: 'What does enumerate(["a", "b"]) give you in a loop?',
+      options: [
+        'Only the items',
+        'Only the positions',
+        'Pairs of position and item',
+        'The list reversed',
+      ],
+      answer: 2,
+      why: 'enumerate() yields (0, "a") and then (1, "b").',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Each item | `for item in items:` |
+| Count 0 to 4 | `for i in range(5):` |
+| Count 1 to 5 | `for i in range(1, 6):` |
+| Count down | `for i in range(5, 0, -1):` |
+| Position and item | `for i, item in enumerate(items):` |
+| Two lists together | `for a, b in zip(list1, list2):` |
+| Keys and values | `for k, v in d.items():` |
+| Each character | `for ch in "text":` |
+
+</CheatSheet>

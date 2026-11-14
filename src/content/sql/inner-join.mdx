@@ -1,0 +1,241 @@
+---
+id: sql-inner-join
+title: INNER JOIN
+summary: INNER JOIN returns only the rows that have a matching row in both tables.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a wedding where entry needs two things: your name on the guest list **and** an invitation card in your hand. People on the list who did not come are not inside. People who came without being on the list are not inside either.
+
+Only those present on **both** sides get in. That is an `INNER JOIN`.
+
+</Analogy>
+
+## Simple explanation
+
+`INNER JOIN` is the most common join. It returns a row only when the join condition finds a partner in **both** tables.
+
+Rows without a match are dropped, from either side:
+
+- An employee with no department (`department_id` is NULL) does not appear
+- A department with no employees does not appear
+
+The word `INNER` is optional. `JOIN` alone means `INNER JOIN`.
+
+If one row matches several rows on the other side, it appears once for **each** match. One department with seven employees gives seven result rows.
+
+You can chain joins to combine three or more tables. Each `JOIN` adds one table and has its own `ON`.
+
+After the tables are joined, the usual clauses work on the combined rows: `WHERE`, `GROUP BY`, `ORDER BY`.
+
+<JoinVisualizer type="inner" />
+
+## Code example
+
+```sql
+SELECT
+  e.name   AS employee,
+  d.name   AS department
+FROM employees AS e
+INNER JOIN departments AS d
+  ON e.department_id = d.id          -- keep a row only when this is true
+WHERE d.name IN ('Finance', 'Support')
+ORDER BY d.name, e.name;
+```
+
+```output
+employee       | department
+---------------+-----------
+Farah Sheikh   | Finance
+Gaurav Bose    | Finance
+Lakshmi Pillai | Support
+Manoj Yadav    | Support
+```
+
+```sql
+SELECT
+  (SELECT COUNT(*) FROM employees)   AS all_employees,
+  (SELECT COUNT(*) FROM departments) AS all_departments,
+  COUNT(*)                           AS rows_after_inner_join,   -- 2 employees have no department
+  COUNT(DISTINCT d.id)               AS departments_in_result    -- Research has no employees
+FROM employees AS e
+INNER JOIN departments AS d ON e.department_id = d.id;
+```
+
+```output
+all_employees | all_departments | rows_after_inner_join | departments_in_result
+--------------+-----------------+-----------------------+----------------------
+21            | 6               | 19                    | 5
+```
+
+```sql
+SELECT
+  d.name              AS department,
+  COUNT(*)            AS employees,
+  SUM(e.salary)       AS salary_bill
+FROM employees AS e
+JOIN departments AS d ON e.department_id = d.id   -- JOIN alone means INNER JOIN
+GROUP BY d.name
+ORDER BY salary_bill DESC;
+```
+
+```output
+department  | employees | salary_bill
+------------+-----------+------------
+Engineering | 7         | 792000
+Sales       | 5         | 420000
+Marketing   | 3         | 249000
+Finance     | 2         | 206000
+Support     | 2         | 106000
+```
+
+<Playground kind="sql">
+
+```sql
+-- Total value of each delivered order
+SELECT
+  o.id                              AS order_id,
+  c.name                            AS customer,
+  SUM(oi.quantity * oi.unit_price)  AS total
+FROM orders AS o
+JOIN customers   AS c  ON c.id = o.customer_id
+JOIN order_items AS oi ON oi.order_id = o.id
+WHERE o.status = 'delivered'
+GROUP BY o.id, c.name
+ORDER BY total DESC
+LIMIT 5;
+
+-- Try it: group by customer only, to get each customer's total spend.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Expecting unmatched rows to appear">
+
+<Wrong>
+
+```sql
+SELECT d.name, COUNT(e.id) AS employees
+FROM departments AS d
+JOIN employees AS e ON e.department_id = d.id
+GROUP BY d.name;   -- Research is missing: it has no employees
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT d.name, COUNT(e.id) AS employees
+FROM departments AS d
+LEFT JOIN employees AS e ON e.department_id = d.id
+GROUP BY d.name;
+```
+
+</Right>
+
+An inner join drops rows with no partner. To keep every department, use `LEFT JOIN`.
+
+</Mistake>
+
+<Mistake title="Joining on the wrong columns">
+
+<Wrong>
+
+```sql
+SELECT COUNT(*) FROM orders AS o
+JOIN customers AS c ON c.id = o.id;   -- matches order id with customer id: meaningless
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT COUNT(*) FROM orders AS o
+JOIN customers AS c ON c.id = o.customer_id;
+```
+
+</Right>
+
+The query runs either way, so the mistake is silent. Always join the foreign key to the key it points to.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is an INNER JOIN?">
+
+A join that returns only the rows for which the join condition is true in both tables. Unmatched rows from either table are excluded. `JOIN` without a keyword is an inner join.
+
+</QA>
+
+<QA q="What happens when the join column contains NULL?">
+
+`NULL = anything` is not true, so rows with NULL in the join column never match in an inner join and are left out.
+
+</QA>
+
+<QA q="What is the difference between INNER JOIN and the old comma syntax?">
+
+`FROM a, b WHERE a.x = b.id` gives the same result as `FROM a INNER JOIN b ON a.x = b.id`. The explicit `JOIN ... ON` form is preferred: it separates matching rules from filters, and you cannot accidentally forget the condition and create a Cartesian product.
+
+</QA>
+
+<QA q="Write a query to list each customer with their number of orders, for customers who have ordered.">
+
+```sql
+SELECT c.name, COUNT(*) AS orders
+FROM customers AS c
+JOIN orders AS o ON o.customer_id = c.id
+GROUP BY c.id, c.name
+ORDER BY orders DESC
+LIMIT 3;
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'An employee has NULL in department_id. Does the employee appear in an INNER JOIN with departments?',
+      options: ['Yes, with NULL department', 'No', 'Yes, twice', 'Only with ORDER BY'],
+      answer: 1,
+      why: 'NULL never equals a department id, so there is no match and the row is dropped.',
+    },
+    {
+      q: 'What does JOIN mean when written without INNER, LEFT or RIGHT?',
+      options: ['CROSS JOIN', 'LEFT JOIN', 'INNER JOIN', 'FULL JOIN'],
+      answer: 2,
+      why: 'INNER is the default kind of join.',
+    },
+    {
+      q: 'One department has 5 employees. How many rows does it produce in an inner join of the two tables?',
+      options: ['1', '5', '0', '25'],
+      answer: 1,
+      why: 'The department row is repeated once for each matching employee.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Basic | `FROM a JOIN b ON a.b_id = b.id` |
+| With a filter | `... ON a.b_id = b.id WHERE b.city = 'Pune'` |
+| Three tables | `FROM a JOIN b ON ... JOIN c ON ...` |
+| Join and count | `SELECT b.name, COUNT(*) ... GROUP BY b.name` |
+| Two conditions | `ON a.x = b.x AND a.y = b.y` |
+
+Unmatched rows on either side are dropped.
+
+</CheatSheet>

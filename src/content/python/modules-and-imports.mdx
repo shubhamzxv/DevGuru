@@ -1,0 +1,228 @@
+---
+id: python-modules-and-imports
+title: Modules and imports
+summary: A module is a Python file with reusable code, and import brings that code into your program.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a toolbox at home. You do not make a new screwdriver each time something is loose. You open the toolbox and take the one you need.
+
+A **module** is a toolbox of ready-made code. `import` is opening the box.
+
+</Analogy>
+
+## Simple explanation
+
+A **module** is simply a `.py` file. It can hold functions, classes and variables that other files can use.
+
+`import` loads a module so you can use what is inside.
+
+There are a few ways to import:
+
+- `import math` loads the whole module. You write `math.sqrt(16)`
+- `from math import sqrt` loads one name. You write `sqrt(16)`
+- `import statistics as stats` gives the module a shorter name, called an **alias**
+
+Python comes with many modules already installed. Together they are called the **standard library**. Examples are `math`, `random`, `datetime`, `json` and `os`.
+
+Every module has a built-in variable called `__name__`. When you run a file directly, its value is `"__main__"`. When the file is imported by another file, its value is the module's name. This is why you often see `if __name__ == "__main__":`. Code under it runs only when the file is run directly.
+
+## Code example
+
+```python
+import math                              # load the whole module
+import statistics as stats               # load with a short alias
+from datetime import date                # load one name from a module
+from math import pi, sqrt                # load two names
+
+print(math.ceil(4.2), math.floor(4.8))   # use it as module.name
+print(sqrt(49))                          # imported name: no prefix needed
+print(round(pi, 2))
+print(stats.mean([70, 80, 90]))
+print(date(2026, 1, 26).strftime("%d %B %Y"))
+
+print(__name__)                          # this file is being run directly
+
+if __name__ == "__main__":               # runs only when the file is run directly
+    print("Running as the main program")
+```
+
+```output
+5 4
+7.0
+3.14
+80
+26 January 2026
+__main__
+Running as the main program
+```
+
+<Playground kind="python">
+
+```python
+import math
+import random
+
+random.seed(7)                 # a fixed seed gives the same "random" numbers each run
+dice = [random.randint(1, 6) for _ in range(5)]
+
+print("Dice:", dice)
+print("Square root of 2:", round(math.sqrt(2), 3))
+print("5 factorial:", math.factorial(5))
+
+# Try it: remove the seed line and run a few times.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using a name without its module prefix">
+
+<Wrong>
+
+```python
+import math
+print(sqrt(16))   # NameError: name 'sqrt' is not defined
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import math
+print(math.sqrt(16))   # 4.0
+```
+
+</Right>
+
+`import math` only brings in the name `math`. Use `math.sqrt`, or write `from math import sqrt`.
+
+</Mistake>
+
+<Mistake title="Naming your own file like a standard module">
+
+<Wrong>
+
+```python
+# This file is saved as random.py
+import random
+# Python imports THIS file, so random.randint does not exist
+```
+
+</Wrong>
+
+<Right>
+
+```python
+# This file is saved as dice_game.py
+import random
+print(random.randint(1, 1))   # 1
+```
+
+</Right>
+
+Python looks in your own folder first. Never name a file `random.py`, `math.py`, `json.py` or `email.py`.
+
+</Mistake>
+
+<Mistake title="Importing everything with a star">
+
+<Wrong>
+
+```python
+from math import *
+from statistics import *
+print(len(dir()) > 60)   # True: dozens of names dumped into your file
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from math import sqrt
+from statistics import mean
+print(sqrt(16), mean([1, 3]))   # 4.0 2
+```
+
+</Right>
+
+A star import hides where each name comes from, and one module can overwrite another's names. Import only what you use.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a module and a package?">
+
+A **module** is a single `.py` file. A **package** is a folder of modules, usually with an `__init__.py` file inside. A package lets you organise many modules under one name, such as `django.db.models`.
+
+</QA>
+
+<QA q="What does if __name__ == '__main__' do?">
+
+It checks whether the file is being run directly or imported. Code inside the block runs only when the file is the main program. This lets one file work both as a script and as an importable module, without running the script part on import.
+
+</QA>
+
+<QA q="What is the difference between import x and from x import y?">
+
+`import x` binds the module name, and you access members as `x.y`. `from x import y` binds `y` directly in your namespace. The first is clearer about where names come from; the second is shorter. Both load the whole module once.
+
+</QA>
+
+<QA q="How does Python find a module when you import it?">
+
+It searches the folders listed in `sys.path`, in order: the folder of the running script, folders in the `PYTHONPATH` environment variable, the standard library, and `site-packages` where pip installs packages. A module is loaded only once and then cached in `sys.modules`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'After  import math,  how do you call the square root function?',
+      options: ['sqrt(9)', 'math.sqrt(9)', 'math->sqrt(9)', 'import sqrt(9)'],
+      answer: 1,
+      why: 'With a plain import, you reach names through the module: math.sqrt.',
+    },
+    {
+      q: 'What is the value of __name__ in a file that you run directly?',
+      options: ['The file name', '"__main__"', 'None', '"module"'],
+      answer: 1,
+      why: 'When a file is the main program, Python sets __name__ to "__main__".',
+    },
+    {
+      q: 'What does  import numpy as np  do?',
+      options: [
+        'Imports only a function called np',
+        'Renames the numpy module on disk',
+        'Imports numpy and lets you call it np',
+        'Creates a new empty module',
+      ],
+      answer: 2,
+      why: 'as gives the module a short alias for use in your file.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Whole module | `import math` |
+| With an alias | `import pandas as pd` |
+| One name | `from math import sqrt` |
+| Several names | `from math import sqrt, pi` |
+| Run only as a script | `if __name__ == "__main__":` |
+| See what is inside | `dir(math)` |
+| Where Python searches | `sys.path` |
+
+</CheatSheet>

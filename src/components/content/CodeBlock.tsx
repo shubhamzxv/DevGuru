@@ -1,5 +1,6 @@
 import { Highlight, themes } from 'prism-react-renderer';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTheme } from '../../hooks/useTheme';
 import { Prism } from '../../utils/prism';
 
@@ -9,10 +10,23 @@ interface CodeBlockProps {
   language?: string;
   /** Text in the top bar. Defaults to the language name. */
   label?: string;
+  /** Show the "Try it" button (Python and SQL only). Off for code the playground cannot run. */
+  tryIt?: boolean;
 }
 
-/** Highlighted code with a Copy button. Scrolls sideways on small screens. */
-export default function CodeBlock({ code, language = 'text', label }: CodeBlockProps) {
+const barButton =
+  'tap px-3 text-sm font-medium text-slate-700 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-700';
+
+/**
+ * Highlighted code with a Copy button. Scrolls sideways on small screens.
+ * Python and SQL blocks also get "Try it", which opens the code in the free playground.
+ */
+export default function CodeBlock({
+  code,
+  language = 'text',
+  label,
+  tryIt = true,
+}: CodeBlockProps) {
   const { theme } = useTheme();
   const [copied, setCopied] = useState(false);
 
@@ -28,15 +42,21 @@ export default function CodeBlock({ code, language = 'text', label }: CodeBlockP
 
   return (
     <div className="my-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
-      <div className="flex items-center justify-between bg-slate-100 pl-4 dark:bg-slate-800">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
+      <div className="flex items-center bg-slate-100 pl-4 dark:bg-slate-800">
+        <span className="mr-auto text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
           {label ?? language}
         </span>
-        <button
-          type="button"
-          onClick={copy}
-          className="tap px-4 text-sm font-medium text-slate-700 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-700"
-        >
+        {tryIt && (language === 'python' || language === 'sql') && (
+          <Link
+            to={`/playground/${language}`}
+            state={{ code }}
+            aria-label="Open this code in the playground"
+            className={barButton}
+          >
+            Try it ▶
+          </Link>
+        )}
+        <button type="button" onClick={copy} className={barButton}>
           <span aria-live="polite">{copied ? 'Copied ✓' : 'Copy'}</span>
         </button>
       </div>

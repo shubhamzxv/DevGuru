@@ -1,0 +1,253 @@
+---
+id: python-arguments-and-defaults
+title: Arguments and default values
+summary: Arguments can be passed by position or by name, and a parameter can have a default value that is used when you pass nothing.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of ordering chai at a stall. If you just say "one chai", you get the usual: medium sugar, with milk. That is the **default**.
+
+If you say "one chai, less sugar", only that part changes. The rest stays the default.
+
+</Analogy>
+
+## Simple explanation
+
+There are two ways to pass arguments.
+
+A **positional argument** is matched by its position. The first value goes to the first parameter, and so on.
+
+A **keyword argument** is matched by name, like `sugar="less"`. The order does not matter.
+
+A **default value** is written in the definition, like `def chai(sugar="medium")`. If the caller passes nothing for it, Python uses the default.
+
+Rules:
+
+- In a definition, parameters with defaults come **after** the ones without
+- In a call, positional arguments come **before** keyword arguments
+- A default value is created **once**, when the function is defined. So never use a mutable value like a list as a default. Use `None` and make the list inside
+
+You can also force how arguments are passed. Parameters after a bare `*` must be passed by name. Parameters before a `/` must be passed by position.
+
+## Code example
+
+```python
+def order_chai(size, sugar="medium", milk=True):    # two parameters have defaults
+    return f"{size} chai, sugar={sugar}, milk={milk}"
+
+print(order_chai("small"))                          # defaults are used
+print(order_chai("large", "less"))                  # positional: by order
+print(order_chai("large", milk=False))              # keyword: by name
+print(order_chai(sugar="none", size="small"))       # keywords in any order
+
+def add_item(item, cart=None):                      # None as the safe default
+    if cart is None:
+        cart = []                                   # a new list for each call
+    cart.append(item)
+    return cart
+
+print(add_item("pen"))
+print(add_item("book"))                             # still starts empty
+
+def connect(host, *, timeout=10):                   # timeout is keyword-only
+    return f"{host} (timeout {timeout}s)"
+
+print(connect("db.local", timeout=30))
+```
+
+```output
+small chai, sugar=medium, milk=True
+large chai, sugar=less, milk=True
+large chai, sugar=medium, milk=False
+small chai, sugar=none, milk=True
+['pen']
+['book']
+db.local (timeout 30s)
+```
+
+<Playground kind="python">
+
+```python
+def ticket_price(distance_km, coach="sleeper", tatkal=False):
+    rate = {"sleeper": 0.6, "ac3": 1.6, "ac2": 2.3}[coach]
+    price = distance_km * rate
+    if tatkal:
+        price *= 1.3
+    return round(price)
+
+print(ticket_price(500))
+print(ticket_price(500, coach="ac3"))
+print(ticket_price(500, "ac2", tatkal=True))
+
+# Try it: add a new coach type "general" with a rate of 0.3.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using a list as a default value">
+
+<Wrong>
+
+```python
+def add_item(item, cart=[]):
+    cart.append(item)
+    return cart
+
+add_item("pen")
+print(add_item("book"))   # ['pen', 'book']
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def add_item(item, cart=None):
+    if cart is None:
+        cart = []
+    cart.append(item)
+    return cart
+
+add_item("pen")
+print(add_item("book"))   # ['book']
+```
+
+</Right>
+
+The default list is made only once and shared by every call. Use `None` and create the list inside.
+
+</Mistake>
+
+<Mistake title="Putting a positional argument after a keyword argument">
+
+<Wrong>
+
+```python
+def area(width, height):
+    return width * height
+
+print(area(width=2, 3))   # SyntaxError: positional argument follows keyword argument
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def area(width, height):
+    return width * height
+
+print(area(2, height=3))   # 6
+```
+
+</Right>
+
+In a call, positional arguments always come first.
+
+</Mistake>
+
+<Mistake title="Passing the same parameter twice">
+
+<Wrong>
+
+```python
+def area(width, height):
+    return width * height
+
+print(area(2, width=3))   # TypeError: area() got multiple values for argument 'width'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def area(width, height):
+    return width * height
+
+print(area(2, height=3))   # 6
+```
+
+</Right>
+
+`2` already filled `width` by position, so naming `width` again is an error.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between positional and keyword arguments?">
+
+Positional arguments are matched to parameters by order. Keyword arguments are matched by name and can be in any order. In a call, all positional arguments must come before the keyword ones.
+
+</QA>
+
+<QA q="Why should you not use a mutable default argument?">
+
+Default values are evaluated once, when `def` runs, and not on every call. So a default list or dict is shared between all calls, and data from one call leaks into the next. The fix is `def f(x, items=None):` and `if items is None: items = []`.
+
+</QA>
+
+<QA q="What are keyword-only and positional-only parameters?">
+
+Parameters after a bare `*` can only be passed by name. Parameters before a `/` can only be passed by position.
+
+```python
+def f(a, /, b, *, c):
+    return a + b + c
+
+print(f(1, 2, c=3))   # 6
+```
+
+</QA>
+
+<QA q="In what order must parameters be written in a definition?">
+
+Normal parameters, then parameters with defaults, then `*args`, then keyword-only parameters, then `**kwargs`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Given  def greet(name, msg="Hi"):  what does greet("Asha") use for msg?',
+      options: ['None', '"Hi"', '"Asha"', 'It raises an error'],
+      answer: 1,
+      why: 'No value was passed for msg, so the default "Hi" is used.',
+    },
+    {
+      q: 'Which call is valid for  def area(w, h):?',
+      options: ['area(w=2, 3)', 'area(2, h=3)', 'area(2, w=3)', 'area(h=3)'],
+      answer: 1,
+      why: 'Positional arguments come first, and each parameter gets exactly one value.',
+    },
+    {
+      q: 'What is the safe default for a parameter that should be a new empty list each call?',
+      options: ['[]', 'list', 'None', '0'],
+      answer: 2,
+      why: 'Use None as the default and create the list inside the function.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Default value | `def f(a, b=10):` |
+| Pass by position | `f(1, 2)` |
+| Pass by name | `f(a=1, b=2)` |
+| Mix | `f(1, b=2)` |
+| Safe mutable default | `def f(items=None):` |
+| Keyword-only | `def f(a, *, b):` |
+| Positional-only | `def f(a, /, b):` |
+
+</CheatSheet>

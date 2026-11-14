@@ -1,0 +1,266 @@
+---
+id: python-gil
+title: The GIL
+summary: The GIL (Global Interpreter Lock) is a lock in CPython that lets only one thread run Python code at a time.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a kitchen with four cooks but only **one knife**. Only the cook holding the knife can chop. The others wait for their turn. Four cooks do not chop four times faster.
+
+But if a cook is waiting for water to boil, he can put the knife down, and another cook can use it. Waiting time is not wasted.
+
+The knife is the **GIL**. Chopping is CPU work. Waiting for water is I/O.
+
+</Analogy>
+
+## Simple explanation
+
+**GIL** stands for **Global Interpreter Lock**. It is a lock inside **CPython**, the standard Python interpreter.
+
+The rule is simple: **only one thread can execute Python code at any moment**, even on a computer with many CPU cores.
+
+Why does it exist? CPython manages memory with reference counting. If two threads changed the same count at the same time, the count could become wrong and crash the program. One big lock was the simplest way to keep this safe, and it keeps single-threaded code fast.
+
+What it means for you depends on the kind of work.
+
+**CPU-bound** work keeps the processor busy: maths, image processing, parsing. Threads do **not** make it faster, because they take turns holding the GIL. Use **multiprocessing**: each process has its own interpreter and its own GIL.
+
+**I/O-bound** work spends most of its time waiting: network calls, database queries, reading files. A thread **releases the GIL while it waits**, so other threads can run. Here threads (or `asyncio`) help a lot.
+
+Two more facts:
+
+- The GIL does **not** make your own code thread-safe. An operation like `count += 1` is several steps, and a thread switch can happen in the middle. You still need a `Lock` for shared data
+- Libraries written in C, such as NumPy, release the GIL during heavy work, so they can use many cores
+
+## Code example
+
+```python
+import sys
+import threading
+import time
+
+def cpu_work(n):                          # CPU-bound: pure calculation
+    total = 0
+    for i in range(n):
+        total += i * i
+    return total
+
+def io_work(seconds):                     # I/O-bound: mostly waiting
+    time.sleep(seconds)                   # the GIL is released while sleeping
+
+def run_in_threads(target, arg, count):
+    threads = [threading.Thread(target=target, args=(arg,)) for _ in range(count)]
+    start = time.perf_counter()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return time.perf_counter() - start
+
+start = time.perf_counter()
+for _ in range(4):
+    io_work(0.2)                          # four waits, one after another
+one_by_one = time.perf_counter() - start
+
+threaded = run_in_threads(io_work, 0.2, 4)     # four waits at the same time
+print("I/O one by one takes about 0.8s:", 0.7 < one_by_one < 1.2)
+print("I/O in 4 threads takes about 0.2s:", threaded < 0.5)
+
+print(cpu_work(1000))                     # the result is the same in any thread
+print("Interpreter:", sys.implementation.name)
+print("Switch interval (seconds):", sys.getswitchinterval())
+```
+
+```output
+I/O one by one takes about 0.8s: True
+I/O in 4 threads takes about 0.2s: True
+332833500
+Interpreter: cpython
+Switch interval (seconds): 0.005
+```
+
+<Visual caption="With the GIL, threads take turns for CPU work (no speed-up). During I/O waits the GIL is released, so the waits overlap.">
+  <svg viewBox="0 0 340 150" width="340" height="150" role="img" aria-label="Two timelines. CPU work: thread 1 and thread 2 run one after another. I/O work: thread 1 and thread 2 wait at the same time.">
+    <text x="10" y="16" fontSize="12" fontWeight="bold" fill="#475569">CPU-bound: one at a time</text>
+    <text x="10" y="38" fontSize="11" fill="#475569">T1</text>
+    <rect x="34" y="26" width="70" height="16" rx="3" fill="#4f46e5" />
+    <rect x="174" y="26" width="70" height="16" rx="3" fill="#4f46e5" />
+    <text x="10" y="60" fontSize="11" fill="#475569">T2</text>
+    <rect x="104" y="48" width="70" height="16" rx="3" fill="#f59e0b" />
+    <rect x="244" y="48" width="70" height="16" rx="3" fill="#f59e0b" />
+    <text x="10" y="96" fontSize="12" fontWeight="bold" fill="#475569">I/O-bound: waits overlap</text>
+    <text x="10" y="118" fontSize="11" fill="#475569">T1</text>
+    <rect x="34" y="106" width="20" height="16" rx="3" fill="#4f46e5" />
+    <rect x="54" y="106" width="120" height="16" rx="3" fill="#c7d2fe" />
+    <text x="114" y="118" textAnchor="middle" fontSize="10" fill="#1e1b4b">waiting</text>
+    <text x="10" y="140" fontSize="11" fill="#475569">T2</text>
+    <rect x="54" y="128" width="20" height="16" rx="3" fill="#f59e0b" />
+    <rect x="74" y="128" width="120" height="16" rx="3" fill="#fde68a" />
+    <text x="134" y="140" textAnchor="middle" fontSize="10" fill="#78350f">waiting</text>
+  </svg>
+</Visual>
+
+<Mistakes>
+
+<Mistake title="Using threads to speed up CPU-heavy work">
+
+<Wrong>
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+def heavy(n):
+    return sum(i * i for i in range(n))
+
+with ThreadPoolExecutor(max_workers=4) as pool:    # threads share one GIL
+    results = list(pool.map(heavy, [200000] * 4))
+print(len(results))   # 4
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+
+def heavy(n):
+    return sum(i * i for i in range(n))
+
+if __name__ == "__main__":
+    with ProcessPoolExecutor(max_workers=4) as pool:   # one GIL per process
+        results = list(pool.map(heavy, [200000] * 4))
+    print(len(results))   # 4
+```
+
+</Right>
+
+Both give the right answer, but only processes use several CPU cores for Python calculations.
+
+</Mistake>
+
+<Mistake title="Assuming the GIL makes shared data safe">
+
+<Wrong>
+
+```python
+import threading
+
+count = 0
+
+def add():
+    global count
+    for _ in range(100000):
+        count += 1          # read, add, write: three steps, not one
+
+threads = [threading.Thread(target=add) for _ in range(4)]
+for t in threads: t.start()
+for t in threads: t.join()
+print(count <= 400000)   # True, and it can be less than 400000
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import threading
+
+count = 0
+lock = threading.Lock()
+
+def add():
+    global count
+    for _ in range(100000):
+        with lock:          # only one thread updates at a time
+            count += 1
+
+threads = [threading.Thread(target=add) for _ in range(4)]
+for t in threads: t.start()
+for t in threads: t.join()
+print(count)   # 400000
+```
+
+</Right>
+
+The GIL protects Python's internals, not your logic. Guard shared data with a `Lock`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the GIL?">
+
+The Global Interpreter Lock is a mutex in CPython that allows only one thread to execute Python bytecode at a time. It protects the interpreter's internal state, mainly reference counts, from concurrent modification. Because of it, threads in CPython do not run Python code in parallel on multiple cores.
+
+</QA>
+
+<QA q="How does the GIL affect multithreading?">
+
+For CPU-bound tasks, threads give no speed-up and can even be slower, because of lock switching. For I/O-bound tasks, threads work well: the GIL is released during blocking I/O, so other threads run while one waits.
+
+</QA>
+
+<QA q="How do you get around the GIL?">
+
+Use `multiprocessing` or `ProcessPoolExecutor` for CPU-bound work, since each process has its own GIL. Use C-based libraries such as NumPy that release the GIL. Use `asyncio` or threads for I/O-bound work. Or use another implementation: Jython and IronPython have no GIL.
+
+</QA>
+
+<QA q="Is the GIL being removed?">
+
+Python 3.13 added an optional **free-threaded** build (PEP 703) in which the GIL can be disabled. It is experimental and not the default, and some libraries still need updates. The standard build still has the GIL.
+
+</QA>
+
+<QA q="Does the GIL mean you never need locks?">
+
+No. The GIL only guarantees that one bytecode instruction runs at a time. Operations such as `x += 1` or check-then-update span several instructions, and a thread switch between them causes **race conditions**. Shared mutable state still needs `threading.Lock` or thread-safe structures like `queue.Queue`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does the GIL allow?',
+      options: [
+        'Many threads running Python code at the same instant',
+        'Only one thread running Python code at a time',
+        'Only one process on the computer',
+        'Only one function per file',
+      ],
+      answer: 1,
+      why: 'The GIL lets a single thread execute Python bytecode at any moment.',
+    },
+    {
+      q: 'For which kind of task do threads still help in CPython?',
+      options: ['CPU-bound calculations', 'I/O-bound tasks such as network calls', 'Sorting a large list', 'None'],
+      answer: 1,
+      why: 'A thread releases the GIL while it waits for I/O, so other threads can run.',
+    },
+    {
+      q: 'What is the usual way to use several CPU cores for heavy Python calculations?',
+      options: ['More threads', 'multiprocessing', 'A bigger list', 'A faster keyboard'],
+      answer: 1,
+      why: 'Each process has its own interpreter and its own GIL, so they run in parallel.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Kind of work | Example | Best tool | Why |
+| --- | --- | --- | --- |
+| CPU-bound | Maths, image resize | `multiprocessing` | One GIL per process |
+| I/O-bound, few tasks | API calls, DB queries | `threading` | GIL is released while waiting |
+| I/O-bound, many tasks | Thousands of sockets | `asyncio` | One thread, no switching cost |
+
+GIL = one thread runs Python code at a time. It exists in CPython. You still need locks for shared data.
+
+</CheatSheet>

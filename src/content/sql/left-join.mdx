@@ -1,0 +1,243 @@
+---
+id: sql-left-join
+title: LEFT JOIN
+summary: LEFT JOIN returns every row from the left table, with matching data from the right table, or NULL where there is no match.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a class teacher making a list of **all** students and writing each one's project partner next to the name. Some students have no partner yet. She does not remove them from the list. She leaves the partner column blank.
+
+Everyone from the first list stays. That is a `LEFT JOIN`.
+
+</Analogy>
+
+## Simple explanation
+
+`LEFT JOIN` keeps **every row of the left table** (the one written first, after `FROM`).
+
+- If a left row has matches in the right table, you get the combined rows, as in an inner join
+- If it has **no match**, the row still appears once, and every column from the right table is `NULL`
+
+`LEFT OUTER JOIN` is the same thing. The word `OUTER` is optional.
+
+This join answers questions that an inner join cannot:
+
+- "List all customers, **including** those who never ordered"
+- "Which products were **never** sold?"
+
+The second kind is called an **anti-join**. You do a `LEFT JOIN` and then keep only the rows where the right side is NULL:
+
+`LEFT JOIN orders AS o ON ... WHERE o.id IS NULL`
+
+One important trap: a condition on the **right** table belongs in `ON`, not in `WHERE`. In `WHERE`, it removes the NULL rows and turns your left join into an inner join.
+
+When counting, use `COUNT(right_table.id)` and not `COUNT(*)`. `COUNT(*)` counts the NULL-filled row as 1.
+
+<JoinVisualizer type="left" />
+
+## Code example
+
+```sql
+SELECT
+  c.name      AS customer,
+  o.id        AS order_id,
+  o.status
+FROM customers AS c                  -- left table: every customer is kept
+LEFT JOIN orders AS o
+  ON o.customer_id = c.id
+WHERE c.id >= 8                      -- a filter on the LEFT table is fine in WHERE
+ORDER BY c.id;
+```
+
+```output
+customer     | order_id | status
+-------------+----------+----------
+Nisha Thomas | 11       | shipped
+Varun Saxena | 13       | delivered
+Ritu Agarwal | NULL     | NULL
+```
+
+```sql
+SELECT p.name AS never_ordered       -- anti-join: rows with no match
+FROM products AS p
+LEFT JOIN order_items AS oi ON oi.product_id = p.id
+WHERE oi.id IS NULL;                 -- keep only where the right side is missing
+```
+
+```output
+never_ordered
+-------------
+Yoga Mat
+```
+
+```sql
+SELECT
+  d.name          AS department,
+  COUNT(e.id)     AS employees       -- COUNT(e.id) skips NULL, so empty departments show 0
+FROM departments AS d
+LEFT JOIN employees AS e ON e.department_id = d.id
+GROUP BY d.name
+ORDER BY employees DESC;
+```
+
+```output
+department  | employees
+------------+----------
+Engineering | 7
+Sales       | 5
+Marketing   | 3
+Finance     | 2
+Support     | 2
+Research    | 0
+```
+
+<Playground kind="sql">
+
+```sql
+-- Every customer with the number of orders, including zero
+SELECT
+  c.name,
+  COUNT(o.id) AS orders
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.id
+GROUP BY c.id, c.name
+ORDER BY orders DESC, c.name;
+
+-- Try it: list employees who have no department (use a LEFT JOIN to departments).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Filtering the right table in WHERE">
+
+<Wrong>
+
+```sql
+SELECT c.name, o.id
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.id
+WHERE o.status = 'placed';   -- customers without a placed order disappear: now it is an inner join
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT c.name, o.id
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.id AND o.status = 'placed'
+ORDER BY c.id LIMIT 5;
+```
+
+</Right>
+
+`WHERE` runs after the join and rejects rows where `o.status` is NULL. Put right-table conditions in `ON`.
+
+</Mistake>
+
+<Mistake title="Counting with COUNT(*) after a LEFT JOIN">
+
+<Wrong>
+
+```sql
+SELECT d.name, COUNT(*) AS employees
+FROM departments AS d LEFT JOIN employees AS e ON e.department_id = d.id
+WHERE d.name = 'Research' GROUP BY d.name;   -- shows 1, but Research has no employees
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT d.name, COUNT(e.id) AS employees
+FROM departments AS d LEFT JOIN employees AS e ON e.department_id = d.id
+WHERE d.name = 'Research' GROUP BY d.name;   -- shows 0
+```
+
+</Right>
+
+The unmatched department still produces one row. Count a column from the right table so that NULL is skipped.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a LEFT JOIN?">
+
+A join that returns all rows from the left table and the matching rows from the right table. Where no match exists, the right table's columns contain NULL. It is also written `LEFT OUTER JOIN`.
+
+</QA>
+
+<QA q="What is the difference between LEFT JOIN and INNER JOIN?">
+
+INNER JOIN returns only matched rows. LEFT JOIN returns matched rows **plus** left-table rows that have no match. If every left row has a match, both give the same result.
+
+</QA>
+
+<QA q="How do you find rows in one table that have no match in another?">
+
+With an anti-join: `LEFT JOIN` and `WHERE right.id IS NULL`. The alternatives are `NOT EXISTS` and `NOT IN`. `NOT EXISTS` is usually the safest, because `NOT IN` breaks when the subquery returns a NULL.
+
+```sql
+SELECT c.name FROM customers AS c
+WHERE NOT EXISTS (SELECT 1 FROM orders AS o WHERE o.customer_id = c.id);
+```
+
+</QA>
+
+<QA q="What is the difference between a condition in ON and in WHERE for a LEFT JOIN?">
+
+A condition in `ON` only decides which right rows match; unmatched left rows are still returned with NULLs. A condition in `WHERE` filters the final result, so a test on a right-table column removes the NULL-extended rows.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A customer has no orders. In  customers LEFT JOIN orders  what happens to that customer?',
+      options: ['The row is dropped', 'The row appears with NULL in the order columns', 'An error is raised', 'The row appears twice'],
+      answer: 1,
+      why: 'LEFT JOIN keeps every left row and fills the missing right side with NULL.',
+    },
+    {
+      q: 'Which pattern finds customers who have never ordered?',
+      options: [
+        'INNER JOIN orders',
+        'LEFT JOIN orders ... WHERE orders.id IS NULL',
+        'LEFT JOIN orders ... WHERE orders.id IS NOT NULL',
+        'CROSS JOIN orders',
+      ],
+      answer: 1,
+      why: 'After a left join, the unmatched rows are exactly those with NULL on the right side.',
+    },
+    {
+      q: 'Which table is the "left" table?',
+      options: ['The one after JOIN', 'The one after FROM', 'The bigger one', 'The one with the primary key'],
+      answer: 1,
+      why: 'Left means written first: the table that follows FROM.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| All of a, with b if present | `FROM a LEFT JOIN b ON b.a_id = a.id` |
+| Rows of a with no b | `... LEFT JOIN b ON ... WHERE b.id IS NULL` |
+| Count including zero | `COUNT(b.id)` with `GROUP BY a.id` |
+| Filter the right table | Put it in `ON`: `ON ... AND b.status = 'x'` |
+| Filter the left table | `WHERE a.city = 'Pune'` |
+| Default for missing | `COALESCE(b.name, 'none')` |
+
+</CheatSheet>

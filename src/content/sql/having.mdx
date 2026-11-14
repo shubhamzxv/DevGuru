@@ -1,0 +1,230 @@
+---
+id: sql-having
+title: HAVING
+summary: HAVING filters groups after GROUP BY, so you can keep only the groups whose count, total or average meets a condition.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a cricket selector. First he works out each player's average for the season. Then he says: "show me only the players whose average is above 40".
+
+He filters on a number that exists only **after** the calculation. That is `HAVING`.
+
+</Analogy>
+
+## Simple explanation
+
+`WHERE` cannot use aggregate functions, because it runs before the groups are made.
+
+`HAVING` runs **after** `GROUP BY` and after the aggregates are calculated. It keeps or removes whole **groups**.
+
+It is written after `GROUP BY` and before `ORDER BY`:
+
+`SELECT ... FROM ... WHERE ... GROUP BY ... HAVING ... ORDER BY ...`
+
+In `HAVING` you can use:
+
+- Aggregate functions, such as `COUNT(*) > 3` or `AVG(salary) >= 80000`
+- Columns that are in `GROUP BY`
+
+You can use `WHERE` and `HAVING` in the same query. `WHERE` removes rows first, the remaining rows are grouped, and `HAVING` then removes groups.
+
+A classic use of `HAVING` is finding **duplicates**: group by the column, and keep groups with `COUNT(*) > 1`.
+
+## Code example
+
+```sql
+SELECT
+  department_id,
+  COUNT(*)            AS employees,
+  ROUND(AVG(salary))  AS avg_salary
+FROM employees
+GROUP BY department_id
+HAVING COUNT(*) >= 3                 -- keep only groups with 3 or more employees
+ORDER BY employees DESC;
+```
+
+```output
+department_id | employees | avg_salary
+--------------+-----------+-----------
+1             | 7         | 113143.0
+2             | 5         | 84000.0
+3             | 3         | 83000.0
+```
+
+```sql
+SELECT
+  customer_id,
+  COUNT(*) AS delivered_orders
+FROM orders
+WHERE status = 'delivered'           -- 1. filter rows
+GROUP BY customer_id                 -- 2. make groups
+HAVING COUNT(*) >= 2                 -- 3. filter groups
+ORDER BY delivered_orders DESC;
+```
+
+```output
+customer_id | delivered_orders
+------------+-----------------
+1           | 3
+2           | 2
+```
+
+```sql
+SELECT salary, COUNT(*) AS people    -- find salaries that more than one person has
+FROM employees
+GROUP BY salary
+HAVING COUNT(*) > 1;
+```
+
+```output
+salary | people
+-------+-------
+72000  | 2
+140000 | 2
+```
+
+<Playground kind="sql">
+
+```sql
+-- Products that have sold 4 or more units in total
+SELECT
+  product_id,
+  SUM(quantity) AS units_sold
+FROM order_items
+GROUP BY product_id
+HAVING SUM(quantity) >= 4
+ORDER BY units_sold DESC;
+
+-- Try it: show cities that have more than one customer.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using HAVING for a condition that belongs in WHERE">
+
+<Wrong>
+
+```sql
+SELECT city, COUNT(*) AS employees FROM employees
+GROUP BY city HAVING city <> 'Mumbai';   -- works, but groups Mumbai first and then throws it away
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT city, COUNT(*) AS employees FROM employees
+WHERE city <> 'Mumbai' GROUP BY city;
+```
+
+</Right>
+
+Conditions on plain columns go in `WHERE`. Fewer rows reach the grouping step, so the query is faster.
+
+</Mistake>
+
+<Mistake title="Writing HAVING before GROUP BY">
+
+<Wrong>
+
+```sql
+SELECT city, COUNT(*) FROM employees HAVING COUNT(*) > 2 GROUP BY city;   -- Error: syntax error
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT city, COUNT(*) AS employees FROM employees GROUP BY city HAVING COUNT(*) > 2;
+```
+
+</Right>
+
+`HAVING` always comes after `GROUP BY`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the HAVING clause?">
+
+A filter applied to groups produced by `GROUP BY`. It is evaluated after aggregation, so it can test aggregate values such as `COUNT(*)`, `SUM()` or `AVG()`.
+
+</QA>
+
+<QA q="Can you use HAVING without GROUP BY?">
+
+Yes. The whole result is treated as a single group, so `HAVING` either keeps that one row or removes it. It is rarely useful.
+
+</QA>
+
+<QA q="How do you find duplicate values in a column?">
+
+Group by the column and keep groups with more than one row.
+
+```sql
+SELECT city, COUNT(*) AS customers
+FROM customers
+GROUP BY city
+HAVING COUNT(*) > 1;
+```
+
+</QA>
+
+<QA q="Can you use a column alias in HAVING?">
+
+MySQL and SQLite allow an alias from `SELECT` in `HAVING`. PostgreSQL and SQL Server do not, because `HAVING` is logically evaluated before `SELECT`. Repeating the aggregate expression works everywhere.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which clause can contain  COUNT(*) > 5?',
+      options: ['WHERE', 'HAVING', 'FROM', 'LIMIT'],
+      answer: 1,
+      why: 'Only HAVING runs after the aggregates are calculated.',
+    },
+    {
+      q: 'In what order are these clauses written?',
+      options: [
+        'HAVING, GROUP BY, WHERE',
+        'WHERE, GROUP BY, HAVING',
+        'GROUP BY, WHERE, HAVING',
+        'WHERE, HAVING, GROUP BY',
+      ],
+      answer: 1,
+      why: 'WHERE filters rows, GROUP BY makes groups, HAVING filters groups.',
+    },
+    {
+      q: 'What does  GROUP BY email HAVING COUNT(*) > 1  find?',
+      options: ['Unique emails', 'Emails that appear more than once', 'NULL emails', 'The longest email'],
+      answer: 1,
+      why: 'A group with more than one row means the value is duplicated.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Groups with many rows | `HAVING COUNT(*) > 3` |
+| Groups with a big total | `HAVING SUM(amount) > 1000` |
+| Groups with a high average | `HAVING AVG(salary) >= 80000` |
+| Duplicates | `GROUP BY col HAVING COUNT(*) > 1` |
+| Both filters | `WHERE row_condition GROUP BY col HAVING group_condition` |
+
+Clause order: `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT`.
+
+</CheatSheet>

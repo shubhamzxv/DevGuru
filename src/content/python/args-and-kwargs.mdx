@@ -1,0 +1,254 @@
+---
+id: python-args-and-kwargs
+title: "*args and **kwargs"
+summary: "*args collects extra positional arguments into a tuple, and **kwargs collects extra keyword arguments into a dictionary."
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a courier bag. You do not know how many parcels will come today, so you carry one big bag that holds any number of them. That bag is `*args`.
+
+Some parcels come with a label, such as "fragile: yes" or "floor: 3". You keep those in a folder where each label has its value. That folder is `**kwargs`.
+
+</Analogy>
+
+## Simple explanation
+
+Sometimes you do not know how many arguments a function will get.
+
+`*args` in a definition collects all **extra positional arguments** into a **tuple**.
+
+`**kwargs` in a definition collects all **extra keyword arguments** into a **dictionary**.
+
+The names `args` and `kwargs` are only a habit. The stars do the work. One star `*` means "positional", and two stars `**` mean "keyword".
+
+The stars also work the other way, in a **call**. This is called **unpacking**:
+
+- `f(*my_list)` spreads a list into separate positional arguments
+- `f(**my_dict)` spreads a dictionary into separate keyword arguments
+
+The order in a definition is fixed: normal parameters, then `*args`, then keyword-only parameters, then `**kwargs`.
+
+## Code example
+
+```python
+def total(*args):                        # any number of positional arguments
+    print(type(args).__name__, args)     # they arrive as a tuple
+    return sum(args)
+
+print(total(10, 20))
+print(total(1, 2, 3, 4))
+
+def profile(**kwargs):                   # any number of keyword arguments
+    print(type(kwargs).__name__)         # they arrive as a dict
+    for key, value in kwargs.items():
+        print(key, "=", value)
+
+profile(name="Asha", city="Pune")
+
+def order(item, *extras, **options):     # normal, then *args, then **kwargs
+    print(item, extras, options)
+
+order("pizza", "cheese", "olives", size="large", spicy=True)
+
+numbers = [3, 4]
+settings = {"sep": " | ", "end": " <-\n"}
+print(*numbers)                          # unpack a list into positions
+print("a", "b", **settings)              # unpack a dict into keywords
+```
+
+```output
+tuple (10, 20)
+30
+tuple (1, 2, 3, 4)
+10
+dict
+name = Asha
+city = Pune
+pizza ('cheese', 'olives') {'size': 'large', 'spicy': True}
+3 4
+a | b <-
+```
+
+<Playground kind="python">
+
+```python
+def average(*marks):
+    if not marks:
+        return 0
+    return sum(marks) / len(marks)
+
+def report(name, *marks, **details):
+    print(name, "average:", average(*marks))
+    for key, value in details.items():
+        print(" ", key, ":", value)
+
+report("Asha", 80, 90, 70, city="Pune", grade="A")
+
+# Try it: call report() with no marks at all.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Passing a list where separate values are expected">
+
+<Wrong>
+
+```python
+def total(*args):
+    return sum(args)
+
+marks = [10, 20, 30]
+print(total(marks))   # TypeError: unsupported operand type(s) for +: 'int' and 'list'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def total(*args):
+    return sum(args)
+
+marks = [10, 20, 30]
+print(total(*marks))   # 60
+```
+
+</Right>
+
+Without the star, the whole list arrives as one argument. `*marks` spreads it out.
+
+</Mistake>
+
+<Mistake title="Writing **kwargs before *args">
+
+<Wrong>
+
+```python
+def f(**kwargs, *args):   # SyntaxError
+    pass
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def f(*args, **kwargs):
+    return args, kwargs
+
+print(f(1, a=2))   # ((1,), {'a': 2})
+```
+
+</Right>
+
+`**kwargs` must always be the last parameter.
+
+</Mistake>
+
+<Mistake title="Unpacking a dict whose keys do not match the parameters">
+
+<Wrong>
+
+```python
+def greet(name):
+    return f"Hi {name}"
+
+print(greet(**{"nam": "Asha"}))   # TypeError: greet() got an unexpected keyword argument 'nam'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def greet(name):
+    return f"Hi {name}"
+
+print(greet(**{"name": "Asha"}))   # Hi Asha
+```
+
+</Right>
+
+With `**`, each key becomes a keyword argument, so every key must be a parameter name.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between *args and **kwargs?">
+
+`*args` collects extra **positional** arguments into a **tuple**. `**kwargs` collects extra **keyword** arguments into a **dict**. Use `*args` when the values have no names, and `**kwargs` when each value comes with a name.
+
+</QA>
+
+<QA q="What is the difference between a single star and a double star?">
+
+A single `*` deals with positional values: it packs them into a tuple in a definition and unpacks an iterable in a call. A double `**` deals with keyword values: it packs them into a dict in a definition and unpacks a dict in a call. As plain operators, `*` is multiply and `**` is power.
+
+</QA>
+
+<QA q="Where are *args and **kwargs used in real code?">
+
+In wrapper functions and **decorators**, which must accept any arguments and pass them to the wrapped function. Also when calling a parent class method with `super().__init__(*args, **kwargs)`.
+
+```python
+def logged(func):
+    def wrapper(*args, **kwargs):
+        print("calling", func.__name__)
+        return func(*args, **kwargs)
+    return wrapper
+```
+
+</QA>
+
+<QA q="Can you use other names than args and kwargs?">
+
+Yes. `*numbers` and `**options` work the same. Only the stars matter. `args` and `kwargs` are just the common convention.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Inside  def f(*args):  what is the type of args?',
+      options: ['list', 'tuple', 'dict', 'set'],
+      answer: 1,
+      why: 'Extra positional arguments are collected into a tuple.',
+    },
+    {
+      q: 'Inside  def f(**kwargs):  what is the type of kwargs?',
+      options: ['list', 'tuple', 'dict', 'str'],
+      answer: 2,
+      why: 'Extra keyword arguments are collected into a dictionary.',
+    },
+    {
+      q: 'What does  print(*[1, 2, 3])  show?',
+      options: ['[1, 2, 3]', '1 2 3', '(1, 2, 3)', 'An error'],
+      answer: 1,
+      why: 'The star unpacks the list into three separate arguments, and print joins them with spaces.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Any number of values | `def f(*args):` |
+| Any number of named values | `def f(**kwargs):` |
+| Both | `def f(*args, **kwargs):` |
+| Spread a list into a call | `f(*items)` |
+| Spread a dict into a call | `f(**options)` |
+| Pass everything on | `return func(*args, **kwargs)` |
+
+`*` means positional and gives a tuple. `**` means keyword and gives a dict.
+
+</CheatSheet>

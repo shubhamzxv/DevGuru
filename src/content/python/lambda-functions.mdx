@@ -1,0 +1,240 @@
+---
+id: python-lambda-functions
+title: Lambda functions
+summary: A lambda is a small function without a name, written in one line.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a sticky note with one quick instruction: "sort these files by date". You write it, use it once, and throw it away. You would not write a full office manual for that.
+
+A **lambda** is that sticky note: a tiny function made on the spot.
+
+</Analogy>
+
+## Simple explanation
+
+A **lambda function** is an **anonymous function**. Anonymous means it has no name.
+
+The shape is:
+
+`lambda parameters: expression`
+
+It takes any number of parameters, but its body is **one expression**. The value of that expression is returned automatically. You do not write `return`.
+
+A lambda cannot contain statements such as `if` blocks, loops or assignments. A one-line `x if condition else y` is allowed, because that is an expression.
+
+Lambdas are mostly used as a short argument to another function, especially the `key` of `sorted()`, `max()` and `min()`, and with `map()` and `filter()`.
+
+If the logic needs more than one line, or you need it in several places, write a normal `def` function with a clear name.
+
+## Code example
+
+```python
+square = lambda x: x * x                 # same as: def square(x): return x * x
+print(square(5))
+
+add = lambda a, b: a + b                 # two parameters
+print(add(2, 3))
+
+students = [("Asha", 82), ("Ravi", 67), ("Meera", 91)]
+
+by_marks = sorted(students, key=lambda s: s[1])      # sort by the second item
+print(by_marks)
+
+topper = max(students, key=lambda s: s[1])           # biggest by marks
+print(topper[0])
+
+names = ["ravi", "Asha", "meera"]
+print(sorted(names, key=lambda n: n.lower()))        # ignore upper/lower case
+
+prices = [100, 250, 80]
+print(list(map(lambda p: round(p * 1.18), prices)))  # change every item
+print(list(filter(lambda p: p > 90, prices)))        # keep some items
+
+grade = lambda m: "pass" if m >= 40 else "fail"      # one-line if-else is allowed
+print(grade(35))
+```
+
+```output
+25
+5
+[('Ravi', 67), ('Asha', 82), ('Meera', 91)]
+Meera
+['Asha', 'meera', 'ravi']
+[118, 295, 94]
+[100, 250]
+fail
+```
+
+<Playground kind="python">
+
+```python
+products = [
+    {"name": "pen", "price": 10, "stock": 50},
+    {"name": "bag", "price": 700, "stock": 5},
+    {"name": "book", "price": 150, "stock": 20},
+]
+
+cheapest_first = sorted(products, key=lambda p: p["price"])
+print([p["name"] for p in cheapest_first])
+
+# Try it: sort by stock, highest first, using reverse=True.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Trying to put statements inside a lambda">
+
+<Wrong>
+
+```python
+check = lambda x: if x > 0: return "positive"   # SyntaxError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+check = lambda x: "positive" if x > 0 else "not positive"
+print(check(5))   # positive
+```
+
+</Right>
+
+A lambda holds one expression. Use the one-line `if`-`else` form, or write a `def`.
+
+</Mistake>
+
+<Mistake title="Lambdas in a loop all using the last value">
+
+<Wrong>
+
+```python
+funcs = [lambda: n for n in range(3)]
+print([f() for f in funcs])   # [2, 2, 2]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+funcs = [lambda n=n: n for n in range(3)]
+print([f() for f in funcs])   # [0, 1, 2]
+```
+
+</Right>
+
+A lambda looks up `n` when it is called, not when it is created. `n=n` stores the current value as a default.
+
+</Mistake>
+
+<Mistake title="Using a lambda where a named function is clearer">
+
+<Wrong>
+
+```python
+price_with_tax = lambda p, rate=0.18, round_to=2: round(p + p * rate, round_to)
+print(price_with_tax(100))   # 118.0
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def price_with_tax(price, rate=0.18):
+    """Return the price including tax."""
+    return round(price + price * rate, 2)
+
+print(price_with_tax(100))   # 118.0
+```
+
+</Right>
+
+If you give a lambda a name, a `def` is better. It can have a docstring and shows its name in error messages.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a lambda function in Python?">
+
+A small anonymous function defined with the `lambda` keyword. It can take any number of arguments but has only one expression, whose value is returned. Example: `lambda x, y: x + y`.
+
+</QA>
+
+<QA q="What is the difference between lambda and def?">
+
+`def` creates a named function that can hold many statements, a docstring and type hints. `lambda` creates an unnamed function limited to a single expression. Both produce ordinary function objects.
+
+</QA>
+
+<QA q="Where do you use lambda functions?">
+
+As short throw-away functions passed to other functions: the `key` argument of `sorted()`, `min()`, `max()`, and with `map()`, `filter()` and `reduce()`.
+
+```python
+words = ["banana", "fig", "apple"]
+print(sorted(words, key=lambda w: len(w)))   # ['fig', 'apple', 'banana']
+```
+
+</QA>
+
+<QA q="How do you sort a list of dictionaries by one key?">
+
+Pass a lambda that picks that key.
+
+```python
+users = [{"name": "Ravi", "age": 30}, {"name": "Asha", "age": 25}]
+print(sorted(users, key=lambda u: u["age"])[0]["name"])   # Asha
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does (lambda x: x + 10)(5) give?',
+      options: ['5', '10', '15', 'An error'],
+      answer: 2,
+      why: 'The lambda is called with x = 5, so it returns 5 + 10.',
+    },
+    {
+      q: 'How many expressions can the body of a lambda have?',
+      options: ['One', 'Two', 'Any number', 'None'],
+      answer: 0,
+      why: 'A lambda body is exactly one expression, and its value is returned.',
+    },
+    {
+      q: 'What does sorted([3, -5, 1], key=lambda n: abs(n)) give?',
+      options: ['[-5, 1, 3]', '[1, 3, -5]', '[3, 1, -5]', '[-5, 3, 1]'],
+      answer: 1,
+      why: 'The list is sorted by absolute value: 1, 3, then 5 (which is -5).',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| One parameter | `lambda x: x * 2` |
+| Two parameters | `lambda a, b: a + b` |
+| No parameters | `lambda: 42` |
+| With a condition | `lambda x: "big" if x > 9 else "small"` |
+| Sort by a field | `sorted(items, key=lambda i: i["price"])` |
+| Biggest by a field | `max(items, key=lambda i: i["price"])` |
+| Change each item | `map(lambda x: x * 2, items)` |
+| Keep some items | `filter(lambda x: x > 0, items)` |
+
+</CheatSheet>

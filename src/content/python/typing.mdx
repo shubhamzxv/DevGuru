@@ -1,0 +1,270 @@
+---
+id: python-typing
+title: Type hints (typing)
+summary: Type hints are notes in your code that say what type a variable, parameter or return value should be.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of labels on kitchen jars: "Sugar", "Salt", "Tea". The label does not stop you from putting salt in the sugar jar. But it tells everyone what belongs there, and a careful helper will warn you when you get it wrong.
+
+**Type hints** are those labels for your code.
+
+</Analogy>
+
+## Simple explanation
+
+Python is dynamically typed, so it never forces you to state types. A **type hint** (also called a **type annotation**) is an optional note that states the expected type.
+
+You write a colon after a parameter or variable, and an arrow before the return type:
+
+`def add(a: int, b: int) -> int:`
+
+Important: **Python does not check hints when the program runs**. Passing a string where the hint says `int` does not raise an error by itself.
+
+So why write them?
+
+- Your editor gives better autocomplete and shows mistakes as you type
+- A **type checker** such as **mypy** or **pyright** reads the hints and finds bugs before the code runs
+- The code documents itself
+- Libraries such as **FastAPI** and **Pydantic** read the hints and validate real data with them
+
+Common forms:
+
+- `list[int]` is a list of ints, and `dict[str, int]` is a dict from str to int
+- `int | None` means an int or `None`. An older spelling is `Optional[int]`
+- `str | int` means either type. An older spelling is `Union[str, int]`
+- `Any` means any type is allowed
+- `Callable[[int], str]` is a function that takes an int and returns a str
+
+## Code example
+
+```python
+from typing import Any, Callable
+
+def total_price(price: float, quantity: int = 1) -> float:    # parameters and return type
+    return price * quantity
+
+count: int = 3                                   # a variable with a hint
+names: list[str] = ["Asha", "Ravi"]              # a list of strings
+stock: dict[str, int] = {"pen": 40}              # keys are str, values are int
+
+def find_user(user_id: int) -> str | None:       # may return a str or None
+    users = {1: "Asha"}
+    return users.get(user_id)
+
+def apply(func: Callable[[int], int], value: int) -> int:     # a function as a parameter
+    return func(value)
+
+def describe(item: Any) -> str:                  # anything is accepted
+    return type(item).__name__
+
+print(total_price(49.5, 2))
+print(find_user(1), find_user(9))
+print(apply(lambda n: n * 10, 4))
+print(describe(3.5), describe(names))
+
+print(total_price("ab", 2))                      # wrong type, but Python still runs it
+print(total_price.__annotations__)               # the hints are stored on the function
+```
+
+```output
+99.0
+Asha None
+40
+float list
+abab
+{'price': <class 'float'>, 'quantity': <class 'int'>, 'return': <class 'float'>}
+```
+
+<Playground kind="python">
+
+```python
+def average(marks: list[int]) -> float:
+    return sum(marks) / len(marks)
+
+def grade(score: float) -> str:
+    return "pass" if score >= 40 else "fail"
+
+def report(name: str, marks: list[int]) -> dict[str, str | float]:
+    score = average(marks)
+    return {"name": name, "average": score, "result": grade(score)}
+
+print(report("Asha", [70, 85, 90]))
+print(report.__annotations__["return"])
+
+# Try it: add a hint and a default value for a new parameter  pass_mark.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Believing hints are checked at run time">
+
+<Wrong>
+
+```python
+def double(n: int) -> int:
+    return n * 2
+
+print(double("ab"))   # abab
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def double(n: int) -> int:
+    if not isinstance(n, int):
+        raise TypeError("n must be an int")
+    return n * 2
+
+print(double(4))   # 8
+```
+
+</Right>
+
+Hints are not enforced by Python. Use a type checker, or validate real input yourself (or with Pydantic).
+
+</Mistake>
+
+<Mistake title="Forgetting that a value can be None">
+
+<Wrong>
+
+```python
+def find(code: str) -> str:
+    return {"IN": "India"}.get(code)
+
+print(find("XX").upper())   # AttributeError: 'NoneType' object has no attribute 'upper'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def find(code: str) -> str | None:
+    return {"IN": "India"}.get(code)
+
+name = find("XX")
+print(name.upper() if name else "unknown")   # unknown
+```
+
+</Right>
+
+If a function can return `None`, say so in the hint. A type checker will then make every caller handle it.
+
+</Mistake>
+
+<Mistake title="Using a bare list or dict as the hint">
+
+<Wrong>
+
+```python
+def total(items: list) -> int:      # a list of what?
+    return sum(items)
+
+print(total([1, 2, 3]))   # 6
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def total(items: list[int]) -> int:
+    return sum(items)
+
+print(total([1, 2, 3]))   # 6
+```
+
+</Right>
+
+Say what is inside the collection. Then the checker can verify the items too.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are type hints, and does Python enforce them?">
+
+Annotations that describe the expected types of variables, parameters and return values. The interpreter stores them (in `__annotations__`) but does **not** enforce them at run time. They are used by editors, static type checkers like mypy and pyright, and frameworks such as FastAPI and Pydantic.
+
+</QA>
+
+<QA q="What is the difference between static and dynamic typing?">
+
+In **static typing**, types are checked before the program runs (Java, C++). In **dynamic typing**, types are checked while it runs (Python, JavaScript). Type hints plus a checker give Python optional static checking, often called **gradual typing**.
+
+</QA>
+
+<QA q="What is the difference between Optional[X] and Union[X, Y]?">
+
+`Union[X, Y]` means the value can be `X` or `Y`. `Optional[X]` is short for `Union[X, None]`. From Python 3.10 you can write `X | Y` and `X | None`.
+
+</QA>
+
+<QA q="How does FastAPI use type hints?">
+
+FastAPI reads the hints on your route function's parameters. From them it validates and converts incoming request data, returns clear 422 errors for bad input, and generates the OpenAPI documentation automatically. Pydantic models, which are classes with annotated fields, do the validation.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does  -> str  mean in  def name() -> str:?',
+      options: [
+        'The function takes a string',
+        'The function is expected to return a string',
+        'The function is called str',
+        'The function prints a string',
+      ],
+      answer: 1,
+      why: 'The arrow marks the return type hint.',
+    },
+    {
+      q: 'What happens if you pass a string to  def f(n: int):  when the program runs?',
+      options: [
+        'Python raises a TypeError immediately',
+        'Python runs the function anyway',
+        'The program will not start',
+        'The string is converted to an int',
+      ],
+      answer: 1,
+      why: 'Hints are not enforced at run time. Only a type checker would flag it.',
+    },
+    {
+      q: 'Which hint means "a string or None"?',
+      options: ['str & None', 'str | None', 'str, None', 'None[str]'],
+      answer: 1,
+      why: 'The | operator joins alternatives. Optional[str] means the same.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Hint |
+| --- | --- |
+| Parameter | `def f(name: str):` |
+| Return value | `def f() -> int:` |
+| Variable | `count: int = 0` |
+| List of ints | `list[int]` |
+| Dict | `dict[str, float]` |
+| Tuple | `tuple[int, str]` |
+| Maybe None | `int \| None` |
+| Either type | `int \| str` |
+| Anything | `Any` |
+| A function | `Callable[[int], str]` |
+| No return value | `-> None` |
+
+</CheatSheet>

@@ -1,0 +1,210 @@
+---
+id: sql-sql-vs-nosql
+title: SQL vs NoSQL
+summary: SQL databases store data in linked tables with a fixed structure, while NoSQL databases store it in flexible forms such as documents or key-value pairs.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+A **SQL database** is like a bank's printed forms. Every form has the same boxes in the same place. It is strict, but anyone can find any detail quickly, and nothing is missing.
+
+A **NoSQL database** is like a folder for each customer. You can drop in any paper: a letter, a photo, a bill. It is flexible and quick to fill, but two folders may not look alike.
+
+</Analogy>
+
+## Simple explanation
+
+**SQL databases** (relational) keep data in **tables** with a fixed **schema**. Tables are linked with keys, and you combine them with **JOINs**. Examples: MySQL, PostgreSQL, Oracle, SQLite.
+
+**NoSQL databases** ("not only SQL") drop the table model. There are four main kinds:
+
+- **Document**: each item is a JSON-like document. Example: MongoDB
+- **Key-value**: a key points to a value, like a dictionary. Examples: Redis, DynamoDB
+- **Wide-column**: rows with flexible columns, built for huge data. Example: Cassandra
+- **Graph**: nodes and the links between them. Example: Neo4j
+
+The main differences:
+
+| Point | SQL | NoSQL |
+| --- | --- | --- |
+| Structure | Tables, fixed schema | Documents, key-value and more; flexible schema |
+| Relationships | JOINs between tables | Usually stored together in one item |
+| Scaling | Mostly **vertical** (a bigger server) | Mostly **horizontal** (more servers) |
+| Consistency | Strong: **ACID** transactions | Often **eventual consistency** |
+| Query language | SQL, the same idea everywhere | Different for each product |
+| Best for | Orders, payments, accounts | Catalogues, sessions, logs, caching, real-time feeds |
+
+**ACID** means a group of changes either all happen or none do, and the data is always left valid. **Eventual consistency** means all servers will agree after a short delay, which is fine for likes on a post but not for a bank balance.
+
+Many real systems use both: PostgreSQL for orders and payments, Redis for caching, MongoDB or DynamoDB for flexible data.
+
+## Code example
+
+The same customer and order in a SQL database (two linked tables):
+
+```sql
+SELECT c.name, c.city, o.id AS order_id, o.status
+FROM customers AS c
+JOIN orders AS o ON o.customer_id = c.id
+WHERE c.id = 1;
+```
+
+```output
+name         | city  | order_id | status
+-------------+-------+----------+----------
+Aarav Sharma | Delhi | 1        | delivered
+Aarav Sharma | Delhi | 3        | delivered
+Aarav Sharma | Delhi | 9        | delivered
+```
+
+And as one document in a document database such as MongoDB:
+
+```json
+{
+  "_id": 1,
+  "name": "Aarav Sharma",
+  "city": "Delhi",
+  "orders": [
+    { "order_id": 1, "status": "delivered" },
+    { "order_id": 3, "status": "delivered" },
+    { "order_id": 9, "status": "delivered" }
+  ]
+}
+```
+
+<Playground kind="sql">
+
+```sql
+-- SQL can also build a document-style result with JSON functions.
+SELECT
+  c.name,
+  json_group_array(o.status) AS order_statuses
+FROM customers AS c
+JOIN orders AS o ON o.customer_id = c.id
+GROUP BY c.id
+LIMIT 4;
+
+-- Try it: replace o.status with o.order_date.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Choosing NoSQL only because it sounds modern">
+
+<Wrong>
+
+```text
+"We are building a payment system, so let us use MongoDB because it scales."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Payments need strict rules and transactions -> a relational database (PostgreSQL, MySQL).
+Product catalogue with changing fields, or a cache -> a NoSQL store can fit.
+```
+
+</Right>
+
+Choose by the shape of the data and the consistency you need, not by fashion.
+
+</Mistake>
+
+<Mistake title="Thinking NoSQL means no structure at all">
+
+<Wrong>
+
+```json
+[
+  { "name": "Asha", "phone": "98100" },
+  { "fullName": "Ravi", "mobile": 98200 }
+]
+```
+
+</Wrong>
+
+<Right>
+
+```json
+[
+  { "name": "Asha", "phone": "98100" },
+  { "name": "Ravi", "phone": "98200" }
+]
+```
+
+</Right>
+
+The database will not stop you, so your application must keep documents consistent. Otherwise every reader has to handle every variation.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between SQL and NoSQL databases?">
+
+SQL databases are relational: structured tables, a predefined schema, relationships through keys and JOINs, ACID transactions, and usually vertical scaling. NoSQL databases are non-relational: document, key-value, wide-column or graph models, flexible schema, usually horizontal scaling, and often eventual consistency in exchange for availability and speed.
+
+</QA>
+
+<QA q="When would you choose NoSQL over SQL?">
+
+When the data has no fixed structure or changes shape often, when you need to scale writes across many servers, when you need very fast simple lookups (caching, sessions), or when the data is naturally a document or a graph. Choose SQL when relationships, complex queries and strict consistency matter.
+
+</QA>
+
+<QA q="What is the difference between vertical and horizontal scaling?">
+
+Vertical scaling adds power (CPU, RAM, disk) to one server. Horizontal scaling adds more servers and spreads the data across them, which is called **sharding**. Relational databases scale vertically easily and horizontally with more effort; most NoSQL systems are designed for horizontal scaling.
+
+</QA>
+
+<QA q="What is the CAP theorem?">
+
+In a distributed system you cannot fully have all three of **Consistency** (every read sees the latest write), **Availability** (every request gets an answer) and **Partition tolerance** (the system works even when servers cannot reach each other). Since network partitions do happen, a system must choose between consistency and availability during a partition.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which database is a NoSQL document store?',
+      options: ['PostgreSQL', 'MySQL', 'MongoDB', 'SQLite'],
+      answer: 2,
+      why: 'MongoDB stores JSON-like documents. The other three are relational.',
+    },
+    {
+      q: 'Which fits a banking transaction system best?',
+      options: ['A relational (SQL) database', 'A key-value cache only', 'A graph database only', 'Plain text files'],
+      answer: 0,
+      why: 'Banking needs strict rules and ACID transactions, which relational databases provide.',
+    },
+    {
+      q: 'What does horizontal scaling mean?',
+      options: ['Buying a bigger server', 'Adding more servers', 'Adding more columns', 'Deleting old data'],
+      answer: 1,
+      why: 'Horizontal scaling spreads the load across additional servers.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| | SQL | NoSQL |
+| --- | --- | --- |
+| Model | Tables | Document, key-value, wide-column, graph |
+| Schema | Fixed | Flexible |
+| Links | JOINs | Nested or duplicated data |
+| Transactions | ACID | Often eventual consistency |
+| Scaling | Vertical first | Horizontal |
+| Examples | MySQL, PostgreSQL | MongoDB, Redis, Cassandra, DynamoDB |
+
+</CheatSheet>

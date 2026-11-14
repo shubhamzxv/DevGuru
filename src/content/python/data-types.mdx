@@ -1,0 +1,235 @@
+---
+id: python-data-types
+title: Data types
+summary: A data type tells Python what kind of value something is, such as a number, text, or True/False.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+In a kitchen, oil goes in a bottle, rice goes in a box, and eggs go in a tray. Each kind of thing has its own kind of container.
+
+The kind also decides what you can do. You pour oil. You count eggs. In Python, the **data type** of a value decides what you can do with it.
+
+</Analogy>
+
+## Simple explanation
+
+A **data type** is the kind of a value. Python finds the type by itself from the value you write.
+
+The basic types hold one value:
+
+- **int**: a whole number, like `25`
+- **float**: a number with a decimal point, like `99.5`
+- **str**: text (a "string" of characters), like `"Asha"`
+- **bool**: only `True` or `False`
+- **NoneType**: the special value `None`, which means "no value"
+
+The collection types hold many values:
+
+- **list**: an ordered group that can change, like `["milk", "bread"]`
+- **tuple**: an ordered group that cannot change, like `(28.6, 77.2)`
+- **set**: a group of unique items, like `{"new", "sale"}`
+- **dict**: pairs of key and value, like `{"name": "Asha"}`
+
+Use `type()` to see the type of any value.
+
+Some types are **mutable**, which means the value can be changed after it is made (list, set, dict). Others are **immutable**, which means it cannot (int, float, str, bool, tuple).
+
+## Code example
+
+```python
+age = 25                         # int: whole number
+price = 99.5                     # float: decimal number
+name = "Asha"                    # str: text
+is_member = True                 # bool: True or False
+discount = None                  # NoneType: no value yet
+
+print(type(age), type(price))
+print(type(name), type(is_member), type(discount))
+
+cart = ["milk", "bread"]         # list: ordered, can change
+point = (28.6, 77.2)             # tuple: ordered, cannot change
+tags = {"new", "sale"}           # set: unique items only
+user = {"name": "Asha"}          # dict: key -> value
+print(type(cart).__name__, type(point).__name__)
+print(type(tags).__name__, type(user).__name__)
+
+print(isinstance(age, int))      # ask: is age an int?
+```
+
+```output
+<class 'int'> <class 'float'>
+<class 'str'> <class 'bool'> <class 'NoneType'>
+list tuple
+set dict
+True
+```
+
+<Playground kind="python">
+
+```python
+values = [42, 3.14, "hello", True, None, [1, 2], (1, 2), {1, 2}, {"a": 1}]
+
+for value in values:
+    print(value, "->", type(value).__name__)
+
+# Try it: add your own value to the list and run again.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Adding text and a number">
+
+<Wrong>
+
+```python
+print("5" + 5)   # TypeError: can only concatenate str (not "int") to str
+```
+
+</Wrong>
+
+<Right>
+
+```python
+print(int("5") + 5)    # 10
+print("5" + str(5))    # 55
+```
+
+</Right>
+
+`"5"` is text and `5` is a number. Convert one of them so both have the same type.
+
+</Mistake>
+
+<Mistake title="Thinking empty curly brackets make a set">
+
+<Wrong>
+
+```python
+items = {}
+print(type(items).__name__)   # dict, not set
+```
+
+</Wrong>
+
+<Right>
+
+```python
+items = set()
+print(type(items).__name__)   # set
+```
+
+</Right>
+
+Empty `{}` always makes a dict. Use `set()` for an empty set.
+
+</Mistake>
+
+<Mistake title="Treating None like zero or empty text">
+
+<Wrong>
+
+```python
+discount = None
+print(100 - discount)   # TypeError: unsupported operand type(s)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+discount = None
+if discount is None:
+    discount = 0
+print(100 - discount)   # 100
+```
+
+</Right>
+
+`None` means "nothing here". It is not `0` and not `""`. Check for it with `is None`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the built-in data types in Python?">
+
+Numbers (`int`, `float`, `complex`), text (`str`), boolean (`bool`), `None`, and the collections `list`, `tuple`, `set`, `frozenset` and `dict`. There are also `bytes` and `bytearray` for binary data.
+
+</QA>
+
+<QA q="Which data types are mutable and which are immutable?">
+
+**Mutable** (can change in place): `list`, `dict`, `set`, `bytearray`.
+
+**Immutable** (cannot change): `int`, `float`, `bool`, `str`, `tuple`, `frozenset`, `bytes`.
+
+Only immutable values can be dictionary keys or set items.
+
+</QA>
+
+<QA q="What is the difference between type() and isinstance()?">
+
+`type(x)` gives the exact type of `x`. `isinstance(x, int)` answers True or False, and it also returns True for child classes. For checks in real code, prefer `isinstance()`.
+
+```python
+print(isinstance(True, int))   # True, because bool is a child of int
+print(type(True) == int)       # False
+```
+
+</QA>
+
+<QA q="What is None in Python?">
+
+`None` is a single special object that means "no value". Its type is `NoneType`. A function without a `return` gives back `None`. Compare with `is None`, not with `==`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is the type of the value 99.5?',
+      options: ['int', 'float', 'str', 'bool'],
+      answer: 1,
+      why: 'A number with a decimal point is a float.',
+    },
+    {
+      q: 'Which of these types is immutable (cannot be changed after it is made)?',
+      options: ['list', 'dict', 'set', 'tuple'],
+      answer: 3,
+      why: 'A tuple cannot be changed. Lists, dicts and sets can.',
+    },
+    {
+      q: 'What does type("25") give?',
+      options: ["<class 'int'>", "<class 'str'>", "<class 'float'>", 'An error'],
+      answer: 1,
+      why: 'Anything inside quotes is text, so its type is str, even if it looks like a number.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Type | Example | Can change? |
+| --- | --- | --- |
+| `int` | `25` | No |
+| `float` | `99.5` | No |
+| `str` | `"Asha"` | No |
+| `bool` | `True` | No |
+| `NoneType` | `None` | No |
+| `list` | `[1, 2]` | Yes |
+| `tuple` | `(1, 2)` | No |
+| `set` | `{1, 2}` | Yes |
+| `dict` | `{"a": 1}` | Yes |
+
+Check a type: `type(x)` or `isinstance(x, int)`
+
+</CheatSheet>

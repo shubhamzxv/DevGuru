@@ -1,0 +1,251 @@
+---
+id: python-while-loops
+title: while loops
+summary: A while loop repeats a block of code as long as a condition stays True.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of filling a bucket from a tap. You keep the tap open **while** the bucket is not full. You do not know how many seconds it will take. You just check the bucket again and again.
+
+A **while loop** works the same way: check, do, check, do.
+
+</Analogy>
+
+## Simple explanation
+
+A **while loop** checks a condition. If it is true, the block runs. Then Python checks the condition again. This repeats until the condition becomes false.
+
+Use `while` when you do not know in advance how many rounds you need. Use `for` when you are going through a collection.
+
+Something inside the loop must change, so that the condition becomes false at some point. If nothing changes, the loop never ends. This is called an **infinite loop**.
+
+A common pattern is `while True:` with a `break` inside. The loop runs until `break` stops it.
+
+A variable that counts the rounds is called a **counter**.
+
+## Code example
+
+```python
+count = 1
+while count <= 3:                 # check before every round
+    print("Round", count)
+    count += 1                    # change the value, or the loop never ends
+
+balance = 500
+withdrawals = 0
+while balance >= 200:             # keep going while there is enough money
+    balance -= 200
+    withdrawals += 1
+print(withdrawals, balance)
+
+number = 1
+while True:                       # runs until break
+    if number * number > 50:
+        break                     # leave the loop
+    number += 1
+print("First square above 50 is", number * number)
+
+digits = 0
+n = 90210
+while n > 0:                      # count the digits of a number
+    n //= 10
+    digits += 1
+print(digits)
+```
+
+```output
+Round 1
+Round 2
+Round 3
+2 100
+First square above 50 is 64
+5
+```
+
+<Playground kind="python">
+
+```python
+savings = 1000
+target = 5000
+months = 0
+
+while savings < target:
+    savings += 750
+    months += 1
+
+print("Months needed:", months)
+print("Final savings:", savings)
+
+# Try it: add 2% interest every month with  savings *= 1.02
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting to update the variable">
+
+<Wrong>
+
+```python
+count = 1
+while count <= 3:
+    print(count)    # runs forever: count never changes
+```
+
+</Wrong>
+
+<Right>
+
+```python
+count = 1
+while count <= 3:
+    print(count)
+    count += 1
+```
+
+</Right>
+
+Without `count += 1` the condition stays true. In this playground, press Stop if that happens.
+
+</Mistake>
+
+<Mistake title="Starting or stopping one step off">
+
+<Wrong>
+
+```python
+count = 0
+while count < 3:
+    count += 1
+    print(count, end=" ")   # prints 1 2 3, but you wanted 0 1 2
+```
+
+</Wrong>
+
+<Right>
+
+```python
+count = 0
+while count < 3:
+    print(count, end=" ")   # prints 0 1 2
+    count += 1
+```
+
+</Right>
+
+The order of "use" and "update" matters. This kind of bug is called an **off-by-one error**.
+
+</Mistake>
+
+<Mistake title="Using while to walk through a list">
+
+<Wrong>
+
+```python
+names = ["Asha", "Ravi"]
+i = 0
+while i < len(names):
+    print(names[i])
+    i += 1
+```
+
+</Wrong>
+
+<Right>
+
+```python
+names = ["Asha", "Ravi"]
+for name in names:
+    print(name)
+```
+
+</Right>
+
+For going through a collection, a `for` loop is shorter and cannot run forever.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="When do you use a while loop over a for loop?">
+
+Use `while` when the number of rounds depends on a condition and is not known up front: reading until the input ends, retrying a network call until it succeeds, or running a game until the player quits. Use `for` to go through an iterable.
+
+</QA>
+
+<QA q="What is an infinite loop and how do you avoid it?">
+
+A loop whose condition never becomes false. Avoid it by making sure the loop changes something that the condition depends on, or by using `break` with a clear exit rule. For safety, add a maximum number of tries.
+
+</QA>
+
+<QA q="Does Python have a do-while loop?">
+
+No. The usual replacement is `while True:` with a `break` at the end of the block, so the body runs at least once.
+
+```python
+attempts = 0
+while True:
+    attempts += 1
+    if attempts >= 3:
+        break
+print(attempts)   # 3
+```
+
+</QA>
+
+<QA q="What does the else block of a while loop do?">
+
+It runs once when the condition becomes false. It is skipped if the loop ends with `break`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'How many times does this print?  n = 0  while n < 3: print(n); n += 1',
+      options: ['2', '3', '4', 'Forever'],
+      answer: 1,
+      why: 'It prints for n = 0, 1 and 2. When n becomes 3, the condition is false.',
+    },
+    {
+      q: 'What happens if the condition of a while loop is False at the start?',
+      options: [
+        'The block runs once',
+        'The block never runs',
+        'Python raises an error',
+        'The loop runs forever',
+      ],
+      answer: 1,
+      why: 'The condition is checked before every round, including the first one.',
+    },
+    {
+      q: 'What stops a  while True:  loop?',
+      options: ['continue', 'pass', 'break', 'else'],
+      answer: 2,
+      why: 'break leaves the loop immediately.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Repeat while true | `while x < 10:` |
+| Update the counter | `x += 1` |
+| Loop until a break | `while True:` |
+| Leave the loop | `break` |
+| Skip to the next round | `continue` |
+| Run after a normal end | `else:` |
+
+Always ask: what makes this condition become False?
+
+</CheatSheet>

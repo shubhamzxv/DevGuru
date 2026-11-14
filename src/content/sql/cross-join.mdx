@@ -1,0 +1,221 @@
+---
+id: sql-cross-join
+title: CROSS JOIN
+summary: CROSS JOIN pairs every row of one table with every row of another table, with no matching condition.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a tailor's catalogue. There are 3 shirt colours and 4 sizes. To list every item he can make, he writes every colour with every size: 3 times 4, which is 12 combinations.
+
+A `CROSS JOIN` builds that list of **all combinations**.
+
+</Analogy>
+
+## Simple explanation
+
+A `CROSS JOIN` has **no `ON` condition**. It combines each row of the first table with each row of the second.
+
+The result is called the **Cartesian product**. The number of rows is:
+
+`rows in table A` times `rows in table B`
+
+So 21 employees crossed with 6 departments gives 126 rows. Two tables of 10,000 rows each give 100 million rows. Use it only on small sets.
+
+When is it useful?
+
+- To generate **all combinations**: every product in every size, every team against every team
+- To build a **grid** that must have a row for every pair, even when no data exists. For example, every category for every month, before you `LEFT JOIN` the real sales
+- To attach **one summary row** to every row, such as the overall total
+
+You can get the same result by listing two tables with a comma and no `WHERE`: `FROM a, b`. This is usually an accident, not a plan. Write `CROSS JOIN` so that the intention is clear.
+
+<JoinVisualizer type="cross" />
+
+## Code example
+
+```sql
+SELECT
+  s.size,
+  c.colour
+FROM (SELECT 'S' AS size UNION ALL SELECT 'M' UNION ALL SELECT 'L') AS s
+CROSS JOIN (SELECT 'white' AS colour UNION ALL SELECT 'blue') AS c;   -- 3 x 2 = 6 rows
+```
+
+```output
+size | colour
+-----+-------
+S    | white
+S    | blue
+M    | white
+M    | blue
+L    | white
+L    | blue
+```
+
+```sql
+SELECT
+  (SELECT COUNT(*) FROM employees)   AS employees,
+  (SELECT COUNT(*) FROM departments) AS departments,
+  COUNT(*)                           AS rows_after_cross_join   -- 21 x 6
+FROM employees
+CROSS JOIN departments;
+```
+
+```output
+employees | departments | rows_after_cross_join
+----------+-------------+----------------------
+21        | 6           | 126
+```
+
+```sql
+SELECT
+  p.name,
+  p.price,
+  t.avg_price,
+  ROUND(p.price - t.avg_price) AS above_average      -- compare each row with one summary row
+FROM products AS p
+CROSS JOIN (SELECT ROUND(AVG(price)) AS avg_price FROM products) AS t
+ORDER BY above_average DESC
+LIMIT 4;
+```
+
+```output
+name                | price  | avg_price | above_average
+--------------------+--------+-----------+--------------
+Running Shoes       | 2999.0 | 1020.0    | 1979.0
+Mechanical Keyboard | 2499.0 | 1020.0    | 1479.0
+Bluetooth Speaker   | 1899.0 | 1020.0    | 879.0
+Table Lamp          | 1250.0 | 1020.0    | 230.0
+```
+
+<Playground kind="sql">
+
+```sql
+-- A grid: every category with every order status
+SELECT c.category, s.status
+FROM (SELECT DISTINCT category FROM products) AS c
+CROSS JOIN (SELECT DISTINCT status FROM orders) AS s
+ORDER BY c.category, s.status
+LIMIT 8;
+
+-- Try it: count the rows of the full grid (remove LIMIT and use COUNT(*)).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Creating a cross join by accident">
+
+<Wrong>
+
+```sql
+SELECT COUNT(*)
+FROM orders, order_items;   -- 16 x 26 = 416 rows: the join condition is missing
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT COUNT(*)
+FROM orders AS o
+JOIN order_items AS oi ON oi.order_id = o.id;   -- 26 rows
+```
+
+</Right>
+
+A missing condition silently produces every pair. With explicit `JOIN ... ON`, you cannot forget it.
+
+</Mistake>
+
+<Mistake title="Cross joining large tables">
+
+<Wrong>
+
+```text
+customers (1,000,000 rows) CROSS JOIN products (50,000 rows)
+= 50,000,000,000 rows. The query will not finish.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Cross join only small sets: sizes x colours, months x categories, one summary row.
+```
+
+</Right>
+
+Multiply the row counts in your head before you run a cross join.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a CROSS JOIN?">
+
+A join that returns the Cartesian product of two tables: every row of the first combined with every row of the second. It has no join condition, and the result has `m * n` rows.
+
+</QA>
+
+<QA q="What is a Cartesian product, and when does it happen by mistake?">
+
+It is the set of all possible pairs of rows from two tables. It happens by mistake when a join condition is missing or wrong, for example in the old comma syntax without a `WHERE`. The symptom is a result with far more rows than expected, or duplicated totals.
+
+</QA>
+
+<QA q="Give a real use case for CROSS JOIN.">
+
+Building a complete reporting grid. To show sales for every product in every month, including months with no sales, cross join the list of products with the list of months, then `LEFT JOIN` the sales data and use `COALESCE(total, 0)`.
+
+</QA>
+
+<QA q="What is the difference between CROSS JOIN and INNER JOIN?">
+
+An INNER JOIN returns only pairs that satisfy the `ON` condition. A CROSS JOIN returns all pairs. An INNER JOIN whose condition is always true (`ON 1 = 1`) behaves like a CROSS JOIN.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Table A has 4 rows and table B has 5 rows. How many rows does A CROSS JOIN B return?',
+      options: ['9', '20', '5', '4'],
+      answer: 1,
+      why: 'Every row of A is paired with every row of B: 4 x 5 = 20.',
+    },
+    {
+      q: 'Which clause does a CROSS JOIN not have?',
+      options: ['FROM', 'SELECT', 'ON', 'ORDER BY'],
+      answer: 2,
+      why: 'There is no matching condition, so there is no ON.',
+    },
+    {
+      q: 'What is the result of a CROSS JOIN called?',
+      options: ['Primary key', 'Cartesian product', 'Self join', 'Subquery'],
+      answer: 1,
+      why: 'All possible combinations of rows form the Cartesian product.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| All combinations | `FROM a CROSS JOIN b` |
+| Row count | rows of a x rows of b |
+| Add a total to every row | `CROSS JOIN (SELECT SUM(x) AS total FROM t) AS s` |
+| Full grid for a report | `dims1 CROSS JOIN dims2 LEFT JOIN facts ...` |
+| Accidental form | `FROM a, b` with no `WHERE` |
+
+</CheatSheet>

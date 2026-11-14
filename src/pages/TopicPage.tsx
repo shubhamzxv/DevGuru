@@ -70,6 +70,10 @@ function TopicView({ track, position, loader }: TopicViewProps) {
   useEffect(() => {
     document.title = `${title} – ${track.name} | DevGuru`;
     setLastVisited({ path, title: `${track.name}: ${title}` });
+    // Leaving the topic: put the normal tab title back.
+    return () => {
+      document.title = 'DevGuru – Learn tech the simple way';
+    };
   }, [path, title, track.name]);
 
   if (state.status === 'loading') {

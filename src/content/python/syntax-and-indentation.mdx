@@ -1,0 +1,220 @@
+---
+id: python-syntax-and-indentation
+title: Syntax and indentation
+summary: Python uses new lines and indentation (spaces at the start of a line) to understand the structure of your code.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+In a school notebook, you write sub-points a little to the right, under the main point. Just by looking at the left margin, you know which sub-point belongs to which heading.
+
+Python reads your code the same way. Lines pushed to the right belong to the line above them.
+
+</Analogy>
+
+## Simple explanation
+
+**Syntax** means the grammar rules of a language. If you break them, Python cannot understand the code.
+
+A **statement** is one instruction. In Python, you write one statement per line. You do not need a semicolon at the end.
+
+**Indentation** means the spaces at the start of a line. Python uses it to group lines together.
+
+A group of lines with the same indentation is called a **block**. A line that ends with a colon `:` starts a new block, and the block must be indented.
+
+The standard is **4 spaces** for each level.
+
+A **comment** starts with `#`. Python ignores it. Comments are notes for people who read the code.
+
+## Code example
+
+```python
+marks = 72                      # one statement per line
+
+if marks >= 40:                 # the colon starts a block
+    print("Pass")               # 4 spaces: inside the if block
+    print("Well done")          # same indentation: same block
+print("Result checked")         # no spaces: outside the block
+
+total = (10 +                   # a long statement can continue
+         20 +                   # on the next line inside brackets
+         30)
+print(total)
+```
+
+```output
+Pass
+Well done
+Result checked
+60
+```
+
+<Playground kind="python">
+
+```python
+marks = 72
+
+if marks >= 40:
+    print("Pass")
+    print("Well done")
+print("Result checked")
+
+# Try it: change marks to 30. Which lines still print?
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Not indenting the block">
+
+<Wrong>
+
+```python
+marks = 72
+if marks >= 40:
+print("Pass")   # IndentationError: expected an indented block
+```
+
+</Wrong>
+
+<Right>
+
+```python
+marks = 72
+if marks >= 40:
+    print("Pass")
+```
+
+</Right>
+
+After a line that ends with `:`, the next line must be indented.
+
+</Mistake>
+
+<Mistake title="Forgetting the colon">
+
+<Wrong>
+
+```python
+marks = 72
+if marks >= 40      # SyntaxError: expected ':'
+    print("Pass")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+marks = 72
+if marks >= 40:
+    print("Pass")
+```
+
+</Right>
+
+`if`, `for`, `while`, `def` and `class` lines always end with a colon.
+
+</Mistake>
+
+<Mistake title="Using different indentation in the same block">
+
+<Wrong>
+
+```python
+marks = 72
+if marks >= 40:
+    print("Pass")
+      print("Well done")   # IndentationError: unexpected indent
+```
+
+</Wrong>
+
+<Right>
+
+```python
+marks = 72
+if marks >= 40:
+    print("Pass")
+    print("Well done")
+```
+
+</Right>
+
+Every line in one block needs exactly the same number of spaces. Do not mix tabs and spaces.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Why is indentation important in Python?">
+
+In Python, indentation is part of the syntax. It tells Python which lines belong to a block, such as the body of an `if` or a function. Other languages use curly brackets for this. Wrong indentation gives an `IndentationError` or changes what the program does.
+
+</QA>
+
+<QA q="How many spaces should you use for indentation?">
+
+PEP 8 recommends **4 spaces** per level. Python accepts any number, but it must be the same inside one block. Never mix tabs and spaces.
+
+</QA>
+
+<QA q="What is the pass statement?">
+
+`pass` does nothing. You use it when the syntax needs a block but you have no code yet.
+
+```python
+def send_email():
+    pass   # write this later
+```
+
+</QA>
+
+<QA q="How do you write comments and docstrings?">
+
+A comment starts with `#` and runs to the end of the line. A **docstring** is a string in triple quotes placed as the first line of a function, class or file. It describes what that code does, and tools can read it with `help()`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What starts a new block in Python?',
+      options: ['A semicolon', 'A colon at the end of the line', 'Curly brackets', 'The word begin'],
+      answer: 1,
+      why: 'Lines such as if, for and def end with a colon, and the indented lines after it form the block.',
+    },
+    {
+      q: 'How many spaces does PEP 8 recommend for one indentation level?',
+      options: ['1', '2', '4', '8'],
+      answer: 2,
+      why: 'Four spaces per level is the standard Python style.',
+    },
+    {
+      q: 'What does Python do with a line that starts with #?',
+      options: ['Runs it twice', 'Prints it', 'Ignores it', 'Shows an error'],
+      answer: 2,
+      why: 'A line starting with # is a comment. It is only for people reading the code.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Rule | Example |
+| --- | --- |
+| One statement per line | `x = 5` |
+| Block starts with a colon | `if x > 3:` |
+| Indent a block with 4 spaces | `    print(x)` |
+| Comment | `# a note` |
+| Empty block | `pass` |
+| Continue a long line | Wrap it in brackets `( )` |
+| Names are case sensitive | `age` is not `Age` |
+
+</CheatSheet>

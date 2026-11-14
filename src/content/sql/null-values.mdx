@@ -1,0 +1,236 @@
+---
+id: sql-null-values
+title: NULL values
+summary: NULL means a value is missing or unknown, and it needs special handling because it is not equal to anything, not even to another NULL.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a form where someone left the "Email" box blank. It does not mean their email is an empty word, and it does not mean zero. It means **we do not know**.
+
+In a database, that blank box is `NULL`.
+
+</Analogy>
+
+## Simple explanation
+
+`NULL` marks a **missing or unknown value**. It is not `0`, and it is not empty text `''`.
+
+Because NULL means "unknown", comparing anything with it gives "unknown" too. So `email = NULL` is never true. Even `NULL = NULL` is not true.
+
+To test for NULL you must use special operators:
+
+- `IS NULL` finds rows where the value is missing
+- `IS NOT NULL` finds rows where a value is present
+
+NULL spreads through calculations. `100 + NULL` is NULL. Joining text with NULL gives NULL.
+
+Functions that help:
+
+- `COALESCE(a, b, c)` returns the first value that is not NULL. Use it to supply a default
+- `IFNULL(a, b)` is the two-value form in SQLite and MySQL
+- `NULLIF(a, b)` returns NULL when a equals b. It is handy to avoid dividing by zero
+
+Aggregate functions skip NULLs. `COUNT(email)` counts only rows that have an email, while `COUNT(*)` counts every row. `AVG()` ignores NULL values and does not treat them as zero.
+
+SQL uses **three-valued logic**: a condition can be TRUE, FALSE or UNKNOWN. `WHERE` keeps a row only when the result is TRUE.
+
+## Code example
+
+```sql
+SELECT name, department_id, manager_id
+FROM employees
+WHERE department_id IS NULL;              -- rows where the value is missing
+```
+
+```output
+name           | department_id | manager_id
+---------------+---------------+-----------
+Zoya Fernandes | NULL          | NULL
+Nikhil Das     | NULL          | 1
+```
+
+```sql
+SELECT
+  name,
+  email,
+  COALESCE(email, 'no email given') AS email_or_default   -- first non-NULL value
+FROM customers
+WHERE id IN (6, 7, 8);
+```
+
+```output
+name         | email             | email_or_default
+-------------+-------------------+------------------
+Pooja Desai  | pooja@example.com | pooja@example.com
+Aditya Ghosh | NULL              | no email given
+Nisha Thomas | nisha@example.com | nisha@example.com
+```
+
+```sql
+SELECT
+  COUNT(*)          AS all_customers,     -- counts every row
+  COUNT(email)      AS with_email,        -- skips NULLs
+  NULL = NULL       AS null_equals_null,  -- unknown, shown as NULL
+  100 + NULL        AS sum_with_null
+FROM customers;
+```
+
+```output
+all_customers | with_email | null_equals_null | sum_with_null
+--------------+------------+------------------+--------------
+10            | 9          | NULL             | NULL
+```
+
+<Playground kind="sql">
+
+```sql
+SELECT
+  name,
+  COALESCE(manager_id, 0)               AS manager_or_zero,
+  CASE WHEN manager_id IS NULL THEN 'top of the team' ELSE 'reports to someone' END AS position
+FROM employees
+LIMIT 6;
+
+-- Try it: list employees who DO have a department (IS NOT NULL).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Comparing with = NULL">
+
+<Wrong>
+
+```sql
+SELECT name FROM customers WHERE email = NULL;   -- returns no rows
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM customers WHERE email IS NULL;
+```
+
+</Right>
+
+`= NULL` is never true. Always use `IS NULL` or `IS NOT NULL`.
+
+</Mistake>
+
+<Mistake title="Forgetting that a filter drops NULL rows">
+
+<Wrong>
+
+```sql
+SELECT COUNT(*) FROM employees WHERE department_id <> 1;   -- 12: the two NULL rows are missing
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT COUNT(*) FROM employees WHERE department_id <> 1 OR department_id IS NULL;   -- 14
+```
+
+</Right>
+
+`NULL <> 1` is unknown, not true, so those rows are filtered out. Add `OR ... IS NULL` if you want them.
+
+</Mistake>
+
+<Mistake title="Treating NULL as zero in calculations">
+
+<Wrong>
+
+```sql
+SELECT 500 + NULL AS total;   -- NULL
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT 500 + COALESCE(NULL, 0) AS total;   -- 500
+```
+
+</Right>
+
+Any arithmetic with NULL gives NULL. Wrap the value in `COALESCE(value, 0)`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is NULL in SQL?">
+
+A marker for a missing, unknown or not-applicable value. It is not a value itself, so it is different from zero, an empty string or a space. Any comparison or arithmetic with NULL produces NULL (unknown).
+
+</QA>
+
+<QA q="What is the difference between COUNT(*) and COUNT(column)?">
+
+`COUNT(*)` counts all rows. `COUNT(column)` counts only rows where that column is not NULL. `COUNT(DISTINCT column)` counts the different non-NULL values.
+
+</QA>
+
+<QA q="What is the difference between COALESCE, IFNULL and NULLIF?">
+
+`COALESCE(a, b, ...)` returns the first non-NULL argument and is standard SQL. `IFNULL(a, b)` (MySQL, SQLite) and `ISNULL(a, b)` (SQL Server) are two-argument versions. `NULLIF(a, b)` does the reverse: it returns NULL if `a = b`, otherwise `a`.
+
+</QA>
+
+<QA q="How do NULLs behave in ORDER BY, GROUP BY and UNIQUE?">
+
+In `ORDER BY`, NULLs come first in ascending order in MySQL and SQLite, and last in PostgreSQL and Oracle. In `GROUP BY`, all NULLs form one group. A `UNIQUE` column usually allows many NULLs, because NULLs are not considered equal to each other.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which condition finds rows where email is missing?',
+      options: ['email = NULL', "email = ''", 'email IS NULL', 'email == NULL'],
+      answer: 2,
+      why: 'Only IS NULL tests for a missing value.',
+    },
+    {
+      q: 'What is the result of 10 + NULL?',
+      options: ['10', '0', 'NULL', 'An error'],
+      answer: 2,
+      why: 'Any arithmetic with an unknown value is unknown.',
+    },
+    {
+      q: "What does COALESCE(NULL, NULL, 'x', 'y') return?",
+      options: ['NULL', 'x', 'y', 'xy'],
+      answer: 1,
+      why: 'COALESCE returns the first argument that is not NULL.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Is missing | `WHERE email IS NULL` |
+| Is present | `WHERE email IS NOT NULL` |
+| Default value | `COALESCE(email, 'none')` |
+| Two-value default | `IFNULL(email, 'none')` |
+| Avoid divide by zero | `a / NULLIF(b, 0)` |
+| Count all rows | `COUNT(*)` |
+| Count non-NULL | `COUNT(email)` |
+
+`NULL = NULL` is not true. `NULL + 1` is NULL.
+
+</CheatSheet>

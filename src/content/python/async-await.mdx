@@ -1,0 +1,312 @@
+---
+id: python-async-await
+title: async / await
+summary: async and await let one thread handle many waiting tasks by pausing a task while it waits and running another in the meantime.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of one waiter in a restaurant. He takes the order at table 1 and gives it to the kitchen. He does not stand there until the food is ready. He goes to table 2, then table 3. When a dish is ready, he comes back and serves it.
+
+One waiter, many tables, no time wasted waiting. That is **async** programming.
+
+</Analogy>
+
+## Simple explanation
+
+Normal code is **synchronous**: each line finishes before the next one starts. If a line waits two seconds for a reply, the whole program waits.
+
+**Asynchronous** code can pause a task while it waits and use that time for other tasks.
+
+The pieces:
+
+- `async def` defines a **coroutine function**. Calling it does not run it. It gives a **coroutine** object, which is a task that can be paused and continued
+- `await` runs a coroutine and waits for its result. While waiting, it **gives control back** so other tasks can run
+- The **event loop** is the manager. It keeps a list of tasks and runs whichever one is ready. It is the waiter in the analogy
+- `asyncio.run(main())` starts the event loop and runs your main coroutine
+- `asyncio.gather(a(), b())` runs several coroutines **concurrently** and returns all results in order
+
+Everything happens in **one thread**. Tasks switch only at `await`, so there is no fighting over shared data as with threads.
+
+Async helps only with **I/O-bound** work: network calls, database queries, reading sockets. It does not make calculations faster.
+
+You can only use `await` inside an `async def` function. And the thing you await must itself be async. A blocking call such as `time.sleep()` freezes the whole event loop.
+
+## Code example
+
+```python
+import asyncio
+import time
+
+async def fetch(name, seconds):            # a coroutine function
+    print("start", name)
+    await asyncio.sleep(seconds)           # pause here; other tasks run meanwhile
+    print("done", name)
+    return f"{name} data"
+
+async def main():
+    start = time.perf_counter()
+
+    one = await fetch("A", 0.2)            # one after another: waits add up
+    two = await fetch("B", 0.1)
+    print(one, "|", two)
+    print("sequential took about 0.3s:", 0.25 < time.perf_counter() - start < 0.6)
+
+    start = time.perf_counter()
+    results = await asyncio.gather(        # together: waits overlap
+        fetch("C", 0.2),
+        fetch("D", 0.1),
+    )
+    print(results)                         # in the order they were given
+    print("concurrent took about 0.2s:", time.perf_counter() - start < 0.28)
+
+coroutine = fetch("X", 0)                  # calling does NOT run it
+print(type(coroutine).__name__)
+coroutine.close()                          # tidy up the unused coroutine
+
+asyncio.run(main())                        # start the event loop
+```
+
+```output
+coroutine
+start A
+done A
+start B
+done B
+A data | B data
+sequential took about 0.3s: True
+start C
+start D
+done D
+done C
+['C data', 'D data']
+concurrent took about 0.2s: True
+```
+
+<Playground kind="python">
+
+```python
+import asyncio
+
+async def cook(dish, seconds):
+    print(f"started {dish}")
+    await asyncio.sleep(seconds)
+    print(f"ready   {dish}")
+    return dish
+
+async def main():
+    dishes = await asyncio.gather(
+        cook("rice", 0.3),
+        cook("dal", 0.2),
+        cook("roti", 0.1),
+    )
+    print("Served:", dishes)
+
+# In this playground, write: await main()
+# In a normal .py file, write: asyncio.run(main())
+await main()
+
+# Try it: change the times and watch the order of the "ready" lines.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting await">
+
+<Wrong>
+
+```python
+import asyncio
+
+async def get_price():
+    return 100
+
+async def main():
+    price = get_price()            # a coroutine object, not 100
+    print(type(price).__name__)   # coroutine
+    price.close()
+
+asyncio.run(main())
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import asyncio
+
+async def get_price():
+    return 100
+
+async def main():
+    price = await get_price()
+    print(price)   # 100
+
+asyncio.run(main())
+```
+
+</Right>
+
+Calling a coroutine function only creates the coroutine. `await` runs it and gives the result.
+
+</Mistake>
+
+<Mistake title="Using a blocking call inside a coroutine">
+
+<Wrong>
+
+```python
+import asyncio
+import time
+
+async def slow():
+    time.sleep(0.2)                # blocks the whole event loop
+
+async def main():
+    start = time.perf_counter()
+    await asyncio.gather(slow(), slow())
+    print(time.perf_counter() - start < 0.3)   # False
+
+asyncio.run(main())
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import asyncio
+import time
+
+async def slow():
+    await asyncio.sleep(0.2)       # pauses only this task
+
+async def main():
+    start = time.perf_counter()
+    await asyncio.gather(slow(), slow())
+    print(time.perf_counter() - start < 0.3)   # True
+
+asyncio.run(main())
+```
+
+</Right>
+
+`time.sleep()` and other blocking calls stop every task. Use the async version, such as `asyncio.sleep()`.
+
+</Mistake>
+
+<Mistake title="Using await outside an async function">
+
+<Wrong>
+
+```python
+import asyncio
+
+def main():
+    await asyncio.sleep(0.1)       # SyntaxError: 'await' outside async function
+
+main()
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import asyncio
+
+async def main():
+    await asyncio.sleep(0.1)
+    print("done")
+
+asyncio.run(main())
+```
+
+</Right>
+
+`await` is only allowed inside `async def`. Start the first coroutine with `asyncio.run()`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What do async and await do?">
+
+`async def` declares a coroutine function, whose call returns a coroutine object. `await` suspends the current coroutine until the awaited operation completes, and meanwhile returns control to the event loop so other coroutines can run. Together they allow concurrent I/O in a single thread.
+
+</QA>
+
+<QA q="What is a coroutine?">
+
+A function that can pause its execution at `await` points and resume later, keeping its state. It is defined with `async def` and must be awaited or scheduled on an event loop to run.
+
+</QA>
+
+<QA q="What is the event loop?">
+
+The scheduler at the heart of asyncio. It keeps track of tasks, runs each one until it awaits something, then switches to another ready task, and resumes the first when its I/O completes. There is normally one event loop per thread.
+
+</QA>
+
+<QA q="What is the difference between asynchronous code and multithreading?">
+
+Both give concurrency for I/O-bound work. Threads are switched by the operating system at any moment (pre-emptive), need locks for shared data, and each uses its own stack memory. Async tasks run in one thread and switch only at `await` (cooperative), so they are lighter and can scale to thousands of connections, but all code in the chain must be non-blocking.
+
+</QA>
+
+<QA q="Does async make code faster?">
+
+It does not make any single operation faster and does not help CPU-bound code. It increases **throughput** when many operations spend time waiting, because the waits overlap.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does calling an async def function return?',
+      options: ['Its result', 'A coroutine object', 'A thread', 'None'],
+      answer: 1,
+      why: 'The body does not run until the coroutine is awaited or scheduled.',
+    },
+    {
+      q: 'What happens at an await while the task is waiting?',
+      options: [
+        'The whole program freezes',
+        'Control goes back to the event loop so other tasks can run',
+        'A new process starts',
+        'The task is cancelled',
+      ],
+      answer: 1,
+      why: 'await pauses only the current task and lets the event loop run others.',
+    },
+    {
+      q: 'Which work benefits from async?',
+      options: ['Sorting a huge list', 'Many network requests', 'Multiplying matrices', 'A long while loop of maths'],
+      answer: 1,
+      why: 'Async helps I/O-bound work, where tasks spend their time waiting.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Define a coroutine | `async def fetch():` |
+| Run it and get the result | `data = await fetch()` |
+| Start the program | `asyncio.run(main())` |
+| Run several together | `await asyncio.gather(a(), b())` |
+| Non-blocking pause | `await asyncio.sleep(1)` |
+| Schedule in the background | `task = asyncio.create_task(fetch())` |
+
+`await` only works inside `async def`. Never use blocking calls like `time.sleep()` in a coroutine.
+
+</CheatSheet>

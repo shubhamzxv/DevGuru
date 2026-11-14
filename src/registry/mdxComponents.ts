@@ -21,6 +21,7 @@ import {
 } from '../components/content/Prose';
 import Visual from '../components/content/Visual';
 import Playground from '../components/playground/Playground';
+import JoinVisualizer from '../components/visualizers/JoinVisualizer';
 import Quiz from '../components/quiz/Quiz';
 
 /**
@@ -54,5 +55,6 @@ export const mdxComponents: MDXComponents = {
   InterviewQA,
   QA,
   Quiz,
+  JoinVisualizer,
   CheatSheet,
 };

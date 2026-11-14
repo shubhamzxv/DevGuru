@@ -1,0 +1,197 @@
+---
+id: sql-tables-rows-columns
+title: Tables, rows and columns
+summary: A table stores one kind of thing, each row is one item, and each column is one detail about every item.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a school attendance register. The whole register is about students. Each line is **one student**. Each heading across the top (roll number, name, class) is **one detail** recorded for every student.
+
+In a database, the register is a **table**, each line is a **row**, and each heading is a **column**.
+
+</Analogy>
+
+## Simple explanation
+
+A **table** holds data about one kind of thing: employees, products, orders.
+
+A **column** (also called a **field**) is one detail, such as `name` or `salary`. Every column has a name and a data type.
+
+A **row** (also called a **record**) is one item: one employee, one product.
+
+A **cell** is the single value where a row and a column meet.
+
+The list of tables and their columns is called the **schema**. It is the design of the database.
+
+Most tables have an `id` column whose value is different in every row. This column is the **primary key**. It lets you point at exactly one row.
+
+Tables are linked by storing the id of a row from another table. In `employees`, the column `department_id` holds the id of a row in `departments`. Such a column is called a **foreign key**.
+
+In the playground, press **View schema** to see every table and column of the sample database.
+
+## Code example
+
+```sql
+-- * means "all columns". Each line of the result is one row.
+SELECT *
+FROM departments;
+```
+
+```output
+id | name        | location
+---+-------------+----------
+1  | Engineering | Bengaluru
+2  | Sales       | Mumbai
+3  | Marketing   | Delhi
+4  | Finance     | Mumbai
+5  | Support     | Pune
+6  | Research    | Hyderabad
+```
+
+The columns of a table, with their types:
+
+```sql
+PRAGMA table_info(employees);   -- SQLite's way to describe a table
+```
+
+```output
+cid | name          | type    | notnull | dflt_value | pk
+----+---------------+---------+---------+------------+---
+0   | id            | INTEGER | 0       | NULL       | 1
+1   | name          | TEXT    | 1       | NULL       | 0
+2   | department_id | INTEGER | 0       | NULL       | 0
+3   | manager_id    | INTEGER | 0       | NULL       | 0
+4   | salary        | INTEGER | 1       | NULL       | 0
+5   | hire_date     | TEXT    | 1       | NULL       | 0
+6   | city          | TEXT    | 1       | NULL       | 0
+```
+
+<Playground kind="sql">
+
+```sql
+-- How many rows does each table have?
+SELECT 'employees' AS table_name, COUNT(*) AS row_count FROM employees
+UNION ALL
+SELECT 'products', COUNT(*) FROM products
+UNION ALL
+SELECT 'orders', COUNT(*) FROM orders;
+
+-- Try it: add the customers table to this list.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Asking for a column that does not exist">
+
+<Wrong>
+
+```sql
+SELECT fullname FROM employees;   -- Error: no such column: fullname
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM employees LIMIT 3;
+```
+
+</Right>
+
+Column names must match the schema exactly. Check them with View schema.
+
+</Mistake>
+
+<Mistake title="Mixing up rows and columns">
+
+<Wrong>
+
+```text
+"The employees table has 7 rows: id, name, department_id, ..."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+The employees table has 7 columns (id, name, ...) and 21 rows (one per employee).
+```
+
+</Right>
+
+Columns go across and describe details. Rows go down and are the actual items.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a row and a column?">
+
+A row (record, tuple) is one complete entry in a table, such as one employee. A column (field, attribute) is one property that every row has, such as salary, with a fixed data type.
+
+</QA>
+
+<QA q="What is a schema?">
+
+The structure of a database: its tables, the columns and data types of each table, and the keys and constraints that link and protect them. In MySQL the word "schema" is also used to mean a database.
+
+</QA>
+
+<QA q="What is a primary key?">
+
+A column, or a set of columns, whose value uniquely identifies each row. It cannot be NULL and cannot repeat. A table can have only one primary key.
+
+</QA>
+
+<QA q="What is a foreign key?">
+
+A column that stores the primary key value of a row in another table, creating a link between the two tables. The database can then refuse values that do not exist in the other table.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In the employees table, what is one row?',
+      options: ['One detail such as salary', 'One employee', 'The whole table', 'The table name'],
+      answer: 1,
+      why: 'Each row is one complete item, here one employee.',
+    },
+    {
+      q: 'What does SELECT * mean?',
+      options: ['Select all rows only', 'Select all columns', 'Multiply the values', 'Select nothing'],
+      answer: 1,
+      why: 'The star stands for every column of the table.',
+    },
+    {
+      q: 'What is the design of tables and columns called?',
+      options: ['Query', 'Schema', 'Cell', 'Record'],
+      answer: 1,
+      why: 'The schema describes the tables, their columns and how they are linked.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Word | Also called | Meaning |
+| --- | --- | --- |
+| Table | Relation | One kind of thing |
+| Row | Record, tuple | One item |
+| Column | Field, attribute | One detail of every item |
+| Cell | Value | One row meets one column |
+| Schema | | The design of all tables |
+| Primary key | | Column that identifies a row |
+| Foreign key | | Column that points to another table |
+
+</CheatSheet>

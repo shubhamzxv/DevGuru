@@ -1,0 +1,264 @@
+---
+id: python-classes-and-objects
+title: Classes and objects
+summary: A class is a blueprint, and an object is a real thing built from that blueprint.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a builder's plan for a 2BHK flat. The plan is not a home; nobody can live in a drawing. From that one plan, the builder makes many flats. Each flat has its own owner and its own paint.
+
+The plan is a **class**. Each flat is an **object**.
+
+</Analogy>
+
+## Simple explanation
+
+**Object-oriented programming** (OOP) is a way to organise code around things, such as a user, an order or a bank account.
+
+A **class** is a blueprint. It describes what data a thing has and what it can do.
+
+An **object** is one real item made from the class. It is also called an **instance**. Making an object is called **instantiation**.
+
+Inside a class:
+
+- An **attribute** is a piece of data that belongs to the object, such as `name` or `balance`
+- A **method** is a function that belongs to the object, such as `deposit()`
+
+You make a class with the `class` keyword. Class names use **CapWords** style, such as `BankAccount`.
+
+You make an object by calling the class like a function: `BankAccount("Asha")`.
+
+Each object keeps its own data. Changing one object does not change another.
+
+## Code example
+
+```python
+class BankAccount:                         # the blueprint
+    def __init__(self, owner, balance=0):  # runs when an object is made
+        self.owner = owner                 # attributes: data of this object
+        self.balance = balance
+
+    def deposit(self, amount):             # method: something the object can do
+        self.balance += amount
+        return self.balance
+
+    def summary(self):
+        return f"{self.owner}: Rs {self.balance}"
+
+asha = BankAccount("Asha", 1000)           # object 1
+ravi = BankAccount("Ravi")                 # object 2, with the default balance
+
+asha.deposit(500)                          # call a method on one object
+print(asha.summary())
+print(ravi.summary())                      # ravi is not affected
+
+print(asha.owner, asha.balance)            # read attributes with a dot
+print(type(asha).__name__)
+print(isinstance(asha, BankAccount))
+print(asha is ravi)                        # two separate objects
+```
+
+```output
+Asha: Rs 1500
+Ravi: Rs 0
+Asha 1500
+BankAccount
+True
+False
+```
+
+<Playground kind="python">
+
+```python
+class Product:
+    def __init__(self, name, price, stock):
+        self.name = name
+        self.price = price
+        self.stock = stock
+
+    def sell(self, quantity):
+        self.stock -= quantity
+        return quantity * self.price
+
+pen = Product("Pen", 10, 100)
+print("Earned:", pen.sell(12))
+print("Left in stock:", pen.stock)
+
+# Try it: add a method  restock(quantity)  and call it.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting self in a method">
+
+<Wrong>
+
+```python
+class Dog:
+    def bark():
+        return "Woof"
+
+print(Dog().bark())   # TypeError: Dog.bark() takes 0 positional arguments but 1 was given
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Dog:
+    def bark(self):
+        return "Woof"
+
+print(Dog().bark())   # Woof
+```
+
+</Right>
+
+Python passes the object itself as the first argument. Every normal method needs `self`.
+
+</Mistake>
+
+<Mistake title="Using the class when you need an object">
+
+<Wrong>
+
+```python
+class Dog:
+    def __init__(self, name):
+        self.name = name
+
+print(Dog.name)   # AttributeError: type object 'Dog' has no attribute 'name'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Dog:
+    def __init__(self, name):
+        self.name = name
+
+tommy = Dog("Tommy")
+print(tommy.name)   # Tommy
+```
+
+</Right>
+
+`name` belongs to each object, not to the blueprint. Create an object first.
+
+</Mistake>
+
+<Mistake title="Forgetting the brackets when creating an object">
+
+<Wrong>
+
+```python
+class Cart:
+    def __init__(self):
+        self.items = []
+
+cart = Cart
+print(isinstance(cart, Cart))   # False
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Cart:
+    def __init__(self):
+        self.items = []
+
+cart = Cart()
+print(isinstance(cart, Cart))   # True
+```
+
+</Right>
+
+`Cart` is the class. `Cart()` makes an object from it.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a class and an object?">
+
+A class is a template that defines attributes and methods. An object is a concrete instance of that class, with its own values in memory. One class can produce many objects.
+
+</QA>
+
+<QA q="What are the four pillars of OOP?">
+
+**Encapsulation** (keeping data and the methods that use it together, and hiding internals), **Abstraction** (showing only what is needed), **Inheritance** (a class reusing another class's code) and **Polymorphism** (the same method name behaving differently for different classes).
+
+</QA>
+
+<QA q="What is the difference between an attribute and a method?">
+
+An attribute stores data on the object (`account.balance`). A method is a function defined in the class that acts on the object (`account.deposit(100)`).
+
+</QA>
+
+<QA q="Is everything an object in Python?">
+
+Yes. Numbers, strings, lists, functions, modules and even classes are objects. Each has a type, an identity and attributes.
+
+```python
+print(isinstance(5, object), isinstance(len, object))   # True True
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is an object?',
+      options: [
+        'A blueprint for making classes',
+        'An instance made from a class',
+        'A Python file',
+        'A kind of loop',
+      ],
+      answer: 1,
+      why: 'An object (instance) is a real item created from the class blueprint.',
+    },
+    {
+      q: 'How do you create an object from  class Car:?',
+      options: ['Car', 'new Car()', 'Car()', 'create Car'],
+      answer: 2,
+      why: 'Calling the class like a function creates a new object. Python has no new keyword.',
+    },
+    {
+      q: 'Two objects are made from the same class. If you change an attribute of one, what happens to the other?',
+      options: ['It changes too', 'Nothing', 'It is deleted', 'Python raises an error'],
+      answer: 1,
+      why: 'Each object keeps its own copy of instance attributes.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Define a class | `class Car:` |
+| Set up a new object | `def __init__(self, name):` |
+| Store data | `self.name = name` |
+| Add behaviour | `def drive(self):` |
+| Make an object | `car = Car("Nano")` |
+| Read an attribute | `car.name` |
+| Call a method | `car.drive()` |
+| Check the type | `isinstance(car, Car)` |
+
+</CheatSheet>

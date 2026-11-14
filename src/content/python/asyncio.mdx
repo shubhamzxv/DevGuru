@@ -1,0 +1,346 @@
+---
+id: python-asyncio
+title: asyncio in practice
+summary: asyncio is Python's built-in library for running many async tasks, with tools for tasks, timeouts, limits and error handling.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a railway station master. Many trains are on the way. He does not watch one train from start to finish. He keeps a board of all trains, and acts whenever one reports "arrived" or "delayed". He also sets rules: only two trains on a platform at once, and a train that is too late gets cancelled.
+
+**asyncio** is that station master for your async tasks.
+
+</Analogy>
+
+## Simple explanation
+
+`asyncio` is the standard library for **asynchronous I/O**. It provides the **event loop** and the tools to manage many coroutines.
+
+The tools you use most:
+
+- `asyncio.run(main())` starts the event loop. Call it once, at the top of the program
+- `asyncio.create_task(coro)` schedules a coroutine to run **in the background** right away and gives you a **Task**. You can `await` the task later for its result
+- `asyncio.gather(*coros)` runs many coroutines together and returns their results in the same order. With `return_exceptions=True`, a failure is returned as a value so the others still finish
+- `asyncio.wait_for(coro, timeout)` gives up with a `TimeoutError` if the coroutine takes too long
+- `asyncio.Semaphore(n)` lets only `n` tasks into a block at the same time. Use it to avoid flooding an API or a database
+- `asyncio.as_completed(coros)` gives results in the order they **finish**
+- `asyncio.to_thread(func)` runs a normal blocking function in a thread, so it does not freeze the event loop
+
+Where it is used: **FastAPI** route handlers, async database drivers, HTTP clients such as `httpx` and `aiohttp`, websockets and bots.
+
+For an async library to help, the whole chain must be async. One blocking call inside a coroutine stops every other task.
+
+## Code example
+
+```python
+import asyncio
+
+async def fetch_user(user_id, delay):
+    await asyncio.sleep(delay)                     # stands in for an API call
+    if user_id == 3:
+        raise ValueError("user 3 not found")
+    return {"id": user_id}
+
+async def main():
+    task = asyncio.create_task(fetch_user(1, 0.1)) # starts running in the background
+    print("task created, doing other work")
+    print(await task)                              # collect the result later
+
+    results = await asyncio.gather(                # many at once, results in order
+        fetch_user(1, 0.2),
+        fetch_user(2, 0.1),
+    )
+    print(results)
+
+    mixed = await asyncio.gather(                  # one failure does not stop the others
+        fetch_user(2, 0.1),
+        fetch_user(3, 0.1),
+        return_exceptions=True,
+    )
+    print(mixed[0], "|", type(mixed[1]).__name__, mixed[1])
+
+    try:
+        await asyncio.wait_for(fetch_user(4, 1), timeout=0.1)   # too slow: give up
+    except asyncio.TimeoutError:
+        print("user 4 timed out")
+
+    limit = asyncio.Semaphore(2)                   # at most 2 requests at a time
+    running = 0
+    highest = 0
+
+    async def limited(user_id):
+        nonlocal running, highest
+        async with limit:
+            running += 1
+            highest = max(highest, running)
+            await asyncio.sleep(0.05)
+            running -= 1
+            return user_id
+
+    done = await asyncio.gather(*(limited(n) for n in range(6)))
+    print(done, "| most at once:", highest)
+
+    for finished in asyncio.as_completed([fetch_user(1, 0.2), fetch_user(2, 0.1)]):
+        print("finished:", await finished)         # in order of completion
+
+asyncio.run(main())
+```
+
+```output
+task created, doing other work
+{'id': 1}
+[{'id': 1}, {'id': 2}]
+{'id': 2} | ValueError user 3 not found
+user 4 timed out
+[0, 1, 2, 3, 4, 5] | most at once: 2
+finished: {'id': 2}
+finished: {'id': 1}
+```
+
+<Playground kind="python">
+
+```python
+import asyncio
+
+async def check_stock(item, delay):
+    await asyncio.sleep(delay)
+    return item, delay < 0.25
+
+async def main():
+    items = [("pen", 0.1), ("bag", 0.3), ("book", 0.2)]
+    results = await asyncio.gather(*(check_stock(name, d) for name, d in items))
+    for name, in_stock in results:
+        print(f"{name:<5} in stock: {in_stock}")
+
+    try:
+        await asyncio.wait_for(check_stock("laptop", 1), timeout=0.2)
+    except asyncio.TimeoutError:
+        print("laptop check timed out")
+
+# In this playground, write: await main()
+# In a normal .py file, write: asyncio.run(main())
+await main()
+
+# Try it: add a Semaphore so that only one check runs at a time.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Awaiting tasks one by one">
+
+<Wrong>
+
+```python
+import asyncio
+import time
+
+async def call(n):
+    await asyncio.sleep(0.1)
+    return n
+
+async def main():
+    start = time.perf_counter()
+    results = [await call(n) for n in range(3)]     # one after another: 0.3s
+    print(results, time.perf_counter() - start < 0.2)   # [0, 1, 2] False
+
+asyncio.run(main())
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import asyncio
+import time
+
+async def call(n):
+    await asyncio.sleep(0.1)
+    return n
+
+async def main():
+    start = time.perf_counter()
+    results = await asyncio.gather(*(call(n) for n in range(3)))   # together: 0.1s
+    print(results, time.perf_counter() - start < 0.2)   # [0, 1, 2] True
+
+asyncio.run(main())
+```
+
+</Right>
+
+`await` in a loop runs the calls in sequence. Use `gather()` or tasks to run them concurrently.
+
+</Mistake>
+
+<Mistake title="Calling asyncio.run() inside a running event loop">
+
+<Wrong>
+
+```python
+import asyncio
+
+async def helper():
+    return 1
+
+async def main():
+    return asyncio.run(helper())   # RuntimeError: asyncio.run() cannot be called from a running event loop
+
+asyncio.run(main())
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import asyncio
+
+async def helper():
+    return 1
+
+async def main():
+    return await helper()
+
+print(asyncio.run(main()))   # 1
+```
+
+</Right>
+
+`asyncio.run()` is the single entry point. Inside coroutines, use `await`.
+
+</Mistake>
+
+<Mistake title="Running blocking code directly in a coroutine">
+
+<Wrong>
+
+```python
+import asyncio
+import time
+
+def read_report():                 # a normal, blocking function
+    time.sleep(0.2)
+    return "report"
+
+async def main():
+    start = time.perf_counter()
+    await asyncio.gather(asyncio.sleep(0.2), asyncio.sleep(0.2))
+    read_report()                  # nothing else can run during this call
+    print(time.perf_counter() - start < 0.3)   # False
+
+asyncio.run(main())
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import asyncio
+import time
+
+def read_report():
+    time.sleep(0.2)
+    return "report"
+
+async def main():
+    start = time.perf_counter()
+    await asyncio.gather(asyncio.sleep(0.2), asyncio.to_thread(read_report))
+    print(time.perf_counter() - start < 0.3)   # True
+
+asyncio.run(main())
+```
+
+</Right>
+
+Move blocking work to a thread with `asyncio.to_thread()`, so the event loop stays free.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is asyncio?">
+
+Python's standard library for writing concurrent code with `async`/`await`. It provides an event loop, coroutines, tasks, futures, synchronisation primitives and async I/O for sockets and subprocesses. It is suited to I/O-bound, high-concurrency programs such as web servers and API clients.
+
+</QA>
+
+<QA q="What is the difference between a coroutine, a Task and a Future?">
+
+A **coroutine** is the object returned by calling an `async def` function; it does nothing until awaited. A **Task** wraps a coroutine and schedules it on the event loop immediately, so it runs concurrently. A **Future** is a low-level object representing a result that will be available later; `Task` is a subclass of `Future`.
+
+</QA>
+
+<QA q="What is the difference between gather() and create_task()?">
+
+`create_task()` schedules one coroutine and returns a Task you can await, cancel or inspect. `gather()` takes several awaitables, runs them concurrently and returns a list of all results in input order. `gather()` wraps coroutines in tasks for you.
+
+</QA>
+
+<QA q="How do you limit the number of concurrent requests?">
+
+With `asyncio.Semaphore(n)`. Each task does `async with semaphore:` around the request, so at most `n` are in progress at once. This protects rate-limited APIs and database connection pools.
+
+</QA>
+
+<QA q="How do you run blocking or CPU-heavy code from async code?">
+
+Blocking I/O: `await asyncio.to_thread(func, *args)` runs it in a thread pool. CPU-heavy work: `loop.run_in_executor()` with a `ProcessPoolExecutor`, so it runs in another process and does not hold the GIL of the event loop thread.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which function runs several coroutines concurrently and returns all their results?',
+      options: ['asyncio.run()', 'asyncio.gather()', 'asyncio.sleep()', 'asyncio.wait_for()'],
+      answer: 1,
+      why: 'gather() runs them together and returns the results in input order.',
+    },
+    {
+      q: 'What does asyncio.wait_for(coro, timeout=2) do if the coroutine takes 5 seconds?',
+      options: [
+        'Waits 5 seconds',
+        'Raises TimeoutError after 2 seconds',
+        'Returns None immediately',
+        'Runs it twice',
+      ],
+      answer: 1,
+      why: 'wait_for cancels the coroutine and raises TimeoutError when the timeout passes.',
+    },
+    {
+      q: 'What is asyncio.Semaphore(3) used for?',
+      options: [
+        'To run exactly 3 tasks in total',
+        'To allow at most 3 tasks into a block at the same time',
+        'To wait 3 seconds',
+        'To retry 3 times',
+      ],
+      answer: 1,
+      why: 'A semaphore limits how many tasks can be inside the protected block at once.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Start the program | `asyncio.run(main())` |
+| Background task | `task = asyncio.create_task(coro())` |
+| Many together | `await asyncio.gather(a(), b())` |
+| Keep going on errors | `gather(..., return_exceptions=True)` |
+| Timeout | `await asyncio.wait_for(coro(), timeout=2)` |
+| Limit concurrency | `async with asyncio.Semaphore(5):` |
+| As they finish | `for f in asyncio.as_completed(coros):` |
+| Blocking function | `await asyncio.to_thread(func)` |
+| Cancel a task | `task.cancel()` |
+
+</CheatSheet>

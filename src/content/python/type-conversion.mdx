@@ -1,0 +1,235 @@
+---
+id: python-type-conversion
+title: Type conversion
+summary: Type conversion changes a value from one data type to another, for example the text "25" into the number 25.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+At a currency exchange counter, you change rupees into dollars before a trip. The value stays the same, but the form changes, and only the right form works in that country.
+
+In Python, the text `"25"` and the number `25` are the same value in two forms. Maths only works with the number form.
+
+</Analogy>
+
+## Simple explanation
+
+**Type conversion** means changing a value from one type to another.
+
+There are two kinds.
+
+**Implicit conversion** is done by Python automatically. When you add an `int` and a `float`, Python turns the `int` into a `float` so no data is lost.
+
+**Explicit conversion** is done by you. It is also called **type casting**. You call a function named after the type you want:
+
+- `int()` makes a whole number
+- `float()` makes a decimal number
+- `str()` makes text
+- `bool()` makes `True` or `False`
+- `list()`, `tuple()`, `set()` make collections
+
+`bool()` follows a simple rule. Zero, `None` and anything empty become `False`. Everything else becomes `True`. Values that become `True` are called **truthy**, and values that become `False` are called **falsy**.
+
+## Code example
+
+```python
+print(5 + 2.5)                 # implicit: the int 5 becomes 5.0
+
+age_text = "25"                # text, as it comes from input() or a file
+age = int(age_text)            # explicit: str -> int
+print(age + 1)
+
+print(float("99.5") * 2)       # str -> float
+print(int(7.9))                # float -> int cuts the decimal part
+print(str(100) + " rupees")    # int -> str, so it can join with text
+
+print(bool(0), bool(""), bool("no"), bool([]))   # zero or empty is False
+print(list("abc"), tuple([1, 2]), set([1, 1, 2]))
+print(int("101", 2))           # read the text as a base-2 number
+```
+
+```output
+7.5
+26
+199.0
+7
+100 rupees
+False False True False
+['a', 'b', 'c'] (1, 2) {1, 2}
+5
+```
+
+<Playground kind="python">
+
+```python
+price_text = "499.50"
+quantity_text = "3"
+
+total = float(price_text) * int(quantity_text)
+print("Total:", total)
+print("As text:", "Rs " + str(total))
+print("Whole rupees:", int(total))
+
+# Try it: change quantity_text to "three". What error do you get?
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Converting decimal text straight to int">
+
+<Wrong>
+
+```python
+print(int("25.5"))   # ValueError: invalid literal for int() with base 10: '25.5'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+print(int(float("25.5")))   # 25
+```
+
+</Right>
+
+`int()` only accepts text that looks like a whole number. Go through `float()` first.
+
+</Mistake>
+
+<Mistake title="Expecting int() to round">
+
+<Wrong>
+
+```python
+print(int(7.9))   # 7, not 8
+```
+
+</Wrong>
+
+<Right>
+
+```python
+print(round(7.9))   # 8
+```
+
+</Right>
+
+`int()` cuts off the decimal part. Use `round()` when you want the nearest whole number.
+
+</Mistake>
+
+<Mistake title='Thinking bool("False") is False'>
+
+<Wrong>
+
+```python
+print(bool("False"))   # True
+```
+
+</Wrong>
+
+<Right>
+
+```python
+answer = "False"
+print(answer == "True")   # False
+```
+
+</Right>
+
+Any text that is not empty is truthy, even the text `"False"`. Compare the text yourself.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between implicit and explicit type conversion?">
+
+**Implicit** conversion is done automatically by Python when it is safe, for example `int` to `float` in `5 + 2.5`. **Explicit** conversion (type casting) is done by the programmer with functions like `int()`, `float()` and `str()`.
+
+</QA>
+
+<QA q="What are truthy and falsy values?">
+
+**Falsy** values behave like `False` in a condition: `0`, `0.0`, `""`, `None`, and empty collections such as `[]`, `()`, `{}` and `set()`. Everything else is **truthy**. This is why `if items:` is a common way to check that a list is not empty.
+
+</QA>
+
+<QA q="What is the difference between int(7.9) and round(7.9)?">
+
+`int(7.9)` cuts off the decimal part and gives `7`. `round(7.9)` gives the nearest whole number, `8`. Note that `round()` sends a value that is exactly half way to the nearest even number, so `round(2.5)` is `2`.
+
+</QA>
+
+<QA q="What happens when you convert a list to a set?">
+
+Duplicates are removed, and the order is no longer guaranteed. It is the quickest way to get unique items.
+
+```python
+print(len(set([1, 1, 2, 3, 3])))   # 3
+```
+
+</QA>
+
+<QA q="How do you safely convert user text to a number?">
+
+Use `try` and `except`, because `int("12a")` raises a `ValueError`.
+
+```python
+text = "12a"
+try:
+    number = int(text)
+except ValueError:
+    number = 0
+print(number)   # 0
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does int("42") + 1 give?',
+      options: ['"421"', '43', 'An error', '42'],
+      answer: 1,
+      why: 'int("42") turns the text into the number 42, and 42 + 1 is 43.',
+    },
+    {
+      q: 'What does int(9.99) give?',
+      options: ['10', '9', '9.99', 'An error'],
+      answer: 1,
+      why: 'int() cuts off the decimal part. It does not round.',
+    },
+    {
+      q: 'Which value is falsy?',
+      options: ['"0"', '[0]', '0', '" "'],
+      answer: 2,
+      why: 'The number 0 is falsy. The others are a non-empty string, a non-empty list and a string with one space, so they are truthy.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| From | To | Code | Result |
+| --- | --- | --- | --- |
+| Text | Whole number | `int("25")` | `25` |
+| Text | Decimal number | `float("9.5")` | `9.5` |
+| Number | Text | `str(100)` | `"100"` |
+| Decimal | Whole (cut) | `int(7.9)` | `7` |
+| Decimal | Whole (nearest) | `round(7.9)` | `8` |
+| Anything | True or False | `bool("")` | `False` |
+| Text | List | `list("abc")` | `['a', 'b', 'c']` |
+| List | Unique items | `set([1, 1, 2])` | `{1, 2}` |
+
+Falsy values: `0`, `0.0`, `""`, `None`, `[]`, `()`, `{}`, `set()`
+
+</CheatSheet>

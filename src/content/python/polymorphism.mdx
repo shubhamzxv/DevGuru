@@ -1,0 +1,275 @@
+---
+id: python-polymorphism
+title: Polymorphism
+summary: Polymorphism means the same method name or operator can behave differently depending on the object it is used with.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of the "Pay" button in a shopping app. You tap the same button every time. Behind it, the work is different: UPI talks to your bank app, a card asks for an OTP, and cash on delivery just marks the order.
+
+One action, many forms. That is **polymorphism**.
+
+</Analogy>
+
+## Simple explanation
+
+**Polymorphism** means "many forms". The same call works on different types of objects, and each object responds in its own way.
+
+You have already used it:
+
+- `len()` works on a string, a list and a dictionary
+- `+` adds numbers, joins strings and joins lists
+
+With your own classes, polymorphism comes from **method overriding**. Several classes define a method with the **same name**. Code that calls that method does not need to know which class it got.
+
+Python also uses **duck typing**: "if it walks like a duck and quacks like a duck, it is a duck". Python does not check the class of an object. It only checks whether the object has the method you call. So classes do not even need a common parent.
+
+The benefit: you can add a new class later, and the old code that calls the method keeps working without any change.
+
+## Code example
+
+```python
+print(len("hello"), len([1, 2, 3]), len({"a": 1}))    # one function, many types
+print(2 + 3, "ab" + "cd", [1] + [2])                  # one operator, many types
+
+class UpiPayment:
+    def pay(self, amount):
+        return f"Paid Rs {amount} by UPI"
+
+class CardPayment:
+    def pay(self, amount):
+        return f"Paid Rs {amount} by card after OTP"
+
+class CashOnDelivery:
+    def pay(self, amount):
+        return f"Collect Rs {amount} at the door"
+
+def checkout(method, amount):          # does not care which class it gets
+    return method.pay(amount)          # only needs a pay() method (duck typing)
+
+for method in [UpiPayment(), CardPayment(), CashOnDelivery()]:
+    print(checkout(method, 500))
+
+class Shape:
+    def area(self):
+        return 0
+
+class Square(Shape):
+    def __init__(self, side):
+        self.side = side
+
+    def area(self):                    # override the parent's method
+        return self.side ** 2
+
+class Circle(Shape):
+    def __init__(self, radius):
+        self.radius = radius
+
+    def area(self):
+        return round(3.14159 * self.radius ** 2, 2)
+
+print([shape.area() for shape in [Square(4), Circle(1), Shape()]])
+```
+
+```output
+5 3 1
+5 abcd [1, 2]
+Paid Rs 500 by UPI
+Paid Rs 500 by card after OTP
+Collect Rs 500 at the door
+[16, 3.14, 0]
+```
+
+<Playground kind="python">
+
+```python
+class EmailAlert:
+    def send(self, text):
+        return f"EMAIL: {text}"
+
+class SmsAlert:
+    def send(self, text):
+        return f"SMS: {text[:20]}"
+
+class PushAlert:
+    def send(self, text):
+        return f"PUSH: {text.upper()}"
+
+for channel in [EmailAlert(), SmsAlert(), PushAlert()]:
+    print(channel.send("Your order has been shipped today"))
+
+# Try it: add a  WhatsAppAlert  class. The loop needs no other change.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Checking the type in a long if-elif chain">
+
+<Wrong>
+
+```python
+class Dog:
+    pass
+
+class Cat:
+    pass
+
+def speak(animal):
+    if isinstance(animal, Dog):
+        return "Woof"
+    elif isinstance(animal, Cat):
+        return "Meow"
+
+print(speak(Cat()))   # Meow
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Dog:
+    def speak(self):
+        return "Woof"
+
+class Cat:
+    def speak(self):
+        return "Meow"
+
+print(Cat().speak())   # Meow
+```
+
+</Right>
+
+With type checks, every new class means editing the function. Give each class its own method and just call it.
+
+</Mistake>
+
+<Mistake title="Using different method names for the same job">
+
+<Wrong>
+
+```python
+class Pdf:
+    def export_pdf(self):
+        return "pdf"
+
+class Csv:
+    def save_csv(self):
+        return "csv"
+
+for doc in [Pdf(), Csv()]:
+    print(doc.export())   # AttributeError: 'Pdf' object has no attribute 'export'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Pdf:
+    def export(self):
+        return "pdf"
+
+class Csv:
+    def export(self):
+        return "csv"
+
+print([doc.export() for doc in [Pdf(), Csv()]])   # ['pdf', 'csv']
+```
+
+</Right>
+
+Polymorphism needs the **same** method name and the same arguments in every class.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is polymorphism?">
+
+The ability of different objects to respond to the same method call or operator in their own way. In Python it appears as method overriding, duck typing, and operator overloading through dunder methods.
+
+</QA>
+
+<QA q="What is duck typing?">
+
+Python cares about what an object can **do**, not what class it is. If an object has the method being called, the call works. Two unrelated classes with a `pay()` method can be used interchangeably without sharing a parent class.
+
+</QA>
+
+<QA q="What is the difference between method overloading and method overriding?">
+
+**Overriding** is a child class redefining a parent's method; Python supports it. **Overloading** is several methods with the same name but different parameters in one class; Python does not support it directly, because the last definition wins. You get a similar effect with default arguments or `*args`.
+
+</QA>
+
+<QA q="How does Python support operator overloading?">
+
+Through special methods. Defining `__add__` makes `+` work on your objects, `__eq__` handles `==`, and `__len__` handles `len()`.
+
+```python
+class Money:
+    def __init__(self, amount):
+        self.amount = amount
+
+    def __add__(self, other):
+        return Money(self.amount + other.amount)
+
+print((Money(50) + Money(20)).amount)   # 70
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does polymorphism mean?',
+      options: ['One form', 'Many forms', 'No form', 'Hidden form'],
+      answer: 1,
+      why: 'Poly means many and morph means form: the same call takes many forms.',
+    },
+    {
+      q: 'What does duck typing check?',
+      options: [
+        'The name of the class',
+        'Whether the object has the method you call',
+        'The parent class',
+        'The file the class is in',
+      ],
+      answer: 1,
+      why: 'Python only needs the object to have the method. Its class does not matter.',
+    },
+    {
+      q: 'Which of these is already an example of polymorphism in Python?',
+      options: [
+        'len() working on strings and lists',
+        'A variable name',
+        'A comment',
+        'An import statement',
+      ],
+      answer: 0,
+      why: 'The same function, len(), behaves correctly for different types.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Idea | Meaning |
+| --- | --- |
+| Polymorphism | Same call, different behaviour per object |
+| Method overriding | Child redefines a parent's method |
+| Duck typing | Has the method? Then it works |
+| Operator overloading | `__add__`, `__eq__`, `__len__` and friends |
+| Benefit | Add new classes without changing the caller |
+
+</CheatSheet>

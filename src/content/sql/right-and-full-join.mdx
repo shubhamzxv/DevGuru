@@ -1,0 +1,239 @@
+---
+id: sql-right-and-full-join
+title: RIGHT and FULL JOIN
+summary: RIGHT JOIN keeps every row of the right table, and FULL JOIN keeps every row of both tables, filling the gaps with NULL.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of matching a list of **students** with a list of **hostel rooms**.
+
+- A `LEFT JOIN` shows every student, even those without a room
+- A `RIGHT JOIN` shows every room, even the empty ones
+- A `FULL JOIN` shows both: students without rooms **and** rooms without students
+
+</Analogy>
+
+## Simple explanation
+
+`RIGHT JOIN` is the mirror image of `LEFT JOIN`. It keeps **every row of the right table** (the one after `JOIN`). Where the left table has no match, its columns are NULL.
+
+Any right join can be rewritten as a left join by swapping the two tables. Most developers do that, because reading left to right is easier. So `RIGHT JOIN` is rare in real code.
+
+`FULL JOIN` (also `FULL OUTER JOIN`) keeps **every row from both tables**:
+
+- Rows that match are combined
+- Left rows with no match appear with NULL on the right
+- Right rows with no match appear with NULL on the left
+
+It is useful for comparing two lists: "what is in A but not B, and in B but not A?"
+
+Support differs between databases:
+
+| Database | RIGHT JOIN | FULL JOIN |
+| --- | --- | --- |
+| PostgreSQL, SQL Server, Oracle | Yes | Yes |
+| MySQL | Yes | **No** |
+| SQLite | Yes, from version 3.39 | Yes, from version 3.39 |
+
+In MySQL, you build a full join from a `LEFT JOIN` and a `RIGHT JOIN` combined with `UNION`.
+
+<JoinVisualizer type="full" />
+
+## Code example
+
+```sql
+SELECT
+  e.name   AS employee,
+  d.name   AS department
+FROM employees AS e
+RIGHT JOIN departments AS d          -- every department is kept
+  ON e.department_id = d.id
+WHERE d.id >= 4
+ORDER BY d.id, e.name;
+```
+
+```output
+employee       | department
+---------------+-----------
+Farah Sheikh   | Finance
+Gaurav Bose    | Finance
+Lakshmi Pillai | Support
+Manoj Yadav    | Support
+NULL           | Research
+```
+
+```sql
+SELECT
+  e.name   AS employee,
+  d.name   AS department
+FROM employees AS e
+FULL JOIN departments AS d           -- every row from both tables
+  ON e.department_id = d.id
+WHERE e.id IS NULL                   -- departments with no employee
+   OR d.id IS NULL;                  -- employees with no department
+```
+
+```output
+employee       | department
+---------------+-----------
+Zoya Fernandes | NULL
+Nikhil Das     | NULL
+NULL           | Research
+```
+
+The same full join written for MySQL, which has no `FULL JOIN`:
+
+```mysql
+SELECT e.name AS employee, d.name AS department
+FROM employees AS e
+LEFT JOIN departments AS d ON e.department_id = d.id
+UNION
+SELECT e.name, d.name
+FROM employees AS e
+RIGHT JOIN departments AS d ON e.department_id = d.id;
+```
+
+<Playground kind="sql">
+
+```sql
+-- The same result as a RIGHT JOIN, written as a LEFT JOIN with the tables swapped
+SELECT
+  d.name          AS department,
+  COUNT(e.id)     AS employees
+FROM departments AS d
+LEFT JOIN employees AS e ON e.department_id = d.id
+GROUP BY d.name
+ORDER BY employees;
+
+-- Try it: rewrite it with  FROM employees AS e RIGHT JOIN departments AS d.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using FULL JOIN in MySQL">
+
+<Wrong>
+
+```mysql
+SELECT * FROM employees FULL JOIN departments ON employees.department_id = departments.id;
+-- MySQL: syntax error, or it treats FULL as a table alias
+```
+
+</Wrong>
+
+<Right>
+
+```mysql
+SELECT * FROM employees LEFT JOIN departments ON employees.department_id = departments.id
+UNION
+SELECT * FROM employees RIGHT JOIN departments ON employees.department_id = departments.id;
+```
+
+</Right>
+
+MySQL does not support `FULL JOIN`. Combine a left and a right join with `UNION`.
+
+</Mistake>
+
+<Mistake title="Mixing LEFT and RIGHT joins in one query">
+
+<Wrong>
+
+```sql
+SELECT c.name, o.id, oi.quantity
+FROM orders AS o
+RIGHT JOIN customers AS c ON c.id = o.customer_id
+LEFT JOIN order_items AS oi ON oi.order_id = o.id
+LIMIT 3;   -- correct, but hard to read: which table is being kept?
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT c.name, o.id, oi.quantity
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.id
+LEFT JOIN order_items AS oi ON oi.order_id = o.id
+LIMIT 3;
+```
+
+</Right>
+
+Start from the table you want to keep in full, and use only `LEFT JOIN`. The query reads top to bottom.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between LEFT JOIN and RIGHT JOIN?">
+
+They are symmetrical. LEFT JOIN keeps all rows of the first (left) table; RIGHT JOIN keeps all rows of the second (right) table. `A LEFT JOIN B` returns the same data as `B RIGHT JOIN A`.
+
+</QA>
+
+<QA q="What is a FULL OUTER JOIN?">
+
+A join that returns all rows from both tables. Matching rows are combined; rows without a match on either side are included with NULLs for the other table's columns. It is the union of a left and a right join.
+
+</QA>
+
+<QA q="How do you write a FULL OUTER JOIN in MySQL?">
+
+MySQL has no `FULL JOIN`. Use `LEFT JOIN ... UNION ... RIGHT JOIN`. `UNION` removes the duplicate matched rows. To keep legitimate duplicates, use `UNION ALL` and add `WHERE left.id IS NULL` to the second part.
+
+</QA>
+
+<QA q="When would you use a FULL JOIN?">
+
+To reconcile two data sets: for example, comparing payments recorded by your system with those in a bank statement, to find entries missing on either side.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which table has all its rows kept by a RIGHT JOIN?',
+      options: ['The table after FROM', 'The table after JOIN', 'Both', 'Neither'],
+      answer: 1,
+      why: 'The right table is the one named after the JOIN keyword.',
+    },
+    {
+      q: 'Which database does not support FULL JOIN?',
+      options: ['PostgreSQL', 'SQL Server', 'MySQL', 'Oracle'],
+      answer: 2,
+      why: 'MySQL lacks FULL JOIN; it is emulated with LEFT JOIN UNION RIGHT JOIN.',
+    },
+    {
+      q: 'A RIGHT JOIN B  returns the same rows as which query?',
+      options: ['A LEFT JOIN B', 'B LEFT JOIN A', 'A INNER JOIN B', 'A CROSS JOIN B'],
+      answer: 1,
+      why: 'Swapping the tables turns a right join into a left join.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Join | Keeps | Unmatched side shows |
+| --- | --- | --- |
+| `LEFT JOIN` | All left rows | NULL in right columns |
+| `RIGHT JOIN` | All right rows | NULL in left columns |
+| `FULL JOIN` | All rows of both | NULL on the missing side |
+
+| Tip | |
+| --- | --- |
+| Prefer | `LEFT JOIN`, with the tables swapped |
+| MySQL full join | `LEFT JOIN ... UNION ... RIGHT JOIN` |
+| Only the unmatched rows | `FULL JOIN ... WHERE a.id IS NULL OR b.id IS NULL` |
+
+</CheatSheet>

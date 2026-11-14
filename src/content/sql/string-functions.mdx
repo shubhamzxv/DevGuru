@@ -1,0 +1,239 @@
+---
+id: sql-string-functions
+title: String functions
+summary: String functions change or measure text inside a query, such as making it upper case, cutting a part out, or joining pieces together.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a tailor's tools: scissors to cut, a tape to measure, a needle to join two pieces. He picks the tool for the job and gets a new piece of cloth.
+
+**String functions** are those tools for text in a database.
+
+</Analogy>
+
+## Simple explanation
+
+A **function** takes a value, does some work, and returns a new value. A **string function** works on text.
+
+They do not change the data stored in the table. They only change what the query shows.
+
+The most used ones:
+
+| Function | What it does |
+| --- | --- |
+| `UPPER(s)`, `LOWER(s)` | Change the letter case |
+| `LENGTH(s)` | Count the characters |
+| `TRIM(s)` | Remove spaces from both ends |
+| `SUBSTR(s, start, count)` | Cut out a part. Positions start at **1** |
+| `REPLACE(s, old, new)` | Swap one piece of text for another |
+| `INSTR(s, part)` | Position of `part` inside `s`, or 0 |
+| `a \|\| b` | Join two strings (**concatenation**) |
+
+Names differ a little between databases:
+
+- Joining: `||` in SQLite and PostgreSQL, `CONCAT(a, b)` in MySQL
+- Cutting: `SUBSTR` here, `SUBSTRING` in MySQL and PostgreSQL (both accept either)
+- Finding: `INSTR` in SQLite and MySQL, `POSITION(part IN s)` in PostgreSQL
+
+Functions can be nested: the result of one becomes the input of another.
+
+## Code example
+
+```sql
+SELECT
+  name,
+  UPPER(name)                       AS upper_name,     -- all capitals
+  LENGTH(name)                      AS letters,        -- number of characters
+  SUBSTR(name, 1, 3)                AS first_three,    -- start at 1, take 3
+  REPLACE(city, 'Bengaluru', 'BLR') AS short_city      -- swap text
+FROM employees
+LIMIT 4;
+```
+
+```output
+name        | upper_name  | letters | first_three | short_city
+------------+-------------+---------+-------------+-----------
+Anita Rao   | ANITA RAO   | 9       | Ani         | BLR
+Vikram Shah | VIKRAM SHAH | 11      | Vik         | Mumbai
+Meera Nair  | MEERA NAIR  | 10      | Mee         | Delhi
+Rohit Verma | ROHIT VERMA | 11      | Roh         | BLR
+```
+
+```sql
+SELECT
+  email,
+  INSTR(email, '@')                            AS at_position,   -- where is the @
+  SUBSTR(email, 1, INSTR(email, '@') - 1)      AS user_part,     -- text before it
+  SUBSTR(email, INSTR(email, '@') + 1)         AS domain_part,   -- text after it
+  TRIM('   hello   ') || '!'                   AS trimmed
+FROM customers
+LIMIT 3;
+```
+
+```output
+email             | at_position | user_part | domain_part | trimmed
+------------------+-------------+-----------+-------------+--------
+NULL              | NULL        | NULL      | NULL        | hello!
+aarav@example.com | 6           | aarav     | example.com | hello!
+isha@example.com  | 5           | isha      | example.com | hello!
+```
+
+<Playground kind="sql">
+
+```sql
+SELECT
+  name,
+  SUBSTR(name, 1, INSTR(name, ' ') - 1)  AS first_name,
+  SUBSTR(name, INSTR(name, ' ') + 1)     AS last_name,
+  LOWER(REPLACE(name, ' ', '.')) || '@devguru.in' AS work_email
+FROM employees
+LIMIT 5;
+
+-- Try it: show each name with its number of letters, longest first.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Starting SUBSTR at 0">
+
+<Wrong>
+
+```sql
+SELECT SUBSTR('Python', 0, 3) AS part;   -- gives 'Py': position 0 does not exist
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT SUBSTR('Python', 1, 3) AS part;   -- gives 'Pyt'
+```
+
+</Right>
+
+In SQL, the first character is at position **1**, not 0 as in Python.
+
+</Mistake>
+
+<Mistake title="Joining text with +">
+
+<Wrong>
+
+```sql
+SELECT 'Dev' + 'Guru' AS joined;   -- gives 0: + is arithmetic here
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT 'Dev' || 'Guru' AS joined;   -- gives DevGuru
+```
+
+</Right>
+
+`+` joins strings only in SQL Server. Use `||`, or `CONCAT()` in MySQL.
+
+</Mistake>
+
+<Mistake title="Using a function on a column in WHERE">
+
+<Wrong>
+
+```sql
+SELECT name FROM customers WHERE UPPER(city) = 'DELHI';   -- works, but cannot use an index on city
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM customers WHERE city = 'Delhi';
+```
+
+</Right>
+
+A function around the column forces the database to compute it for every row. Compare the raw column when you can.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between CHAR_LENGTH and LENGTH in MySQL?">
+
+`CHAR_LENGTH()` counts characters. `LENGTH()` counts **bytes**. They differ for multi-byte text: a Hindi letter in UTF-8 is one character but three bytes. In SQLite and PostgreSQL, `LENGTH()` counts characters.
+
+</QA>
+
+<QA q="How do you concatenate strings, and what happens with NULL?">
+
+With `||` (standard, SQLite, PostgreSQL) or `CONCAT()` (MySQL, PostgreSQL). With `||`, if any part is NULL the whole result is NULL. Use `COALESCE(col, '')`, or `CONCAT_WS()` in MySQL, which skips NULLs.
+
+</QA>
+
+<QA q="How do you get the domain from an email address?">
+
+Find the position of `@` and take everything after it.
+
+```sql
+SELECT SUBSTR(email, INSTR(email, '@') + 1) AS domain FROM customers LIMIT 2;
+```
+
+In MySQL, `SUBSTRING_INDEX(email, '@', -1)` does the same.
+
+</QA>
+
+<QA q="What do TRIM, LTRIM and RTRIM do?">
+
+`TRIM` removes spaces (or given characters) from both ends, `LTRIM` from the left end only, and `RTRIM` from the right end only. They are used to clean data typed by users.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: "What does SUBSTR('Mumbai', 1, 3) return?",
+      options: ['Mum', 'umb', 'Mu', 'bai'],
+      answer: 0,
+      why: 'It starts at position 1 and takes 3 characters.',
+    },
+    {
+      q: 'Which joins two strings in SQLite and PostgreSQL?',
+      options: ['+', '||', '&&', '..'],
+      answer: 1,
+      why: '|| is the standard concatenation operator. MySQL uses CONCAT().',
+    },
+    {
+      q: "What does LENGTH('a b') return?",
+      options: ['2', '3', '1', 'NULL'],
+      answer: 1,
+      why: 'The space is a character too.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code | Result |
+| --- | --- | --- |
+| Capitals | `UPPER('asha')` | `ASHA` |
+| Small letters | `LOWER('ASHA')` | `asha` |
+| Length | `LENGTH('asha')` | `4` |
+| Part of text | `SUBSTR('Delhi', 2, 3)` | `elh` |
+| Replace | `REPLACE('a-b', '-', ' ')` | `a b` |
+| Find | `INSTR('a@b', '@')` | `2` |
+| Remove outer spaces | `TRIM('  hi ')` | `hi` |
+| Join | `'a' \|\| 'b'` | `ab` |
+
+</CheatSheet>

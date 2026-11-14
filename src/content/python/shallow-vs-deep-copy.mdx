@@ -1,0 +1,268 @@
+---
+id: python-shallow-vs-deep-copy
+title: Shallow copy vs deep copy
+summary: A shallow copy makes a new outer object but shares the inner objects, while a deep copy makes new copies of everything inside too.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a folder of documents.
+
+A **shallow copy** is a new folder that holds photocopies of the **index page** only. The index still points to the same original papers in the cupboard. If someone scribbles on a paper, both folders see it.
+
+A **deep copy** is a new folder with a photocopy of **every paper**. The two folders are fully separate.
+
+</Analogy>
+
+## Simple explanation
+
+There are three levels of "copying" in Python.
+
+**Assignment** (`b = a`) copies nothing. Both names point to the same object.
+
+A **shallow copy** creates a **new outer object**, but fills it with **references to the same inner objects**. You make one with `a.copy()`, `list(a)`, `a[:]` or `copy.copy(a)`.
+
+A **deep copy** creates a new outer object **and** new copies of every object inside it, at every level. You make one with `copy.deepcopy(a)`.
+
+When does the difference matter? Only when the object contains **mutable objects inside it**, such as a list of lists or a dict with list values.
+
+- For a flat list of numbers or strings, a shallow copy is enough, because those items are immutable
+- For nested data, a shallow copy shares the inner lists. Changing an inner list through the copy also changes the original
+
+A deep copy is safer but slower and uses more memory, because it duplicates everything.
+
+## Code example
+
+```python
+import copy
+
+original = [[1, 2], [3, 4]]              # a list that contains lists
+
+same = original                          # assignment: no copy at all
+shallow = copy.copy(original)            # new outer list, same inner lists
+deep = copy.deepcopy(original)           # new outer list AND new inner lists
+
+print(same is original, shallow is original, deep is original)
+print(shallow[0] is original[0])         # the inner list is shared
+print(deep[0] is original[0])            # the inner list is a new one
+
+shallow.append([5, 6])                   # change the OUTER list of the shallow copy
+print(len(original), len(shallow))       # the original is not affected
+
+shallow[0].append(99)                    # change an INNER list through the shallow copy
+print(original[0])                       # the original changed too
+
+deep[1].append(77)                       # change an inner list of the deep copy
+print(original[1])                       # the original is safe
+
+flat = [1, 2, 3]
+flat_copy = flat.copy()                  # a shallow copy is enough for flat data
+flat_copy[0] = 100
+print(flat, flat_copy)
+
+settings = {"theme": "dark", "tags": ["a"]}
+clone = settings.copy()                  # dict.copy() is shallow as well
+clone["tags"].append("b")
+print(settings["tags"])
+```
+
+```output
+True False False
+True
+False
+2 3
+[1, 2, 99]
+[3, 4]
+[1, 2, 3] [100, 2, 3]
+['a', 'b']
+```
+
+<Playground kind="python">
+
+```python
+import copy
+
+template = {"name": "", "marks": [0, 0, 0]}
+
+asha = copy.deepcopy(template)
+asha["name"] = "Asha"
+asha["marks"][0] = 95
+
+ravi = copy.deepcopy(template)
+ravi["name"] = "Ravi"
+
+print(asha)
+print(ravi)
+print(template)
+
+# Try it: replace deepcopy with copy.copy and watch the marks leak.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using a shallow copy for nested data">
+
+<Wrong>
+
+```python
+board = [[0, 0], [0, 0]]
+backup = board.copy()
+board[0][0] = 9
+print(backup)   # [[9, 0], [0, 0]]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import copy
+
+board = [[0, 0], [0, 0]]
+backup = copy.deepcopy(board)
+board[0][0] = 9
+print(backup)   # [[0, 0], [0, 0]]
+```
+
+</Right>
+
+`copy()` shares the inner lists. For nested data, use `deepcopy()`.
+
+</Mistake>
+
+<Mistake title="Creating a grid with the * operator">
+
+<Wrong>
+
+```python
+grid = [[0] * 3] * 2          # the same inner list, repeated twice
+grid[0][0] = 1
+print(grid)   # [[1, 0, 0], [1, 0, 0]]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+grid = [[0] * 3 for _ in range(2)]   # a new inner list for each row
+grid[0][0] = 1
+print(grid)   # [[1, 0, 0], [0, 0, 0]]
+```
+
+</Right>
+
+`*` copies references, like a shallow copy. Use a comprehension to make separate rows.
+
+</Mistake>
+
+<Mistake title="Thinking assignment is a copy">
+
+<Wrong>
+
+```python
+a = [1, 2, 3]
+b = a
+b[0] = 100
+print(a)   # [100, 2, 3]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+a = [1, 2, 3]
+b = a.copy()
+b[0] = 100
+print(a)   # [1, 2, 3]
+```
+
+</Right>
+
+`=` only adds a second name. Use `.copy()` for a real (shallow) copy.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a shallow copy and a deep copy?">
+
+A shallow copy constructs a new container and inserts **references** to the objects found in the original, so nested objects are shared. A deep copy constructs a new container and recursively inserts **copies** of the objects found in the original, so nothing is shared. The difference only shows with nested mutable objects.
+
+</QA>
+
+<QA q="How do you create each kind of copy?">
+
+Shallow: `copy.copy(x)`, `list(x)`, `x[:]`, `x.copy()`, `dict(x)`, `set(x)`. Deep: `copy.deepcopy(x)`.
+
+</QA>
+
+<QA q="What is the difference between assignment and a shallow copy?">
+
+Assignment creates no new object; both names refer to the same one, so `a is b` is True. A shallow copy creates a new outer object, so `a is b` is False, but the elements inside are still shared.
+
+</QA>
+
+<QA q="How does deepcopy handle an object that refers to itself?">
+
+It keeps a **memo** dictionary of objects it has already copied. When it meets the same object again, it reuses the copy, so circular references do not cause infinite recursion.
+
+```python
+import copy
+
+a = [1]
+a.append(a)              # the list contains itself
+b = copy.deepcopy(a)
+print(b[1] is b)   # True
+```
+
+</QA>
+
+<QA q="When is a shallow copy enough?">
+
+When the container holds only immutable items (numbers, strings, tuples of immutables), or when you intend to share the inner objects. It is faster and uses less memory than a deep copy.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'After  a = [[1], [2]]  and  b = a.copy()  and  b[0].append(9),  what is a[0]?',
+      options: ['[1]', '[1, 9]', '[9]', 'An error'],
+      answer: 1,
+      why: 'copy() is shallow, so a[0] and b[0] are the same inner list.',
+    },
+    {
+      q: 'Which function makes a fully independent copy of nested data?',
+      options: ['list()', 'copy.copy()', 'copy.deepcopy()', 'dict.copy()'],
+      answer: 2,
+      why: 'deepcopy() copies every level, so nothing is shared.',
+    },
+    {
+      q: 'What does  b = a  create?',
+      options: ['A deep copy', 'A shallow copy', 'No copy: a second name for the same object', 'An error'],
+      answer: 2,
+      why: 'Assignment never copies. It only binds another name to the same object.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Action | New outer object? | New inner objects? | Code |
+| --- | --- | --- | --- |
+| Assignment | No | No | `b = a` |
+| Shallow copy | Yes | No | `a.copy()`, `a[:]`, `copy.copy(a)` |
+| Deep copy | Yes | Yes | `copy.deepcopy(a)` |
+
+Flat data: a shallow copy is enough. Nested data: use a deep copy.
+
+</CheatSheet>

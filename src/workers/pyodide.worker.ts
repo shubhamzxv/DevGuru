@@ -3,9 +3,11 @@
  * It lives in a Web Worker so the page never freezes, and so the Stop button
  * can kill an infinite loop by terminating the worker.
  *
- * Messages in:  { type: 'run', code }
+ * Messages in:  { type: 'run', code }    run the code normally
+ *               { type: 'trace', code }  run it step by step and record each line
  * Messages out: see WorkerMessage in src/hooks/usePyodide.ts
  */
+import tracerSource from './tracer.py?raw';
 
 // Pinned version. To self-host later, copy the files to /public/pyodide and change this URL.
 const PYODIDE_URL = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/';
@@ -15,6 +17,7 @@ interface PyodideApi {
   loadPackagesFromImports(code: string): Promise<unknown>;
   setStdout(options: { batched: (text: string) => void }): void;
   setStderr(options: { batched: (text: string) => void }): void;
+  globals: { set(name: string, value: unknown): void };
 }
 
 interface PyodideModule {
@@ -23,7 +26,7 @@ interface PyodideModule {
 
 interface WorkerScope {
   postMessage(message: unknown): void;
-  onmessage: ((event: MessageEvent<{ type: 'run'; code: string }>) => void) | null;
+  onmessage: ((event: MessageEvent<{ type: 'run' | 'trace'; code: string }>) => void) | null;
 }
 
 const scope = self as unknown as WorkerScope;
@@ -42,6 +45,7 @@ const ready: Promise<PyodideApi> = (async () => {
   pyodide.setStdout({ batched: (text) => scope.postMessage({ type: 'stdout', text }) });
   pyodide.setStderr({ batched: (text) => scope.postMessage({ type: 'stderr', text }) });
   await pyodide.runPythonAsync(PRELUDE);
+  await pyodide.runPythonAsync(tracerSource); // defines _devguru_trace()
   return pyodide;
 })();
 
@@ -50,6 +54,7 @@ ready.catch((error: unknown) => {
 });
 
 scope.onmessage = async (event) => {
+  const { type, code } = event.data;
   let pyodide: PyodideApi;
   try {
     pyodide = await ready;
@@ -58,9 +63,15 @@ scope.onmessage = async (event) => {
   }
   try {
     // Downloads numpy, pandas, ... only when the code imports them.
-    await pyodide.loadPackagesFromImports(event.data.code);
+    await pyodide.loadPackagesFromImports(code);
     scope.postMessage({ type: 'started' });
-    await pyodide.runPythonAsync(event.data.code);
+    if (type === 'trace') {
+      pyodide.globals.set('_devguru_source', code);
+      const result = await pyodide.runPythonAsync('_devguru_trace(_devguru_source)');
+      scope.postMessage({ type: 'trace', result: String(result) });
+    } else {
+      await pyodide.runPythonAsync(code);
+    }
     scope.postMessage({ type: 'done' });
   } catch (error) {
     scope.postMessage({

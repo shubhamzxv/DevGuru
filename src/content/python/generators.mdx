@@ -1,0 +1,268 @@
+---
+id: python-generators
+title: Generators
+summary: A generator is a function that produces values one at a time with yield, pausing between values to save memory.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a dosa stall. The cook does not make 500 dosas in the morning and stack them up. He makes one when a customer asks, hands it over, and waits for the next order.
+
+A **generator** works the same way. It makes one value, gives it to you, and pauses until you ask again.
+
+</Analogy>
+
+## Simple explanation
+
+A **generator** is the easy way to write an iterator. You write a normal function, but use `yield` in place of `return`.
+
+`return` ends a function and forgets everything. `yield` gives back a value and **pauses** the function. All its local variables are kept. When you ask for the next value, the function **continues** from the line after `yield`.
+
+Calling a generator function does not run its code. It gives you a **generator object**. The code runs only when you loop over it or call `next()`.
+
+This is called **lazy evaluation**: values are made only when needed.
+
+Why it matters:
+
+- **Memory**: a list of one million numbers holds all of them. A generator holds only one at a time
+- **Speed to first result**: you get the first value immediately
+- **Endless streams**: a generator can go on forever, such as reading live logs
+
+A **generator expression** is the short form. It looks like a list comprehension with round brackets.
+
+Like every iterator, a generator can be used only once.
+
+## Code example
+
+```python
+import sys
+
+def count_up_to(limit):
+    number = 1
+    while number <= limit:
+        yield number                     # give a value, then pause here
+        number += 1                      # continue from here on the next request
+
+gen = count_up_to(3)                     # nothing runs yet
+print(type(gen).__name__)
+print(next(gen))                         # runs until the first yield
+print(next(gen))                         # continues after the yield
+print(list(gen))                         # the remaining values
+
+def read_orders():
+    print("  fetching order 1")
+    yield 250
+    print("  fetching order 2")
+    yield 400
+
+for amount in read_orders():             # the body runs step by step, on demand
+    print("got", amount)
+
+big_list = [n * n for n in range(100000)]        # all values in memory now
+big_gen = (n * n for n in range(100000))         # generator expression: lazy
+print(sys.getsizeof(big_list) > 100 * sys.getsizeof(big_gen))
+print(sum(big_gen))                              # values are made one by one
+
+def fibonacci():
+    a, b = 0, 1
+    while True:                          # an endless generator
+        yield a
+        a, b = b, a + b
+
+fib = fibonacci()
+print([next(fib) for _ in range(8)])     # take only what you need
+```
+
+```output
+generator
+1
+2
+[3]
+  fetching order 1
+got 250
+  fetching order 2
+got 400
+True
+333328333350000
+[0, 1, 1, 2, 3, 5, 8, 13]
+```
+
+<Playground kind="python">
+
+```python
+def batches(items, size):
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
+
+orders = list(range(1, 11))
+
+for batch in batches(orders, 4):
+    print("Processing", batch)
+
+# Try it: change the batch size to 3.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Expecting the function body to run when you call it">
+
+<Wrong>
+
+```python
+def greet():
+    print("hello")
+    yield 1
+
+greet()          # prints nothing: only a generator object is created
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def greet():
+    print("hello")
+    yield 1
+
+next(greet())    # now the body runs up to the first yield
+```
+
+</Right>
+
+A generator function runs only when you ask it for a value.
+
+</Mistake>
+
+<Mistake title="Using a generator twice">
+
+<Wrong>
+
+```python
+squares = (n * n for n in range(4))
+print(max(squares))
+print(list(squares))   # []
+```
+
+</Wrong>
+
+<Right>
+
+```python
+squares = [n * n for n in range(4)]
+print(max(squares))
+print(squares)   # [0, 1, 4, 9]
+```
+
+</Right>
+
+A generator is finished after one pass. Use a list if you need the values more than once.
+
+</Mistake>
+
+<Mistake title="Asking for the length or an index">
+
+<Wrong>
+
+```python
+gen = (n for n in range(5))
+print(len(gen))   # TypeError: object of type 'generator' has no len()
+```
+
+</Wrong>
+
+<Right>
+
+```python
+gen = (n for n in range(5))
+print(len(list(gen)))   # 5
+```
+
+</Right>
+
+A generator does not know how many values it will produce, and it has no positions. Convert it to a list if you need those.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a generator?">
+
+A function that contains `yield`. Calling it returns a generator object, which is an iterator. Each `next()` runs the function until the next `yield`, returns that value and suspends the function with its state saved. When the function ends, `StopIteration` is raised.
+
+</QA>
+
+<QA q="What is the difference between yield and return?">
+
+`return` sends back a value and ends the function; its local state is lost. `yield` sends back a value and pauses the function, keeping its local variables and position, so it can resume. A function can yield many times.
+
+</QA>
+
+<QA q="What is the difference between a generator and a list?">
+
+A list stores all its items in memory, supports indexing and `len()`, and can be looped over many times. A generator computes items on demand, uses constant memory, has no index or length, and can be consumed only once.
+
+</QA>
+
+<QA q="What is the difference between a generator and an iterator?">
+
+Every generator is an iterator, but written more simply. With an iterator class you write `__iter__` and `__next__` and manage state yourself. With a generator, Python creates those for you and keeps the state in the paused function.
+
+</QA>
+
+<QA q="Where are generators used in real projects?">
+
+Reading large files or database results row by row, streaming API responses, building data pipelines where each step feeds the next, paginating through an API, and producing endless sequences.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which keyword turns a function into a generator?',
+      options: ['return', 'yield', 'async', 'lambda'],
+      answer: 1,
+      why: 'A function that contains yield is a generator function.',
+    },
+    {
+      q: 'What happens when you call a generator function?',
+      options: [
+        'The whole body runs immediately',
+        'You get a generator object and no code runs yet',
+        'You get a list',
+        'Python raises an error',
+      ],
+      answer: 1,
+      why: 'The body runs only when values are requested with next() or a loop.',
+    },
+    {
+      q: 'What is the main advantage of a generator over a list for one million items?',
+      options: ['It can be indexed', 'It uses far less memory', 'It can be reused', 'It sorts itself'],
+      answer: 1,
+      why: 'A generator holds one item at a time, so memory use stays small.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Generator function | `def gen(): yield 1` |
+| Get the next value | `next(g)` |
+| Loop over it | `for x in gen():` |
+| Generator expression | `(x * 2 for x in items)` |
+| Make a list from it | `list(g)` |
+| Endless stream | `while True: yield value` |
+| Pass on another generator | `yield from other()` |
+
+A generator can be used only once.
+
+</CheatSheet>

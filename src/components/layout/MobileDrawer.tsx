@@ -14,7 +14,8 @@ export default function MobileDrawer({ open, onClose }: MobileDrawerProps) {
   useEffect(() => {
     if (!open) return;
 
-    closeButtonRef.current?.focus();
+    // Wait one frame: the drawer becomes visible first, then it can take focus.
+    const frame = requestAnimationFrame(() => closeButtonRef.current?.focus());
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
@@ -26,6 +27,7 @@ export default function MobileDrawer({ open, onClose }: MobileDrawerProps) {
     document.body.style.overflow = 'hidden';
 
     return () => {
+      cancelAnimationFrame(frame);
       document.removeEventListener('keydown', onKeyDown);
       document.body.style.overflow = previousOverflow;
     };

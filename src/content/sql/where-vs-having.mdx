@@ -1,0 +1,227 @@
+---
+id: sql-where-vs-having
+title: WHERE vs HAVING
+summary: WHERE filters single rows before grouping, and HAVING filters whole groups after grouping.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a school choosing a team for a quiz contest.
+
+First, at the gate: "only students of class 10 may enter the hall". That check is on **each student**. It is `WHERE`.
+
+Later, after the sections have formed teams and scores are added up: "only teams with more than 50 points go to the final". That check is on **each team**. It is `HAVING`.
+
+</Analogy>
+
+## Simple explanation
+
+Both clauses filter, but at different moments.
+
+| Point | WHERE | HAVING |
+| --- | --- | --- |
+| Filters | Individual rows | Groups |
+| Runs | Before `GROUP BY` | After `GROUP BY` |
+| Aggregate functions allowed? | No | Yes |
+| Works without `GROUP BY`? | Yes | Rarely useful |
+| Used with | `SELECT`, `UPDATE`, `DELETE` | `SELECT` only |
+| Effect on speed | Reduces rows early: fast | Works on already grouped data |
+
+The order in which the database works:
+
+1. `FROM`: pick the table
+2. `WHERE`: remove rows that do not match
+3. `GROUP BY`: put the remaining rows into groups
+4. Aggregates are calculated for each group
+5. `HAVING`: remove groups that do not match
+6. `SELECT`, then `ORDER BY`, then `LIMIT`
+
+How to choose:
+
+- Is the condition about a **plain column** of a row, such as `city = 'Pune'`? Use `WHERE`
+- Is the condition about an **aggregate**, such as `COUNT(*) > 2`? Use `HAVING`
+
+Put as much as you can in `WHERE`. It throws rows away early, and it can use an index.
+
+## Code example
+
+```sql
+SELECT
+  department_id,
+  COUNT(*)            AS employees,
+  ROUND(AVG(salary))  AS avg_salary
+FROM employees
+WHERE hire_date >= '2019-01-01'      -- WHERE: a condition on each row
+  AND department_id IS NOT NULL
+GROUP BY department_id
+HAVING AVG(salary) > 70000           -- HAVING: a condition on each group
+ORDER BY avg_salary DESC;
+```
+
+```output
+department_id | employees | avg_salary
+--------------+-----------+-----------
+1             | 5         | 93400.0
+4             | 1         | 76000.0
+```
+
+The same grouping without either filter, to compare:
+
+```sql
+SELECT department_id, COUNT(*) AS employees, ROUND(AVG(salary)) AS avg_salary
+FROM employees
+GROUP BY department_id
+ORDER BY avg_salary DESC;
+```
+
+```output
+department_id | employees | avg_salary
+--------------+-----------+-----------
+1             | 7         | 113143.0
+4             | 2         | 103000.0
+2             | 5         | 84000.0
+3             | 3         | 83000.0
+NULL          | 2         | 54000.0
+5             | 2         | 53000.0
+```
+
+<Playground kind="sql">
+
+```sql
+SELECT
+  category,
+  COUNT(*)            AS products,
+  ROUND(AVG(price))   AS avg_price
+FROM products
+WHERE stock > 0                      -- only products we can sell
+GROUP BY category
+HAVING COUNT(*) >= 3                 -- only categories with a real range
+ORDER BY avg_price DESC;
+
+-- Try it: change the HAVING condition to  AVG(price) > 500.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Putting an aggregate condition in WHERE">
+
+<Wrong>
+
+```sql
+SELECT city, COUNT(*) FROM customers WHERE COUNT(*) > 1 GROUP BY city;   -- Error: misuse of aggregate
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT city, COUNT(*) AS customers FROM customers GROUP BY city HAVING COUNT(*) > 1;
+```
+
+</Right>
+
+When `WHERE` runs, no groups and no counts exist yet.
+
+</Mistake>
+
+<Mistake title="Putting a row condition in HAVING">
+
+<Wrong>
+
+```sql
+SELECT status, COUNT(*) AS orders FROM orders
+GROUP BY status HAVING status <> 'cancelled';   -- correct result, wasted work
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT status, COUNT(*) AS orders FROM orders
+WHERE status <> 'cancelled' GROUP BY status;
+```
+
+</Right>
+
+Both return the same rows here. The `WHERE` version removes rows before grouping, so it does less work.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between WHERE and HAVING?">
+
+`WHERE` filters rows before grouping and cannot reference aggregate functions. `HAVING` filters groups after `GROUP BY` and aggregation, and can reference aggregates. `WHERE` can be used in `SELECT`, `UPDATE` and `DELETE`; `HAVING` only in `SELECT`.
+
+</QA>
+
+<QA q="Can WHERE and HAVING be used in the same query?">
+
+Yes, and it is common. `WHERE` first limits the rows that take part, then `GROUP BY` forms groups, then `HAVING` limits the groups that are returned.
+
+</QA>
+
+<QA q="Which is faster, WHERE or HAVING?">
+
+For conditions on non-aggregated columns, `WHERE` is faster: it reduces the data before the expensive grouping step and can use indexes. `HAVING` should hold only conditions that need aggregate values.
+
+</QA>
+
+<QA q="Write a query to find departments where more than two employees earn above 70000.">
+
+The salary condition is per row (`WHERE`), and the count condition is per group (`HAVING`).
+
+```sql
+SELECT department_id, COUNT(*) AS well_paid
+FROM employees
+WHERE salary > 70000
+GROUP BY department_id
+HAVING COUNT(*) > 2;
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which clause runs first?',
+      options: ['HAVING', 'WHERE', 'ORDER BY', 'They run together'],
+      answer: 1,
+      why: 'WHERE filters rows before GROUP BY; HAVING filters after it.',
+    },
+    {
+      q: "Where does the condition  city = 'Delhi'  belong?",
+      options: ['WHERE', 'HAVING', 'GROUP BY', 'ORDER BY'],
+      answer: 0,
+      why: 'It is about a plain column of each row, so it belongs in WHERE.',
+    },
+    {
+      q: 'Where does the condition  SUM(amount) > 5000  belong?',
+      options: ['WHERE', 'HAVING', 'FROM', 'SELECT'],
+      answer: 1,
+      why: 'It uses an aggregate, which exists only after grouping.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| | WHERE | HAVING |
+| --- | --- | --- |
+| Filters | Rows | Groups |
+| When | Before grouping | After grouping |
+| Aggregates | Not allowed | Allowed |
+| Example | `WHERE salary > 50000` | `HAVING COUNT(*) > 3` |
+
+`SELECT` ... `FROM` ... `WHERE` ... `GROUP BY` ... `HAVING` ... `ORDER BY` ... `LIMIT`
+
+</CheatSheet>

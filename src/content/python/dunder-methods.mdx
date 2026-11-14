@@ -1,0 +1,287 @@
+---
+id: python-dunder-methods
+title: Dunder (magic) methods
+summary: Dunder methods are special methods with double underscores that let your objects work with built-in features such as print(), len(), == and +.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of standard sockets in a house. Any appliance with the right plug works in them: a charger, a mixer, a lamp. The appliance only needs to follow the plug standard.
+
+**Dunder methods** are that standard. If your class follows it, Python's built-in features work with your objects.
+
+</Analogy>
+
+## Simple explanation
+
+A **dunder method** has two underscores before and after its name, like `__init__`. "Dunder" is short for "double underscore". They are also called **magic methods** or **special methods**.
+
+You do not call them yourself. Python calls them when you use a built-in feature:
+
+- `print(obj)` or `str(obj)` calls `__str__`, the friendly text for users
+- `repr(obj)`, and showing an object inside a list, calls `__repr__`, the exact text for developers
+- `len(obj)` calls `__len__`
+- `a == b` calls `__eq__`
+- `a < b` calls `__lt__`, which also lets `sorted()` work
+- `a + b` calls `__add__`
+- `item in obj` calls `__contains__`
+- `obj[0]` calls `__getitem__`
+
+Without `__str__` or `__repr__`, printing an object shows something unhelpful like `<__main__.Cart object at 0x7f...>`.
+
+Without `__eq__`, two objects are equal only if they are the very same object in memory.
+
+## Code example
+
+```python
+class Money:
+    def __init__(self, rupees):
+        self.rupees = rupees
+
+    def __str__(self):                     # for print() and str()
+        return f"Rs {self.rupees}"
+
+    def __repr__(self):                    # for developers and inside lists
+        return f"Money({self.rupees})"
+
+    def __eq__(self, other):               # for ==
+        return self.rupees == other.rupees
+
+    def __lt__(self, other):               # for < and for sorting
+        return self.rupees < other.rupees
+
+    def __add__(self, other):              # for +
+        return Money(self.rupees + other.rupees)
+
+a, b = Money(500), Money(200)
+print(a)                                   # uses __str__
+print([a, b])                              # a list uses __repr__
+print(a == Money(500), a < b)
+print(a + b)
+print(sorted([a, b]))                      # sorting uses __lt__
+
+class Cart:
+    def __init__(self, items):
+        self.items = items
+
+    def __len__(self):                     # for len()
+        return len(self.items)
+
+    def __contains__(self, item):          # for in
+        return item in self.items
+
+    def __getitem__(self, index):          # for cart[0] and for loops
+        return self.items[index]
+
+cart = Cart(["pen", "book"])
+print(len(cart), "pen" in cart, cart[1])
+```
+
+```output
+Rs 500
+[Money(500), Money(200)]
+True False
+Rs 700
+[Money(200), Money(500)]
+2 True book
+```
+
+<Playground kind="python">
+
+```python
+class Vector:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+    def __repr__(self):
+        return f"Vector({self.x}, {self.y})"
+
+    def __add__(self, other):
+        return Vector(self.x + other.x, self.y + other.y)
+
+    def __eq__(self, other):
+        return (self.x, self.y) == (other.x, other.y)
+
+print(Vector(1, 2) + Vector(3, 4))
+print(Vector(1, 2) == Vector(1, 2))
+
+# Try it: add  __mul__  so that  Vector(1, 2) * 3  gives Vector(3, 6).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Comparing objects without __eq__">
+
+<Wrong>
+
+```python
+class Point:
+    def __init__(self, x):
+        self.x = x
+
+print(Point(1) == Point(1))   # False
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Point:
+    def __init__(self, x):
+        self.x = x
+
+    def __eq__(self, other):
+        return self.x == other.x
+
+print(Point(1) == Point(1))   # True
+```
+
+</Right>
+
+By default, `==` checks if both names point to the same object. Define `__eq__` to compare values.
+
+</Mistake>
+
+<Mistake title="Printing instead of returning in __str__">
+
+<Wrong>
+
+```python
+class User:
+    def __str__(self):
+        print("User Asha")
+
+print(User())   # TypeError: __str__ returned non-string (type NoneType)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class User:
+    def __str__(self):
+        return "User Asha"
+
+print(User())   # User Asha
+```
+
+</Right>
+
+`__str__` must **return** a string. Python does the printing.
+
+</Mistake>
+
+<Mistake title="Calling dunder methods directly">
+
+<Wrong>
+
+```python
+items = [1, 2, 3]
+print(items.__len__())   # 3
+```
+
+</Wrong>
+
+<Right>
+
+```python
+items = [1, 2, 3]
+print(len(items))   # 3
+```
+
+</Right>
+
+It works, but it is not how Python is written. Use the built-in function or operator, and let Python call the dunder method.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are dunder or magic methods?">
+
+Special methods whose names start and end with double underscores. Python calls them implicitly to implement built-in behaviour: object creation (`__init__`), string conversion (`__str__`, `__repr__`), operators (`__add__`, `__eq__`), container behaviour (`__len__`, `__getitem__`) and context managers (`__enter__`, `__exit__`).
+
+</QA>
+
+<QA q="What is the difference between __str__ and __repr__?">
+
+`__str__` returns a readable string for end users and is used by `print()` and `str()`. `__repr__` returns an unambiguous string for developers, ideally one that could recreate the object, and is used by `repr()`, the interactive shell and containers. If `__str__` is missing, Python falls back to `__repr__`.
+
+</QA>
+
+<QA q="What happens to __hash__ when you define __eq__?">
+
+Python sets `__hash__` to `None`, so the objects become unhashable and cannot be used in a set or as dictionary keys. If you need that, define `__hash__` too, based on the same fields as `__eq__`, and keep those fields immutable.
+
+</QA>
+
+<QA q="Which dunder methods make an object work in a for loop?">
+
+`__iter__`, which returns an iterator, and `__next__` on that iterator. As a fallback, Python also accepts `__getitem__` with indexes starting from 0.
+
+</QA>
+
+<QA q="What does __call__ do?">
+
+It makes an instance callable like a function.
+
+```python
+class Doubler:
+    def __call__(self, n):
+        return n * 2
+
+double = Doubler()
+print(double(21))   # 42
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which method does print(obj) use?',
+      options: ['__init__', '__str__', '__len__', '__add__'],
+      answer: 1,
+      why: 'print() converts the object with str(), which calls __str__ (or __repr__ if __str__ is missing).',
+    },
+    {
+      q: 'Which method lets  a + b  work for your objects?',
+      options: ['__plus__', '__sum__', '__add__', '__concat__'],
+      answer: 2,
+      why: 'The + operator calls __add__ on the left object.',
+    },
+    {
+      q: 'Two objects of a class without __eq__ hold the same data. What does == give?',
+      options: ['True', 'False', 'An error', 'None'],
+      answer: 1,
+      why: 'The default == compares identity, and they are two different objects.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| You write | Python calls |
+| --- | --- |
+| `Obj(...)` | `__init__` |
+| `print(obj)`, `str(obj)` | `__str__` |
+| `repr(obj)`, `[obj]` | `__repr__` |
+| `len(obj)` | `__len__` |
+| `a == b` | `__eq__` |
+| `a < b`, `sorted()` | `__lt__` |
+| `a + b` | `__add__` |
+| `x in obj` | `__contains__` |
+| `obj[i]` | `__getitem__` |
+| `obj()` | `__call__` |
+| `with obj:` | `__enter__`, `__exit__` |
+
+</CheatSheet>

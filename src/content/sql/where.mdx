@@ -1,0 +1,233 @@
+---
+id: sql-where
+title: WHERE
+summary: WHERE filters rows, so the query returns only the rows that match a condition.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a security guard at a society gate with one rule: "only residents of Tower B may enter". He checks every person against the rule. Those who match go in. The rest are turned away.
+
+`WHERE` is that guard. It checks every row against your condition.
+
+</Analogy>
+
+## Simple explanation
+
+Without `WHERE`, a query returns every row. `WHERE` adds a **condition**. Only rows for which the condition is true are kept.
+
+It is written after `FROM`:
+
+`SELECT columns FROM table WHERE condition;`
+
+Comparison operators:
+
+| Operator | Meaning |
+| --- | --- |
+| `=` | Equal to |
+| `<>` or `!=` | Not equal to |
+| `>` and `<` | Greater than, less than |
+| `>=` and `<=` | Greater or equal, less or equal |
+
+Rules for values:
+
+- Text goes in **single quotes**: `city = 'Pune'`
+- Numbers have no quotes: `salary > 80000`
+- Dates are written as text: `hire_date >= '2022-01-01'`
+
+`WHERE` is not only for `SELECT`. It also decides which rows `UPDATE` and `DELETE` will touch.
+
+The database applies `WHERE` **before** it builds the output columns. So you cannot use a column alias from `SELECT` inside `WHERE`.
+
+## Code example
+
+```sql
+SELECT name, city, salary
+FROM employees
+WHERE salary >= 130000;          -- keep only rows where this is true
+```
+
+```output
+name          | city      | salary
+--------------+-----------+-------
+Anita Rao     | Bengaluru | 185000
+Vikram Shah   | Mumbai    | 150000
+Rohit Verma   | Bengaluru | 140000
+Asha Kulkarni | Pune      | 140000
+Farah Sheikh  | Mumbai    | 130000
+```
+
+```sql
+SELECT name, hire_date
+FROM employees
+WHERE hire_date >= '2023-01-01'  -- dates compare correctly as YYYY-MM-DD text
+  AND city <> 'Pune';            -- two conditions joined with AND
+```
+
+```output
+name           | hire_date
+---------------+-----------
+Sana Khan      | 2023-01-16
+Divya Menon    | 2023-06-12
+Zoya Fernandes | 2024-02-12
+Nikhil Das     | 2024-07-01
+```
+
+<Playground kind="sql">
+
+```sql
+SELECT name, category, price, stock
+FROM products
+WHERE category = 'Electronics';
+
+-- Try it: show only products that are out of stock (stock = 0).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting quotes around text">
+
+<Wrong>
+
+```sql
+SELECT name FROM employees WHERE city = Pune;   -- Error: no such column: Pune
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM employees WHERE city = 'Pune';
+```
+
+</Right>
+
+Without quotes, the database thinks `Pune` is a column name.
+
+</Mistake>
+
+<Mistake title="Using a SELECT alias inside WHERE">
+
+<Wrong>
+
+```sql
+SELECT name, price * stock AS stock_value
+FROM products
+WHERE stock_value > 50000;   -- Error in MySQL and PostgreSQL: unknown column (SQLite allows it)
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, price * stock AS stock_value
+FROM products
+WHERE price * stock > 50000;
+```
+
+</Right>
+
+`WHERE` runs before `SELECT`, so the alias does not exist yet. Repeat the expression.
+
+</Mistake>
+
+<Mistake title="Leaving out WHERE in UPDATE or DELETE">
+
+<Wrong>
+
+```sql
+UPDATE products SET stock = 0;   -- every product is now out of stock
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+UPDATE products SET stock = 0 WHERE id = 4;
+```
+
+</Right>
+
+Without `WHERE`, the change applies to **all** rows. Always write the `WHERE` first. (Press Reset database if you ran the wrong one.)
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the WHERE clause used for?">
+
+To filter rows based on a condition before they are returned, grouped, updated or deleted. Only rows for which the condition evaluates to true are processed.
+
+</QA>
+
+<QA q="What is the difference between WHERE and HAVING?">
+
+`WHERE` filters individual rows **before** grouping and cannot contain aggregate functions. `HAVING` filters groups **after** `GROUP BY` and can use aggregates such as `COUNT(*) > 5`.
+
+</QA>
+
+<QA q="Why can you not use a column alias in WHERE?">
+
+Because of the logical order of execution: `FROM`, then `WHERE`, then `SELECT`. The alias is created in the `SELECT` step, which comes later. Use the original expression, or wrap the query in a subquery or CTE.
+
+</QA>
+
+<QA q="How does WHERE affect performance?">
+
+A condition on an indexed column lets the database jump straight to the matching rows. Wrapping the column in a function, such as `WHERE YEAR(hire_date) = 2023`, usually prevents index use; a range like `hire_date >= '2023-01-01' AND hire_date < '2024-01-01'` keeps it.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which query finds employees in Mumbai?',
+      options: [
+        "SELECT * FROM employees WHERE city = 'Mumbai';",
+        'SELECT * FROM employees WHERE city = Mumbai;',
+        "SELECT * FROM employees HAVING city = 'Mumbai';",
+        "SELECT * WHERE city = 'Mumbai' FROM employees;",
+      ],
+      answer: 0,
+      why: 'WHERE comes after FROM, and text values need single quotes.',
+    },
+    {
+      q: 'Which operator means "not equal to"?',
+      options: ['=', '<>', '=>', '!!'],
+      answer: 1,
+      why: '<> is the standard not-equal operator. != also works in most databases.',
+    },
+    {
+      q: 'What happens if you run DELETE FROM orders; with no WHERE?',
+      options: ['Nothing', 'One row is deleted', 'All rows are deleted', 'A syntax error'],
+      answer: 2,
+      why: 'Without WHERE, the statement applies to every row in the table.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Condition |
+| --- | --- |
+| Equal | `WHERE city = 'Pune'` |
+| Not equal | `WHERE city <> 'Pune'` |
+| Bigger than | `WHERE salary > 80000` |
+| From a date | `WHERE hire_date >= '2022-01-01'` |
+| Two conditions | `WHERE a = 1 AND b = 2` |
+| Either condition | `WHERE a = 1 OR b = 2` |
+| Missing value | `WHERE email IS NULL` |
+
+Order: `SELECT` ... `FROM` ... `WHERE` ... `ORDER BY` ... `LIMIT`
+
+</CheatSheet>

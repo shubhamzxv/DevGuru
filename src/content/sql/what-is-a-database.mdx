@@ -1,0 +1,184 @@
+---
+id: sql-what-is-a-database
+title: What is a database?
+summary: A database is an organised place to store data so that programs can save it, find it and change it quickly.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a kirana shop owner's **khata** (account book). He writes who bought what, when, and how much is due. When a customer comes, he flips to the right page and finds the amount in seconds.
+
+A **database** is that account book for a computer program, only much bigger and much faster.
+
+</Analogy>
+
+## Simple explanation
+
+A **database** is an organised collection of data, stored so that a program can add to it, search it and update it.
+
+Variables in a program are lost when the program stops. A database keeps the data safely on disk.
+
+A **DBMS** (Database Management System) is the software that runs the database. Examples are **MySQL**, **PostgreSQL** and **SQLite**. You do not touch the files yourself. You ask the DBMS, and it does the work.
+
+A **relational database** stores data in **tables**, like sheets in Excel, with rows and columns. Tables can be linked to each other. A DBMS for relational data is called an **RDBMS**.
+
+**SQL** (Structured Query Language) is the language you use to talk to a relational database. A single request written in SQL is called a **query**.
+
+Why not just use an Excel file?
+
+- A database handles millions of rows quickly
+- Many users and programs can use it at the same time
+- It checks rules, such as "price cannot be negative"
+- It keeps data safe if the power fails in the middle of a change
+
+This site has a sample shop database with six tables. Every SQL playground uses it.
+
+## Code example
+
+```sql
+-- Ask the database for three columns from the employees table
+SELECT name, city, salary
+FROM employees
+LIMIT 5;
+```
+
+```output
+name          | city      | salary
+--------------+-----------+-------
+Anita Rao     | Bengaluru | 185000
+Vikram Shah   | Mumbai    | 150000
+Meera Nair    | Delhi     | 120000
+Rohit Verma   | Bengaluru | 140000
+Asha Kulkarni | Pune      | 140000
+```
+
+<Playground kind="sql">
+
+```sql
+-- These are the tables in the sample database.
+SELECT name AS table_name
+FROM sqlite_master
+WHERE type = 'table'
+ORDER BY name;
+
+-- Try it: replace everything with  SELECT * FROM departments;
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Thinking SQL and MySQL are the same thing">
+
+<Wrong>
+
+```text
+"I know SQL" and "I know MySQL" mean exactly the same.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+SQL   = the language (SELECT, INSERT, ...)
+MySQL = one database product that understands SQL
+```
+
+</Right>
+
+SQL is the language. MySQL, PostgreSQL and SQLite are different products that all speak it, with small differences.
+
+</Mistake>
+
+<Mistake title="Forgetting the semicolon between two queries">
+
+<Wrong>
+
+```sql
+SELECT name FROM departments
+SELECT name FROM customers;   -- Error: syntax error
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM departments;
+SELECT name FROM customers;
+```
+
+</Right>
+
+A semicolon ends a statement. Without it, the database reads both lines as one broken query.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a database and a DBMS?">
+
+A **database** is the stored data itself. A **DBMS** is the software that creates, reads, updates and protects that data, and controls who can access it. MySQL is a DBMS; the `shop` data inside it is a database.
+
+</QA>
+
+<QA q="What is an RDBMS?">
+
+A Relational Database Management System. It stores data in tables made of rows and columns, links tables through keys, and uses SQL. Examples: MySQL, PostgreSQL, Oracle, SQL Server, SQLite.
+
+</QA>
+
+<QA q="What is SQL, and what are its main groups of commands?">
+
+SQL is the standard language for relational databases. Its commands are grouped as: **DDL** (define structure: `CREATE`, `ALTER`, `DROP`), **DML** (change data: `INSERT`, `UPDATE`, `DELETE`), **DQL** (read data: `SELECT`), **DCL** (permissions: `GRANT`, `REVOKE`) and **TCL** (transactions: `COMMIT`, `ROLLBACK`).
+
+</QA>
+
+<QA q="Why use a database and not files?">
+
+Files have no fast search, no protection when two programs write at once, no rules on the data, and no safe recovery after a crash. A DBMS provides indexing, concurrency control, constraints, transactions, backup and security.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does SQL stand for?',
+      options: ['Simple Query List', 'Structured Query Language', 'Stored Question Logic', 'System Queue Language'],
+      answer: 1,
+      why: 'SQL is the Structured Query Language used to talk to relational databases.',
+    },
+    {
+      q: 'Which of these is a DBMS?',
+      options: ['SELECT', 'PostgreSQL', 'A table', 'A row'],
+      answer: 1,
+      why: 'PostgreSQL is database software. SELECT is a command, and tables and rows are parts of a database.',
+    },
+    {
+      q: 'How does a relational database store data?',
+      options: ['In one long text file', 'In tables with rows and columns', 'Only in images', 'In program variables'],
+      answer: 1,
+      why: 'Relational databases organise data into tables that can be linked to each other.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Word | Meaning |
+| --- | --- |
+| Database | Organised, stored data |
+| DBMS | Software that manages a database |
+| RDBMS | DBMS that uses linked tables |
+| SQL | Language for relational databases |
+| Query | One request written in SQL |
+| Table | Data in rows and columns |
+| DDL / DML / DQL | Define structure / change data / read data |
+
+</CheatSheet>

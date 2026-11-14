@@ -1,0 +1,236 @@
+---
+id: sql-distinct
+title: DISTINCT
+summary: DISTINCT removes duplicate rows from a result, so each different value or combination appears only once.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a teacher asking "which cities do our students come from?". Thirty students answer, and many say "Delhi". She writes each city on the board **only once**.
+
+`DISTINCT` does that for a query result.
+
+</Analogy>
+
+## Simple explanation
+
+A query can return the same value many times. `DISTINCT`, written right after `SELECT`, keeps only one copy of each.
+
+`SELECT DISTINCT city FROM employees;`
+
+With more than one column, `DISTINCT` looks at the **whole row**. A row is removed only if every selected column matches another row. So `SELECT DISTINCT city, department_id` returns each different **pair**.
+
+`DISTINCT` can also be used inside an aggregate function:
+
+- `COUNT(city)` counts rows that have a city
+- `COUNT(DISTINCT city)` counts how many **different** cities there are
+
+All NULLs are treated as one value by `DISTINCT`, so NULL appears at most once.
+
+`DISTINCT` has a cost: the database must compare or sort rows to find duplicates. Do not add it out of habit. If duplicates appear because of a wrong JOIN, fix the JOIN.
+
+## Code example
+
+```sql
+SELECT DISTINCT category          -- each category once
+FROM products
+ORDER BY category;
+```
+
+```output
+category
+-----------
+Clothing
+Electronics
+Home
+Stationery
+```
+
+```sql
+SELECT DISTINCT department_id, city   -- each different PAIR once
+FROM employees
+WHERE department_id IN (1, 2)
+ORDER BY department_id, city;
+```
+
+```output
+department_id | city
+--------------+----------
+1             | Bengaluru
+1             | Delhi
+1             | Hyderabad
+1             | Pune
+2             | Chennai
+2             | Kochi
+2             | Mumbai
+```
+
+```sql
+SELECT
+  COUNT(*)              AS all_rows,
+  COUNT(city)           AS rows_with_city,
+  COUNT(DISTINCT city)  AS different_cities
+FROM employees;
+```
+
+```output
+all_rows | rows_with_city | different_cities
+---------+----------------+-----------------
+21       | 21             | 9
+```
+
+<Playground kind="sql">
+
+```sql
+-- Which customers have placed at least one order?
+SELECT DISTINCT customer_id
+FROM orders
+ORDER BY customer_id;
+
+-- Try it: count how many different customers have ordered.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Thinking DISTINCT applies to one column only">
+
+<Wrong>
+
+```sql
+SELECT DISTINCT city, name FROM employees ORDER BY city LIMIT 4;   -- cities repeat: every (city, name) pair is unique
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT DISTINCT city FROM employees ORDER BY city LIMIT 4;
+```
+
+</Right>
+
+`DISTINCT` works on the full row. Adding a second column usually brings the duplicates back.
+
+</Mistake>
+
+<Mistake title="Writing DISTINCT in the wrong place">
+
+<Wrong>
+
+```sql
+SELECT name, DISTINCT city FROM employees;   -- Error: syntax error
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT DISTINCT city FROM employees ORDER BY city LIMIT 4;
+```
+
+</Right>
+
+`DISTINCT` goes immediately after `SELECT`, or inside an aggregate like `COUNT(DISTINCT city)`.
+
+</Mistake>
+
+<Mistake title="Using DISTINCT to hide a JOIN problem">
+
+<Wrong>
+
+```sql
+SELECT DISTINCT c.name
+FROM customers AS c
+JOIN orders AS o ON o.customer_id = c.id;   -- works, but joins every order just to throw rows away
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT c.name
+FROM customers AS c
+WHERE EXISTS (SELECT 1 FROM orders AS o WHERE o.customer_id = c.id);
+```
+
+</Right>
+
+If the question is "who has at least one order", `EXISTS` says it directly and stops at the first match.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What does DISTINCT do?">
+
+It removes duplicate rows from the result set. Two rows are duplicates when all selected columns are equal. NULL values are treated as equal to each other for this purpose.
+
+</QA>
+
+<QA q="What is the difference between DISTINCT and GROUP BY?">
+
+Both can return unique values. `DISTINCT` only removes duplicates. `GROUP BY` forms groups so that aggregate functions (`COUNT`, `SUM`, `AVG`) can be calculated for each group. `SELECT DISTINCT city` and `SELECT city ... GROUP BY city` give the same rows, and databases usually run them the same way.
+
+</QA>
+
+<QA q="What is the difference between COUNT(*) and COUNT(DISTINCT column)?">
+
+`COUNT(*)` counts all rows. `COUNT(DISTINCT column)` counts the number of different non-NULL values in that column.
+
+</QA>
+
+<QA q="Is DISTINCT expensive?">
+
+It can be. The database must sort or hash all result rows to find duplicates. On large results this uses memory and time. An index on the columns helps, and often a better query (for example `EXISTS` in place of a JOIN plus DISTINCT) avoids it.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where is DISTINCT written?',
+      options: ['After FROM', 'Right after SELECT', 'At the end of the query', 'After WHERE'],
+      answer: 1,
+      why: 'It follows SELECT directly: SELECT DISTINCT column ...',
+    },
+    {
+      q: 'What does  SELECT DISTINCT city, department_id  return?',
+      options: [
+        'Each city once',
+        'Each department once',
+        'Each different combination of city and department once',
+        'An error',
+      ],
+      answer: 2,
+      why: 'DISTINCT compares whole rows, so it keeps each unique pair.',
+    },
+    {
+      q: 'Which expression counts the number of different cities?',
+      options: ['COUNT(city)', 'COUNT(*)', 'COUNT(DISTINCT city)', 'DISTINCT COUNT(city)'],
+      answer: 2,
+      why: 'DISTINCT inside COUNT makes it count unique values only.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Unique values | `SELECT DISTINCT city FROM employees;` |
+| Unique pairs | `SELECT DISTINCT city, department_id FROM employees;` |
+| How many unique | `SELECT COUNT(DISTINCT city) FROM employees;` |
+| Unique and sorted | `SELECT DISTINCT city FROM employees ORDER BY city;` |
+| "Has at least one" | Prefer `EXISTS` to JOIN + DISTINCT |
+
+</CheatSheet>

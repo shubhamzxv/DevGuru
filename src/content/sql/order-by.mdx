@@ -1,0 +1,245 @@
+---
+id: sql-order-by
+title: ORDER BY
+summary: ORDER BY sorts the rows of a result by one or more columns, in ascending or descending order.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of the merit list on a school notice board. The names are arranged by marks, highest first. When two students have the same marks, they are arranged by name.
+
+`ORDER BY` arranges rows in the same way: by one column, and then by another to break ties.
+
+</Analogy>
+
+## Simple explanation
+
+A table has **no guaranteed order**. If you do not ask for an order, the database may return rows in any sequence.
+
+`ORDER BY` sorts the result. It is written near the end of the query, after `WHERE`.
+
+- `ASC` means **ascending**: small to large, A to Z, old to new. It is the default
+- `DESC` means **descending**: large to small, Z to A, new to old
+
+You can sort by several columns. The second column is used only when rows are equal on the first. Each column has its own `ASC` or `DESC`.
+
+You can also sort by:
+
+- A calculation, such as `price * stock`
+- A column **alias** from `SELECT`. This works because `ORDER BY` runs after `SELECT`
+- A column that is not in the `SELECT` list
+
+Where do NULLs go? In SQLite and MySQL, NULLs come **first** in ascending order. In PostgreSQL and Oracle they come **last**.
+
+Sorting is one of the slowest steps on a big table. An index on the sort column lets the database skip the sort.
+
+## Code example
+
+```sql
+SELECT name, salary
+FROM employees
+ORDER BY salary DESC             -- highest salary first
+LIMIT 5;
+```
+
+```output
+name          | salary
+--------------+-------
+Anita Rao     | 185000
+Vikram Shah   | 150000
+Rohit Verma   | 140000
+Asha Kulkarni | 140000
+Farah Sheikh  | 130000
+```
+
+```sql
+SELECT name, city, salary
+FROM employees
+WHERE department_id = 1
+ORDER BY city ASC,               -- first by city, A to Z
+         salary DESC;            -- inside each city, highest salary first
+```
+
+```output
+name          | city      | salary
+--------------+-----------+-------
+Anita Rao     | Bengaluru | 185000
+Rohit Verma   | Bengaluru | 140000
+Kabir Singh   | Bengaluru | 95000
+Neha Gupta    | Delhi     | 88000
+Sana Khan     | Hyderabad | 72000
+Asha Kulkarni | Pune      | 140000
+Arjun Mehta   | Pune      | 72000
+```
+
+```sql
+SELECT name, price * stock AS stock_value
+FROM products
+ORDER BY stock_value DESC        -- sorting by an alias is allowed
+LIMIT 3;
+```
+
+```output
+name                | stock_value
+--------------------+------------
+Mechanical Keyboard | 112455.0
+Running Shoes       | 89970.0
+USB-C Cable         | 89700.0
+```
+
+<Playground kind="sql">
+
+```sql
+SELECT name, hire_date, city
+FROM employees
+ORDER BY hire_date DESC
+LIMIT 5;
+
+-- Try it: show the five employees who joined FIRST.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Expecting an order without ORDER BY">
+
+<Wrong>
+
+```sql
+SELECT name, salary FROM employees LIMIT 3;   -- "top 3"? No: just any 3 rows
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, salary FROM employees ORDER BY salary DESC LIMIT 3;
+```
+
+</Right>
+
+Without `ORDER BY`, the order is not defined and can change. "Top N" always needs a sort.
+
+</Mistake>
+
+<Mistake title="Writing DESC once for two columns">
+
+<Wrong>
+
+```sql
+SELECT name, department_id, salary FROM employees
+ORDER BY department_id, salary DESC LIMIT 4;   -- only salary is descending
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, department_id, salary FROM employees
+ORDER BY department_id DESC, salary DESC LIMIT 4;
+```
+
+</Right>
+
+`DESC` applies only to the column just before it. Write it for each column.
+
+</Mistake>
+
+<Mistake title="Putting ORDER BY before WHERE">
+
+<Wrong>
+
+```sql
+SELECT name FROM employees ORDER BY name WHERE city = 'Pune';   -- Error: syntax error
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM employees WHERE city = 'Pune' ORDER BY name;
+```
+
+</Right>
+
+The clause order is fixed: `WHERE`, then `ORDER BY`, then `LIMIT`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the default sort order of ORDER BY?">
+
+Ascending (`ASC`). Without an `ORDER BY` clause at all, there is no default order: the database may return rows in any sequence, and it can differ between runs.
+
+</QA>
+
+<QA q="Can you sort by a column that is not in the SELECT list?">
+
+Yes, in a normal query. The exception is `SELECT DISTINCT`, where the sort columns must appear in the select list, because rows are de-duplicated first.
+
+</QA>
+
+<QA q="How do you sort in a custom order, for example status placed, shipped, delivered?">
+
+Sort by a `CASE` expression that maps each value to a number.
+
+```sql
+SELECT id, status FROM orders
+ORDER BY CASE status WHEN 'placed' THEN 1 WHEN 'shipped' THEN 2 WHEN 'delivered' THEN 3 ELSE 4 END
+LIMIT 5;
+```
+
+</QA>
+
+<QA q="How does ORDER BY affect performance?">
+
+Sorting needs memory and time that grow with the number of rows; large sorts spill to disk. If an index exists on the sort columns in the same order, the database can read rows already sorted. `ORDER BY` with `LIMIT` on an indexed column is very fast because it stops early.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which keyword sorts from highest to lowest?',
+      options: ['ASC', 'DESC', 'TOP', 'HIGH'],
+      answer: 1,
+      why: 'DESC means descending: largest first.',
+    },
+    {
+      q: 'In  ORDER BY city, salary DESC  how is city sorted?',
+      options: ['Descending', 'Ascending', 'Not sorted', 'Randomly'],
+      answer: 1,
+      why: 'DESC applies only to salary. city uses the default, ascending.',
+    },
+    {
+      q: 'Where does ORDER BY go in a query?',
+      options: ['Before FROM', 'Between FROM and WHERE', 'After WHERE and before LIMIT', 'After LIMIT'],
+      answer: 2,
+      why: 'The order is SELECT, FROM, WHERE, ORDER BY, LIMIT.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Small to large | `ORDER BY salary` |
+| Large to small | `ORDER BY salary DESC` |
+| Two levels | `ORDER BY city, salary DESC` |
+| By a calculation | `ORDER BY price * stock DESC` |
+| By an alias | `ORDER BY stock_value` |
+| Top 3 | `ORDER BY salary DESC LIMIT 3` |
+| Custom order | `ORDER BY CASE status WHEN 'placed' THEN 1 ... END` |
+
+</CheatSheet>

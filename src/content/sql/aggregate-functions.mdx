@@ -1,0 +1,234 @@
+---
+id: sql-aggregate-functions
+title: Aggregate functions (COUNT, SUM, AVG, MIN, MAX)
+summary: An aggregate function takes many rows and returns one value, such as a count, a total or an average.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a class teacher after an exam. She does not read out all 40 marks to the principal. She says: 40 students appeared, the average was 68, the highest was 96 and the lowest was 31.
+
+Many values became a few summary numbers. That is what **aggregate functions** do.
+
+</Analogy>
+
+## Simple explanation
+
+A normal function works on one row at a time. An **aggregate function** works on **many rows** and gives back **one value**.
+
+The five you will use most:
+
+| Function | Returns |
+| --- | --- |
+| `COUNT(*)` | The number of rows |
+| `SUM(column)` | The total of the values |
+| `AVG(column)` | The average of the values |
+| `MIN(column)` | The smallest value |
+| `MAX(column)` | The largest value |
+
+Without `GROUP BY`, the whole table (after `WHERE`) is treated as one group, and you get one row back.
+
+Rules to remember:
+
+- Aggregate functions **skip NULL** values. Only `COUNT(*)` counts every row
+- `COUNT(column)` counts rows where that column is not NULL
+- `COUNT(DISTINCT column)` counts different values
+- `MIN` and `MAX` also work on text and dates
+- You cannot use an aggregate in `WHERE`. Use `HAVING` for that
+
+You also cannot mix a plain column with an aggregate unless that column is in `GROUP BY`. "Give me the name and the average salary" makes no sense: which name?
+
+## Code example
+
+```sql
+SELECT
+  COUNT(*)              AS employees,       -- number of rows
+  SUM(salary)           AS total_salary,    -- total
+  ROUND(AVG(salary))    AS average_salary,  -- average
+  MIN(salary)           AS lowest,          -- smallest
+  MAX(salary)           AS highest          -- largest
+FROM employees;
+```
+
+```output
+employees | total_salary | average_salary | lowest | highest
+----------+--------------+----------------+--------+--------
+21        | 1881000      | 89571.0        | 42000  | 185000
+```
+
+```sql
+SELECT
+  COUNT(*)                       AS all_rows,
+  COUNT(department_id)           AS with_department,   -- NULLs are skipped
+  COUNT(DISTINCT department_id)  AS departments_used,
+  MIN(hire_date)                 AS first_hire,        -- works on dates
+  MAX(name)                      AS last_name_a_to_z   -- and on text
+FROM employees
+WHERE city <> 'Mumbai';                                -- WHERE runs first
+```
+
+```output
+all_rows | with_department | departments_used | first_hire | last_name_a_to_z
+---------+-----------------+------------------+------------+-----------------
+17       | 15              | 5                | 2016-04-11 | Zoya Fernandes
+```
+
+<Playground kind="sql">
+
+```sql
+SELECT
+  COUNT(*)                          AS items_sold_lines,
+  SUM(quantity)                     AS units_sold,
+  SUM(quantity * unit_price)        AS revenue,
+  ROUND(AVG(quantity * unit_price), 2) AS average_line_value
+FROM order_items;
+
+-- Try it: find the cheapest and the most expensive product price.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using an aggregate in WHERE">
+
+<Wrong>
+
+```sql
+SELECT name FROM employees WHERE salary > AVG(salary);   -- Error: misuse of aggregate function AVG()
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM employees
+WHERE salary > (SELECT AVG(salary) FROM employees)
+LIMIT 4;
+```
+
+</Right>
+
+`WHERE` checks one row at a time, before any totals exist. Get the aggregate from a subquery.
+
+</Mistake>
+
+<Mistake title="Mixing a plain column with an aggregate">
+
+<Wrong>
+
+```sql
+SELECT name, MAX(salary) FROM employees;   -- Error in PostgreSQL and strict MySQL; SQLite picks a row for you
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, salary FROM employees ORDER BY salary DESC LIMIT 1;
+```
+
+</Right>
+
+To get the row that has the maximum, sort and limit, or use a subquery. Do not rely on a lenient database.
+
+</Mistake>
+
+<Mistake title="Forgetting that AVG skips NULLs">
+
+<Wrong>
+
+```sql
+SELECT AVG(manager_id) AS avg_skipping_nulls FROM employees;   -- divides by 15, not 21
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT AVG(COALESCE(manager_id, 0)) AS avg_counting_nulls_as_zero FROM employees;
+```
+
+</Right>
+
+`AVG` ignores rows with NULL. If a missing value should count as zero, say so with `COALESCE`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are aggregate functions?">
+
+Functions that operate on a set of rows and return a single value: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`. They are normally used with `GROUP BY` to get one result per group, and they ignore NULLs (except `COUNT(*)`).
+
+</QA>
+
+<QA q="What is the difference between COUNT(*), COUNT(1) and COUNT(column)?">
+
+`COUNT(*)` and `COUNT(1)` both count all rows and perform the same. `COUNT(column)` counts only rows where the column is not NULL.
+
+</QA>
+
+<QA q="Can you use aggregate functions in the WHERE clause?">
+
+No. `WHERE` filters rows before grouping and aggregation happen. To filter on an aggregate, use `HAVING`, or compare against a subquery that computes the aggregate.
+
+</QA>
+
+<QA q="How do you find employees who earn more than the average salary?">
+
+Compare each salary with the average from a subquery.
+
+```sql
+SELECT name, salary FROM employees
+WHERE salary > (SELECT AVG(salary) FROM employees)
+ORDER BY salary DESC LIMIT 3;
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A table has 10 rows, and 3 of them have NULL in the email column. What does COUNT(email) return?',
+      options: ['10', '7', '3', 'NULL'],
+      answer: 1,
+      why: 'COUNT(column) skips NULL values, so it counts the 7 rows that have an email.',
+    },
+    {
+      q: 'Which function gives the total of a column?',
+      options: ['COUNT', 'SUM', 'AVG', 'MAX'],
+      answer: 1,
+      why: 'SUM adds up all the non-NULL values.',
+    },
+    {
+      q: 'How many rows does  SELECT MAX(salary) FROM employees  return?',
+      options: ['One', 'One per employee', 'One per department', 'None'],
+      answer: 0,
+      why: 'Without GROUP BY, the whole table is one group, so there is one result row.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Number of rows | `COUNT(*)` |
+| Rows with a value | `COUNT(email)` |
+| Different values | `COUNT(DISTINCT city)` |
+| Total | `SUM(salary)` |
+| Average | `AVG(salary)` |
+| Smallest, largest | `MIN(salary)`, `MAX(salary)` |
+| Rounded average | `ROUND(AVG(salary), 2)` |
+| Filter on a total | `HAVING SUM(x) > 100` |
+
+</CheatSheet>

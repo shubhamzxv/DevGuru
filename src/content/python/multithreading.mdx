@@ -1,0 +1,309 @@
+---
+id: python-multithreading
+title: Multithreading
+summary: Multithreading runs several tasks inside one program at overlapping times, which is ideal when tasks spend most of their time waiting.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of one cook making three dishes. He puts rice on the stove, and while it boils he chops vegetables, and while those fry he kneads dough. He is one person, but no time is wasted standing and watching the rice.
+
+**Multithreading** is that cook: one program switching between tasks while others are waiting.
+
+</Analogy>
+
+## Simple explanation
+
+A **thread** is a separate line of work inside one program. A program always has one thread, the **main thread**. You can start more.
+
+All threads of a program **share the same memory**. They can read and change the same variables. This is convenient, and it is also where bugs come from.
+
+Because of the GIL, only one thread runs Python code at a time. So threads do **not** speed up heavy calculations. They help with **I/O-bound** work: calling APIs, querying a database, downloading files. While one thread waits for a reply, another thread runs.
+
+The basics, from the `threading` module:
+
+- `Thread(target=function, args=(...))` creates a thread
+- `start()` begins running it
+- `join()` waits until it finishes
+
+The modern, simpler tool is `ThreadPoolExecutor` from `concurrent.futures`. It manages a group of threads (a **pool**) and returns results in order.
+
+When two threads change the same data at the same time, the result can be wrong. This is a **race condition**. A `Lock` fixes it: only one thread can hold the lock at a time.
+
+Threads do not run in this page's browser playground, so this topic has no "Try it yourself" box. Run the code on your computer.
+
+## Code example
+
+```python
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+def fetch(order_id):                          # pretend this calls a slow API
+    time.sleep(0.2)                           # waiting: other threads can run
+    return f"order {order_id} fetched"
+
+start = time.perf_counter()
+threads = [threading.Thread(target=fetch, args=(n,)) for n in range(1, 4)]
+for t in threads:
+    t.start()                                 # begin all three
+for t in threads:
+    t.join()                                  # wait for all three
+elapsed = time.perf_counter() - start
+print("3 waits of 0.2s finished in under 0.5s:", elapsed < 0.5)
+
+with ThreadPoolExecutor(max_workers=3) as pool:        # the easier way
+    results = list(pool.map(fetch, [1, 2, 3]))         # results come back in order
+print(results)
+
+balance = 0
+lock = threading.Lock()
+
+def deposit(times):
+    global balance
+    for _ in range(times):
+        with lock:                            # one thread at a time in this block
+            balance += 1
+
+workers = [threading.Thread(target=deposit, args=(50000,)) for _ in range(4)]
+for w in workers:
+    w.start()
+for w in workers:
+    w.join()
+print(balance)                                # exact, thanks to the lock
+
+print(threading.current_thread().name, threading.active_count())
+```
+
+```output
+3 waits of 0.2s finished in under 0.5s: True
+['order 1 fetched', 'order 2 fetched', 'order 3 fetched']
+200000
+MainThread 1
+```
+
+<Visual caption="Three threads each wait 0.2 seconds for a reply. Because the waits overlap, the total time is about 0.2 seconds, not 0.6.">
+  <svg viewBox="0 0 340 120" width="340" height="120" role="img" aria-label="Three threads start together, each waits 0.2 seconds, and all finish at about the same time">
+    <text x="10" y="28" fontSize="12" fill="#475569">Thread 1</text>
+    <rect x="80" y="14" width="200" height="20" rx="4" fill="#c7d2fe" stroke="#4f46e5" strokeWidth="2" />
+    <text x="180" y="28" textAnchor="middle" fontSize="11" fill="#1e1b4b">waiting for order 1</text>
+    <text x="10" y="58" fontSize="12" fill="#475569">Thread 2</text>
+    <rect x="80" y="44" width="200" height="20" rx="4" fill="#fde68a" stroke="#d97706" strokeWidth="2" />
+    <text x="180" y="58" textAnchor="middle" fontSize="11" fill="#78350f">waiting for order 2</text>
+    <text x="10" y="88" fontSize="12" fill="#475569">Thread 3</text>
+    <rect x="80" y="74" width="200" height="20" rx="4" fill="#bbf7d0" stroke="#16a34a" strokeWidth="2" />
+    <text x="180" y="88" textAnchor="middle" fontSize="11" fill="#14532d">waiting for order 3</text>
+    <line x1="80" y1="104" x2="280" y2="104" stroke="#94a3b8" strokeWidth="2" />
+    <text x="80" y="117" fontSize="10" fill="#475569">0s</text>
+    <text x="262" y="117" fontSize="10" fill="#475569">0.2s</text>
+  </svg>
+</Visual>
+
+<Mistakes>
+
+<Mistake title="Calling the function when creating the thread">
+
+<Wrong>
+
+```python
+import threading
+
+def work():
+    print("working")
+
+t = threading.Thread(target=work())   # work() runs right now, in the main thread
+t.start()
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import threading
+
+def work():
+    print("working")
+
+t = threading.Thread(target=work)     # pass the function itself
+t.start()
+t.join()
+```
+
+</Right>
+
+`target` needs the function, without brackets. Pass arguments with `args=(...)`.
+
+</Mistake>
+
+<Mistake title="Forgetting to join the threads">
+
+<Wrong>
+
+```python
+import threading
+import time
+
+results = []
+
+def work():
+    time.sleep(0.1)
+    results.append("done")
+
+threading.Thread(target=work).start()
+print(results)   # []
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import threading
+import time
+
+results = []
+
+def work():
+    time.sleep(0.1)
+    results.append("done")
+
+t = threading.Thread(target=work)
+t.start()
+t.join()
+print(results)   # ['done']
+```
+
+</Right>
+
+Without `join()`, the main thread continues before the worker has finished.
+
+</Mistake>
+
+<Mistake title="Changing shared data without a lock">
+
+<Wrong>
+
+```python
+import threading
+
+count = 0
+
+def add():
+    global count
+    for _ in range(100000):
+        count += 1
+
+threads = [threading.Thread(target=add) for _ in range(4)]
+for t in threads: t.start()
+for t in threads: t.join()
+print(count <= 400000)   # True: some updates can be lost
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import threading
+
+count = 0
+lock = threading.Lock()
+
+def add():
+    global count
+    for _ in range(100000):
+        with lock:
+            count += 1
+
+threads = [threading.Thread(target=add) for _ in range(4)]
+for t in threads: t.start()
+for t in threads: t.join()
+print(count)   # 400000
+```
+
+</Right>
+
+`count += 1` is read, add, write. Two threads can read the same old value. A lock makes the update safe.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a thread?">
+
+The smallest unit of execution inside a process. Threads of the same process share its memory and resources but each has its own call stack. They are lighter than processes: quicker to create and cheaper to switch between.
+
+</QA>
+
+<QA q="When is multithreading useful in Python?">
+
+For I/O-bound tasks: HTTP requests, database queries, file and network operations. The GIL is released while a thread waits, so other threads make progress. It does not help CPU-bound tasks in CPython.
+
+</QA>
+
+<QA q="What is a race condition and how do you prevent it?">
+
+A bug where the result depends on the unpredictable timing of threads that read and write the same data. Prevent it with a `threading.Lock` around the critical section, or by using thread-safe structures such as `queue.Queue`, or by not sharing mutable state at all.
+
+</QA>
+
+<QA q="What is a deadlock?">
+
+Two or more threads wait for each other forever. Example: thread A holds lock 1 and wants lock 2, while thread B holds lock 2 and wants lock 1. Avoid it by always taking locks in the same order, using timeouts, and keeping locked sections short.
+
+</QA>
+
+<QA q="What is a daemon thread?">
+
+A background thread that does not keep the program alive. When all non-daemon threads finish, the program exits and daemon threads are stopped abruptly. Set it with `Thread(..., daemon=True)`. Use it for background helpers, not for work that must complete.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which method waits for a thread to finish?',
+      options: ['start()', 'run()', 'join()', 'wait()'],
+      answer: 2,
+      why: 'join() blocks until the thread has completed.',
+    },
+    {
+      q: 'What do threads of the same program share?',
+      options: ['Nothing', 'The same memory', 'Only the screen', 'A separate interpreter each'],
+      answer: 1,
+      why: 'Threads live in one process and share its memory, which is why locks are needed.',
+    },
+    {
+      q: 'Which task benefits most from threads in Python?',
+      options: [
+        'Adding one billion numbers',
+        'Calling 50 web APIs',
+        'Sorting a list in memory',
+        'Compressing a video with pure Python',
+      ],
+      answer: 1,
+      why: 'API calls are I/O-bound: the threads spend their time waiting, and the waits overlap.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Create a thread | `t = Thread(target=func, args=(1,))` |
+| Start it | `t.start()` |
+| Wait for it | `t.join()` |
+| Pool of threads | `with ThreadPoolExecutor(max_workers=5) as pool:` |
+| Run many, get results | `pool.map(func, items)` |
+| Protect shared data | `with lock:` |
+| Create a lock | `lock = threading.Lock()` |
+| Background thread | `Thread(..., daemon=True)` |
+
+</CheatSheet>

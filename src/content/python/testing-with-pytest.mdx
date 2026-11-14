@@ -1,0 +1,301 @@
+---
+id: python-testing-with-pytest
+title: Testing with pytest
+summary: A test is code that checks your code, and pytest is the most popular tool for writing and running tests in Python.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a mechanic after a car service. He does not just hand over the keys. He starts the engine, presses the brakes, switches on the lights and checks the horn. Each check is small and has a clear pass or fail.
+
+**Tests** are those checks for your code. You run them every time you change something.
+
+</Analogy>
+
+## Simple explanation
+
+A **test** is a small function that calls your code and checks the result. If the result is wrong, the test **fails** and tells you where.
+
+Tests let you change code without fear. If you break something, a test shows it in seconds, before your users find it.
+
+**pytest** is a testing tool you install with `pip install pytest`. Its rules are simple:
+
+- Put tests in files named `test_something.py`
+- Name each test function `test_something`
+- Check results with plain `assert`. If the condition is false, the test fails
+- Run `pytest` in the terminal. It finds and runs every test
+
+Useful features:
+
+- `pytest.raises(ErrorType)` checks that code raises the expected exception
+- `@pytest.mark.parametrize` runs the same test with many inputs
+- A **fixture** (`@pytest.fixture`) prepares something a test needs, such as sample data or a database connection. A test receives it by naming it as a parameter
+- `pytest.approx()` compares floats safely
+
+A good test follows three steps, known as **Arrange, Act, Assert**: set up the data, call the code, check the result.
+
+A **unit test** checks one small piece, such as one function, on its own. An **integration test** checks that several pieces work together.
+
+## Code example
+
+Save this as `test_shop.py`:
+
+```python
+import pytest
+
+
+def apply_discount(price, percent):                 # the code we want to test
+    if not 0 <= percent <= 100:
+        raise ValueError("percent must be between 0 and 100")
+    return round(price - price * percent / 100, 2)
+
+
+def test_normal_discount():                         # name starts with test_
+    assert apply_discount(200, 10) == 180           # plain assert
+
+
+def test_zero_discount_keeps_price():
+    assert apply_discount(99.5, 0) == 99.5
+
+
+def test_invalid_percent_raises():
+    with pytest.raises(ValueError):                 # passes only if ValueError is raised
+        apply_discount(100, 150)
+
+
+@pytest.mark.parametrize(                           # one test, many inputs
+    "price, percent, expected",
+    [(100, 50, 50), (80, 25, 60), (10, 100, 0)],
+)
+def test_many_cases(price, percent, expected):
+    assert apply_discount(price, percent) == expected
+
+
+@pytest.fixture
+def cart():                                         # fixture: prepares data for a test
+    return {"pen": 10, "bag": 700}
+
+
+def test_cart_total(cart):                          # pytest passes the fixture in
+    assert sum(cart.values()) == 710
+```
+
+Run it in the terminal:
+
+```bash
+pytest -v test_shop.py
+```
+
+```text
+test_shop.py::test_normal_discount PASSED
+test_shop.py::test_zero_discount_keeps_price PASSED
+test_shop.py::test_invalid_percent_raises PASSED
+test_shop.py::test_many_cases[100-50-50] PASSED
+test_shop.py::test_many_cases[80-25-60] PASSED
+test_shop.py::test_many_cases[10-100-0] PASSED
+test_shop.py::test_cart_total PASSED
+
+7 passed
+```
+
+<Playground kind="python">
+
+```python
+# pytest is a command-line tool, so here we run the same idea by hand.
+def apply_discount(price, percent):
+    if not 0 <= percent <= 100:
+        raise ValueError("percent must be between 0 and 100")
+    return round(price - price * percent / 100, 2)
+
+def test_normal_discount():
+    assert apply_discount(200, 10) == 180
+
+def test_full_discount():
+    assert apply_discount(50, 100) == 0
+
+def test_wrong_on_purpose():
+    assert apply_discount(100, 10) == 95, "expected 95"
+
+for test in [test_normal_discount, test_full_discount, test_wrong_on_purpose]:
+    try:
+        test()
+        print("PASSED", test.__name__)
+    except AssertionError as error:
+        print("FAILED", test.__name__, "-", error)
+
+# Try it: fix the last test so that all three pass.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="A test name that pytest does not find">
+
+<Wrong>
+
+```python
+def check_total():            # does not start with test_, so pytest skips it
+    assert 2 + 2 == 4
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def test_total():             # pytest collects it
+    assert 2 + 2 == 4
+```
+
+</Right>
+
+pytest only collects functions whose names start with `test_`, in files named `test_*.py` or `*_test.py`.
+
+</Mistake>
+
+<Mistake title="Comparing floats with ==">
+
+<Wrong>
+
+```python
+assert 0.1 + 0.2 == 0.3       # AssertionError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import pytest
+
+assert 0.1 + 0.2 == pytest.approx(0.3)
+```
+
+</Right>
+
+Floats are not exact. `pytest.approx()` allows a tiny difference.
+
+</Mistake>
+
+<Mistake title="Tests that depend on each other">
+
+<Wrong>
+
+```python
+cart = []
+
+def test_add():
+    cart.append("pen")
+    assert len(cart) == 1
+
+def test_empty():
+    assert cart == []         # fails if test_add ran first
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import pytest
+
+@pytest.fixture
+def cart():
+    return []                 # a fresh cart for every test
+
+def test_add(cart):
+    cart.append("pen")
+    assert len(cart) == 1
+
+def test_empty(cart):
+    assert cart == []
+```
+
+</Right>
+
+Shared state makes results depend on the order of tests. Give each test its own data with a fixture.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is pytest and why is it popular?">
+
+A testing framework for Python. It is popular because tests are plain functions with plain `assert` statements, failure messages show the actual values, and it offers fixtures, parametrization, markers and a large plugin ecosystem (`pytest-django`, `pytest-asyncio`, `pytest-cov`). It can also run tests written for `unittest`.
+
+</QA>
+
+<QA q="What is a fixture?">
+
+A function decorated with `@pytest.fixture` that provides set-up (and optional tear-down) for tests. A test requests it by listing its name as a parameter. With `yield`, code after the yield runs as clean-up. Fixtures have scopes (`function`, `class`, `module`, `session`) that control how often they are created.
+
+</QA>
+
+<QA q="What is the difference between unit tests and integration tests?">
+
+A **unit test** checks one function or class in isolation; it is fast and replaces external systems with fakes. An **integration test** checks that components work together, for example an API endpoint with a real test database. A healthy project has many unit tests and fewer integration tests.
+
+</QA>
+
+<QA q="What is mocking?">
+
+Replacing a real dependency, such as a payment gateway or an email service, with a fake object during a test. This keeps tests fast and predictable and lets you check how the dependency was called. Python provides `unittest.mock`, and pytest has the `monkeypatch` fixture.
+
+</QA>
+
+<QA q="What is the difference between pytest and unittest?">
+
+`unittest` is in the standard library and uses classes that inherit from `TestCase` with methods like `assertEqual`. pytest is a third-party tool with less boilerplate: plain functions and `assert`, more powerful fixtures and parametrization, and richer output.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What must a test function name start with for pytest to find it?',
+      options: ['check_', 'test_', 'assert_', 'run_'],
+      answer: 1,
+      why: 'pytest collects functions whose names begin with test_.',
+    },
+    {
+      q: 'Which statement checks a result in pytest?',
+      options: ['check', 'assert', 'verify', 'expect'],
+      answer: 1,
+      why: 'pytest uses the plain assert statement and reports the values when it fails.',
+    },
+    {
+      q: 'What is a fixture used for?',
+      options: [
+        'To make tests run slower',
+        'To prepare data or resources that a test needs',
+        'To skip a test',
+        'To print the results',
+      ],
+      answer: 1,
+      why: 'A fixture sets up what a test needs and hands it to the test as a parameter.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code or command |
+| --- | --- |
+| Install | `pip install pytest` |
+| Run all tests | `pytest` |
+| Show each test | `pytest -v` |
+| Stop at the first failure | `pytest -x` |
+| Run tests by name | `pytest -k "discount"` |
+| A test | `def test_name():` with `assert` |
+| Expect an error | `with pytest.raises(ValueError):` |
+| Many inputs | `@pytest.mark.parametrize("a, b", [(1, 2)])` |
+| Shared set-up | `@pytest.fixture` |
+| Compare floats | `pytest.approx(0.3)` |
+
+</CheatSheet>

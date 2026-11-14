@@ -1,0 +1,245 @@
+---
+id: python-match-case
+title: match-case
+summary: match-case compares one value against several patterns and runs the block of the first pattern that fits.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a customer-care phone menu. "Press 1 for balance, press 2 for recharge, press 3 to talk to an agent. For anything else, please try again."
+
+**match-case** is that menu in code: one value, many options, and one default.
+
+</Analogy>
+
+## Simple explanation
+
+`match` takes one value. Each `case` describes a **pattern**. Python goes from top to bottom and runs the first case whose pattern fits.
+
+It was added in **Python 3.10**. It is called **structural pattern matching**.
+
+Things a pattern can do:
+
+- Match an exact value, such as `case 200:`
+- Match any of several values with `|`, such as `case 401 | 403:`
+- Match the shape of a list or tuple and pull out its parts, such as `case [x, y]:`
+- Match a dictionary that has certain keys
+- Add an extra condition with `if`. This is called a **guard**
+- `case _:` matches anything. Use it last, as the default
+
+Only one case runs. There is no "fall through" to the next case.
+
+For two or three simple checks, `if`-`elif` is fine. `match` is clearer when you compare one value against many options or shapes.
+
+## Code example
+
+```python
+def describe(status):
+    match status:
+        case 200:                        # exact value
+            return "OK"
+        case 401 | 403:                  # either of these
+            return "Not allowed"
+        case 404:
+            return "Not found"
+        case _:                          # default: anything else
+            return "Unknown"
+
+print(describe(200), describe(403), describe(500))
+
+def handle(command):
+    match command.split():
+        case ["add", item]:              # a list with exactly two parts
+            return f"Adding {item}"
+        case ["move", x, y]:             # capture two values
+            return f"Moving to {x},{y}"
+        case ["quit"]:
+            return "Bye"
+        case _:
+            return "Unknown command"
+
+print(handle("add milk"))
+print(handle("move 3 4"))
+
+def check(order):
+    match order:
+        case {"type": "food", "amount": amount} if amount > 500:   # guard
+            return "Free delivery"
+        case {"type": "food"}:
+            return "Delivery charge applies"
+        case _:
+            return "Not a food order"
+
+print(check({"type": "food", "amount": 800}))
+print(check({"type": "food", "amount": 100}))
+```
+
+```output
+OK Not allowed Unknown
+Adding milk
+Moving to 3,4
+Free delivery
+Delivery charge applies
+```
+
+<Playground kind="python">
+
+```python
+def day_type(day):
+    match day:
+        case "Sat" | "Sun":
+            return "Weekend"
+        case "Mon" | "Tue" | "Wed" | "Thu" | "Fri":
+            return "Weekday"
+        case _:
+            return "Not a day"
+
+for day in ["Mon", "Sun", "Funday"]:
+    print(day, "->", day_type(day))
+
+# Try it: add a case for "Holiday" that returns "Day off".
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Putting the default case first">
+
+<Wrong>
+
+```python
+code = 404
+match code:
+    case _:
+        print("Unknown")
+    case 404:            # SyntaxError: wildcard makes remaining patterns unreachable
+        print("Not found")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+code = 404
+match code:
+    case 404:
+        print("Not found")
+    case _:
+        print("Unknown")
+```
+
+</Right>
+
+`case _` matches everything, so it must be the last case.
+
+</Mistake>
+
+<Mistake title="Using a variable name as if it were a value">
+
+<Wrong>
+
+```python
+NOT_FOUND = 404
+code = 200
+match code:
+    case NOT_FOUND:          # this captures any value into NOT_FOUND
+        print("Not found")   # Not found
+```
+
+</Wrong>
+
+<Right>
+
+```python
+code = 200
+match code:
+    case 404:
+        print("Not found")
+    case _:
+        print("Something else")   # Something else
+```
+
+</Right>
+
+A plain name in a pattern is a capture: it matches anything and stores it. Use a literal value, or a dotted name such as `Status.NOT_FOUND`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is match-case in Python?">
+
+It is structural pattern matching, added in Python 3.10. It checks a value against patterns in order and runs the first match. Besides exact values, patterns can describe the structure of sequences, dictionaries and objects, and capture parts of them into variables.
+
+</QA>
+
+<QA q="How is match-case different from switch in C or Java?">
+
+There is no fall-through, so no `break` is needed. And it matches structure, not only constants: it can unpack lists, check dictionary keys, match class attributes, and apply guard conditions.
+
+</QA>
+
+<QA q="What does case _ mean?">
+
+The underscore is a **wildcard**. It matches any value and does not store it. It works as the default case and must come last.
+
+</QA>
+
+<QA q="What is a guard in a case?">
+
+An `if` condition after the pattern. The case runs only if the pattern fits and the condition is true.
+
+```python
+age = 15
+match age:
+    case n if n >= 18:
+        print("adult")
+    case _:
+        print("minor")
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which Python version added match-case?',
+      options: ['3.6', '3.8', '3.10', '2.7'],
+      answer: 2,
+      why: 'Structural pattern matching arrived in Python 3.10.',
+    },
+    {
+      q: 'What does  case _:  match?',
+      options: ['Only None', 'Only the underscore character', 'Any value', 'Nothing'],
+      answer: 2,
+      why: 'The underscore is a wildcard pattern that matches anything.',
+    },
+    {
+      q: 'If two cases could both match a value, which one runs?',
+      options: ['Both', 'The first one from the top', 'The last one', 'Python raises an error'],
+      answer: 1,
+      why: 'Python checks cases in order and runs only the first match.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Pattern | Meaning |
+| --- | --- |
+| `case 200:` | Exactly this value |
+| `case "a" \| "b":` | Either value |
+| `case [x, y]:` | A sequence of two items, captured |
+| `case [first, *rest]:` | First item and the remaining items |
+| `case {"type": t}:` | A dict that has this key |
+| `case n if n > 0:` | Pattern plus a guard |
+| `case _:` | Default, must be last |
+
+</CheatSheet>

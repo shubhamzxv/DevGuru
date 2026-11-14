@@ -1,0 +1,297 @@
+---
+id: python-logging
+title: Logging
+summary: Logging records what a program is doing, with a level and a time, so you can find problems later.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of the visitor register at a society gate. The guard writes who came, when, and to which flat. Nobody reads it every day. But when something goes missing, the register tells you exactly what happened.
+
+A **log** is that register for your program.
+
+</Analogy>
+
+## Simple explanation
+
+`print()` is fine while learning. In a real application it is not enough: you cannot turn it off, it has no time or importance, and it only goes to the screen.
+
+The `logging` module fixes all of that. Each message has a **level** that says how serious it is:
+
+| Level | Use it for |
+| --- | --- |
+| `DEBUG` | Detailed information for developers |
+| `INFO` | Normal events: "order created" |
+| `WARNING` | Something unexpected, but the program continues |
+| `ERROR` | An operation failed |
+| `CRITICAL` | The application may not be able to continue |
+
+You choose a **minimum level**. Messages below it are ignored. In development you might show `DEBUG`; in production, usually `INFO` or `WARNING`.
+
+The parts:
+
+- A **logger** is the object you call: `logger.info("...")`. Create one per file with `logging.getLogger(__name__)`
+- A **handler** decides where messages go: the screen, a file, or a log service
+- A **formatter** decides how a line looks, for example time, level, name and message
+
+`logging.basicConfig(...)` sets up a simple configuration in one line. Call it once, when the program starts.
+
+Inside an `except` block, `logger.exception("...")` logs the message **and** the full traceback.
+
+Never log passwords, tokens, card numbers or other private data.
+
+## Code example
+
+```python
+import logging
+import sys
+
+logging.basicConfig(
+    level=logging.INFO,                               # ignore anything below INFO
+    format="%(levelname)s | %(name)s | %(message)s",  # how each line looks
+    stream=sys.stdout,                                # where it goes (here: the screen)
+)
+
+logger = logging.getLogger("orders")                  # usually: getLogger(__name__)
+
+logger.debug("cart contents: %s", ["pen", "bag"])     # below INFO: not shown
+logger.info("order %s created", 101)                  # values are filled in lazily
+logger.warning("stock is low for %s", "bag")
+logger.error("payment failed for order %s", 101)
+
+def divide(a, b):
+    try:
+        return a / b
+    except ZeroDivisionError:
+        logger.error("cannot divide %s by zero", a)   # log it, then handle it
+        return None
+
+print(divide(10, 0))
+
+logger.setLevel(logging.DEBUG)                        # now show DEBUG too
+logger.debug("debug is visible now")
+
+print(logging.getLevelName(logger.level), logging.INFO < logging.ERROR)
+```
+
+```output
+INFO | orders | order 101 created
+WARNING | orders | stock is low for bag
+ERROR | orders | payment failed for order 101
+ERROR | orders | cannot divide 10 by zero
+None
+DEBUG | orders | debug is visible now
+DEBUG True
+```
+
+<Playground kind="python">
+
+```python
+import logging
+import sys
+
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)-8s %(message)s", stream=sys.stdout)
+logger = logging.getLogger("shop")
+
+def checkout(cart, wallet):
+    total = sum(cart.values())
+    logger.debug("cart total is %s", total)
+    if total > wallet:
+        logger.warning("wallet has only %s, need %s", wallet, total)
+        return False
+    logger.info("payment of %s accepted", total)
+    return True
+
+checkout({"pen": 10, "bag": 700}, wallet=500)
+checkout({"pen": 10}, wallet=500)
+
+# Try it: change the level to logging.WARNING and run again.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using print for application messages">
+
+<Wrong>
+
+```python
+def pay(order_id):
+    print("payment started", order_id)   # no level, no time, cannot be switched off
+    return True
+
+pay(101)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import logging
+import sys
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stdout)
+logger = logging.getLogger(__name__)
+
+def pay(order_id):
+    logger.info("payment started %s", order_id)
+    return True
+
+pay(101)
+```
+
+</Right>
+
+Logs carry a level and can be filtered, formatted and sent to files or log services.
+
+</Mistake>
+
+<Mistake title="Building the message with an f-string">
+
+<Wrong>
+
+```python
+import logging
+
+logger = logging.getLogger("app")
+user = {"name": "Asha"}
+logger.debug(f"loaded user {user}")      # the text is built even when DEBUG is off
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import logging
+
+logger = logging.getLogger("app")
+user = {"name": "Asha"}
+logger.debug("loaded user %s", user)     # built only if the message will be shown
+```
+
+</Right>
+
+Pass the values as arguments. Logging then skips the string work when the level is disabled.
+
+</Mistake>
+
+<Mistake title="Swallowing an error without logging it">
+
+<Wrong>
+
+```python
+def load(settings):
+    try:
+        return settings["port"]
+    except KeyError:
+        pass                              # the failure leaves no trace
+
+print(load({}))   # None
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import logging
+import sys
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stdout)
+logger = logging.getLogger("config")
+
+def load(settings):
+    try:
+        return settings["port"]
+    except KeyError:
+        logger.warning("port missing, using default 8000")
+        return 8000
+
+print(load({}))
+```
+
+</Right>
+
+A silent `except` hides problems. Log what happened, even when you recover.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Why use logging and not print?">
+
+Logging provides severity levels, timestamps, the source module, configurable destinations (console, files, external systems) and the ability to change verbosity without editing code. `print()` gives none of these and is hard to manage in production.
+
+</QA>
+
+<QA q="What are the logging levels in order?">
+
+`DEBUG` (10), `INFO` (20), `WARNING` (30), `ERROR` (40) and `CRITICAL` (50). A logger handles messages at or above its configured level. The default level of the root logger is `WARNING`.
+
+</QA>
+
+<QA q="What are loggers, handlers and formatters?">
+
+A **logger** is what application code calls. A **handler** sends log records to a destination, such as `StreamHandler` for the console or `FileHandler` and `RotatingFileHandler` for files. A **formatter** defines the layout of each record. One logger can have several handlers.
+
+</QA>
+
+<QA q="What is the difference between logger.error() and logger.exception()?">
+
+Both log at `ERROR` level. `logger.exception()` also appends the current traceback, so it should be called only inside an `except` block. It is the same as `logger.error(msg, exc_info=True)`.
+
+</QA>
+
+<QA q="Why use logging.getLogger(__name__)?">
+
+It names the logger after the module, such as `shop.orders`. Log lines then show where they came from, and you can set different levels for different parts of the application through the logger hierarchy.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which level is the most serious?',
+      options: ['INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+      answer: 3,
+      why: 'The order is DEBUG, INFO, WARNING, ERROR, CRITICAL.',
+    },
+    {
+      q: 'The level is set to WARNING. Which message is shown?',
+      options: ['logger.debug(...)', 'logger.info(...)', 'logger.error(...)', 'None of them'],
+      answer: 2,
+      why: 'Only messages at WARNING or above are shown, and ERROR is above WARNING.',
+    },
+    {
+      q: 'Which call logs the message together with the traceback?',
+      options: ['logger.info()', 'logger.warning()', 'logger.exception()', 'print()'],
+      answer: 2,
+      why: 'logger.exception() adds the current traceback and is used inside except blocks.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Simple set-up | `logging.basicConfig(level=logging.INFO)` |
+| Logger for this file | `logger = logging.getLogger(__name__)` |
+| Normal event | `logger.info("order %s created", order_id)` |
+| Something odd | `logger.warning("...")` |
+| A failure | `logger.error("...")` |
+| Failure with traceback | `logger.exception("...")` |
+| Log to a file | `logging.basicConfig(filename="app.log")` |
+| Add the time | `format="%(asctime)s %(levelname)s %(message)s"` |
+
+Levels: DEBUG, INFO, WARNING, ERROR, CRITICAL.
+
+</CheatSheet>

@@ -1,0 +1,203 @@
+---
+id: sql-sqlite-mysql-postgresql
+title: SQLite vs MySQL vs PostgreSQL
+summary: SQLite, MySQL and PostgreSQL all speak SQL, but they differ in how they run, what they are best at, and a few details of syntax.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of three ways to carry money. A **wallet** is in your pocket: no bank needed, perfect for one person. A **savings account** at a popular bank is easy to open and good for most people. A **current account with every facility** costs a little more effort but handles complex business needs.
+
+SQLite is the wallet. MySQL is the popular savings account. PostgreSQL is the full-featured current account.
+
+</Analogy>
+
+## Simple explanation
+
+All three are relational databases, and most SQL you learn works on all of them. They differ in how they run.
+
+**SQLite** is a small library, not a server. The whole database is **one file**. There is nothing to install or start. It is used inside mobile apps, browsers and small tools, and it runs the playgrounds on this site. It allows only one writer at a time.
+
+**MySQL** is a **client-server** database: a server program runs all the time, and applications connect to it over the network. It is very popular for websites, simple to operate, and fast for read-heavy work. Its default storage engine is **InnoDB**.
+
+**PostgreSQL** is also client-server. It follows the SQL standard most closely and has the richest features: advanced data types (JSONB, arrays), powerful indexes, and strong support for complex queries. It is a common choice for new backend projects.
+
+Syntax that differs:
+
+| Task | SQLite | MySQL | PostgreSQL |
+| --- | --- | --- | --- |
+| Auto-number id | `INTEGER PRIMARY KEY` | `INT AUTO_INCREMENT` | `SERIAL` or `GENERATED ... AS IDENTITY` |
+| Join two strings | `a \|\| b` | `CONCAT(a, b)` | `a \|\| b` |
+| Today's date | `date('now')` | `CURDATE()` | `CURRENT_DATE` |
+| Case-insensitive LIKE | `LIKE` (default) | `LIKE` (default) | `ILIKE` |
+| Limit rows | `LIMIT 5` | `LIMIT 5` | `LIMIT 5` |
+| Boolean type | No (uses 0 and 1) | `TINYINT(1)` | Real `BOOLEAN` |
+| Stored procedures | No | Yes | Yes |
+| RIGHT and FULL JOIN | Yes, from version 3.39 | RIGHT only | Both |
+
+## Code example
+
+This runs on SQLite, here in the playground:
+
+```sql
+SELECT
+  sqlite_version()              AS engine_version,
+  'Dev' || 'Guru'               AS joined_text,
+  date('2024-06-20', '+7 days') AS a_week_later;
+```
+
+```output
+engine_version | joined_text | a_week_later
+---------------+-------------+-------------
+3.53.1         | DevGuru     | 2024-06-27
+```
+
+The same idea in MySQL:
+
+```mysql
+SELECT
+  VERSION()                               AS engine_version,
+  CONCAT('Dev', 'Guru')                   AS joined_text,
+  DATE_ADD('2024-06-20', INTERVAL 7 DAY)  AS a_week_later;
+```
+
+And in PostgreSQL:
+
+```postgresql
+SELECT
+  version()                               AS engine_version,
+  'Dev' || 'Guru'                         AS joined_text,
+  DATE '2024-06-20' + INTERVAL '7 days'   AS a_week_later;
+```
+
+<Playground kind="sql">
+
+```sql
+-- SQLite date functions, which other engines spell differently
+SELECT
+  name,
+  hire_date,
+  strftime('%Y', hire_date)                    AS hire_year,
+  CAST((julianday('2024-12-31') - julianday(hire_date)) / 365 AS INTEGER) AS years_in_company
+FROM employees
+ORDER BY hire_date
+LIMIT 5;
+
+-- Try it: show the month with  strftime('%m', hire_date).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using MySQL-only functions in SQLite or PostgreSQL">
+
+<Wrong>
+
+```sql
+SELECT CONCAT('Dev', 'Guru') AS x, CURDATE() AS today;   -- Error: no such function: CURDATE
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT 'Dev' || 'Guru' AS x, date('now') IS NOT NULL AS has_today;
+```
+
+</Right>
+
+Function names differ between engines. When a query fails after moving it, check string and date functions first.
+
+</Mistake>
+
+<Mistake title="Using SQLite for a busy multi-user website">
+
+<Wrong>
+
+```text
+Hundreds of users writing orders at the same moment into one SQLite file.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Many concurrent writers -> MySQL or PostgreSQL (client-server).
+One app, one user, or mostly reads -> SQLite is excellent.
+```
+
+</Right>
+
+SQLite locks the whole database for each write. It is great for local apps and tests, not for heavy concurrent writes.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the main difference between SQLite and MySQL or PostgreSQL?">
+
+SQLite is **serverless** and embedded: a library that reads and writes a single file inside your application's process. MySQL and PostgreSQL are **client-server** systems: a separate server process manages the data, handles many concurrent connections, user accounts and permissions, and is reached over the network.
+
+</QA>
+
+<QA q="What are the differences between MySQL and PostgreSQL?">
+
+PostgreSQL is more standards-compliant and feature-rich: JSONB, arrays, custom types, partial and expression indexes, full outer joins, and strong MVCC behaviour. MySQL is simpler to set up, very widely hosted, and traditionally very fast for simple read-heavy workloads. Both support transactions (MySQL through InnoDB), replication and window functions.
+
+</QA>
+
+<QA q="Which database would you choose for a new backend project, and why?">
+
+A reasonable answer: PostgreSQL by default, for its correctness and features; MySQL when the team or hosting already uses it; SQLite for local development, tests, mobile or embedded use. The best answer mentions the workload, the team's experience and the hosting options.
+
+</QA>
+
+<QA q="What is a storage engine in MySQL?">
+
+The component that stores and retrieves the data. **InnoDB** is the default: it supports transactions, row-level locking and foreign keys. **MyISAM** is older: table-level locking and no transactions. This question is specific to MySQL; PostgreSQL has one storage system.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which of these runs without a separate server, as a single file?',
+      options: ['MySQL', 'PostgreSQL', 'SQLite', 'Oracle'],
+      answer: 2,
+      why: 'SQLite is an embedded library and keeps the whole database in one file.',
+    },
+    {
+      q: 'How do you join two strings in MySQL?',
+      options: ['a || b', 'CONCAT(a, b)', 'a + b', 'JOIN(a, b)'],
+      answer: 1,
+      why: 'MySQL uses the CONCAT() function. In MySQL, || means OR by default.',
+    },
+    {
+      q: 'Which engine runs the SQL playground on this site?',
+      options: ['MySQL', 'PostgreSQL', 'SQLite', 'MongoDB'],
+      answer: 2,
+      why: 'The playground uses SQLite compiled to run inside your browser.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| | SQLite | MySQL | PostgreSQL |
+| --- | --- | --- | --- |
+| Runs as | Library, one file | Server | Server |
+| Best for | Apps, tests, small tools | Websites, read-heavy | Complex data and queries |
+| Concurrent writes | One at a time | Many | Many |
+| Auto id | `INTEGER PRIMARY KEY` | `AUTO_INCREMENT` | `SERIAL` |
+| Concatenate | `\|\|` | `CONCAT()` | `\|\|` |
+| JSON | Functions | `JSON` type | `JSONB` type |
+
+</CheatSheet>

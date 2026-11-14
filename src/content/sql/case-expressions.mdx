@@ -1,0 +1,272 @@
+---
+id: sql-case-expressions
+title: CASE expressions
+summary: CASE is the if-else of SQL. It checks conditions in order and returns the value of the first one that is true.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of how a teacher gives grades. She looks at the marks and goes down her list: 90 or more is A, 75 or more is B, 40 or more is C, and anything else is Fail. She stops at the first line that fits.
+
+`CASE` is that list, written inside a query.
+
+</Analogy>
+
+## Simple explanation
+
+`CASE` lets a query return different values for different rows. It is SQL's **if-else**.
+
+The general form:
+
+`CASE WHEN condition THEN value WHEN condition THEN value ELSE value END`
+
+- Conditions are checked from top to bottom
+- The first true condition wins, and the rest are skipped
+- `ELSE` gives the value when nothing matched. Without `ELSE`, the result is `NULL`
+- `END` closes the expression. Add an alias after it to name the new column
+
+There is a shorter **simple form** when you compare one column with fixed values:
+
+`CASE status WHEN 'placed' THEN 'New' WHEN 'shipped' THEN 'On the way' ELSE 'Other' END`
+
+`CASE` is an **expression**, so it can be used anywhere a value is allowed:
+
+- In `SELECT`, to make a label or category column
+- In `ORDER BY`, to sort in a custom order
+- In `WHERE`, though plain `AND` and `OR` are usually clearer
+- Inside an aggregate, to count or sum only some rows. This is called **conditional aggregation**
+
+## Code example
+
+```sql
+SELECT
+  name,
+  salary,
+  CASE
+    WHEN salary >= 130000 THEN 'senior'     -- checked first
+    WHEN salary >= 70000  THEN 'mid'        -- checked only if the first was false
+    ELSE 'junior'                           -- nothing matched
+  END AS level
+FROM employees
+ORDER BY salary DESC
+LIMIT 6;
+```
+
+```output
+name          | salary | level
+--------------+--------+-------
+Anita Rao     | 185000 | senior
+Vikram Shah   | 150000 | senior
+Rohit Verma   | 140000 | senior
+Asha Kulkarni | 140000 | senior
+Farah Sheikh  | 130000 | senior
+Meera Nair    | 120000 | mid
+```
+
+```sql
+SELECT
+  id,
+  CASE status                               -- simple form: compare one column
+    WHEN 'placed'    THEN 'New order'
+    WHEN 'shipped'   THEN 'On the way'
+    WHEN 'delivered' THEN 'Completed'
+    ELSE 'Cancelled'
+  END AS status_label
+FROM orders
+WHERE id BETWEEN 10 AND 13;
+```
+
+```output
+id | status_label
+---+-------------
+10 | Completed
+11 | On the way
+12 | New order
+13 | Completed
+```
+
+```sql
+SELECT
+  COUNT(*)                                             AS all_orders,
+  SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) AS delivered,   -- conditional aggregation
+  SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
+FROM orders;
+```
+
+```output
+all_orders | delivered | cancelled
+-----------+-----------+----------
+16         | 9         | 2
+```
+
+<Playground kind="sql">
+
+```sql
+SELECT
+  name,
+  stock,
+  CASE
+    WHEN stock = 0   THEN 'Out of stock'
+    WHEN stock < 50  THEN 'Low'
+    ELSE 'Available'
+  END AS availability
+FROM products
+ORDER BY stock;
+
+-- Try it: add a level 'Plenty' for stock of 200 or more.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Putting the wider condition first">
+
+<Wrong>
+
+```sql
+SELECT name, salary,
+  CASE WHEN salary >= 70000 THEN 'mid' WHEN salary >= 130000 THEN 'senior' ELSE 'junior' END AS level
+FROM employees ORDER BY salary DESC LIMIT 2;   -- everyone at the top shows 'mid'
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, salary,
+  CASE WHEN salary >= 130000 THEN 'senior' WHEN salary >= 70000 THEN 'mid' ELSE 'junior' END AS level
+FROM employees ORDER BY salary DESC LIMIT 2;
+```
+
+</Right>
+
+The first true condition wins. Put the strictest condition first.
+
+</Mistake>
+
+<Mistake title="Forgetting END">
+
+<Wrong>
+
+```sql
+SELECT name, CASE WHEN stock = 0 THEN 'none' ELSE 'some' AS availability FROM products;   -- Error: syntax error
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, CASE WHEN stock = 0 THEN 'none' ELSE 'some' END AS availability FROM products LIMIT 3;
+```
+
+</Right>
+
+Every `CASE` must be closed with `END`.
+
+</Mistake>
+
+<Mistake title="Leaving out ELSE and getting NULL">
+
+<Wrong>
+
+```sql
+SELECT name, CASE WHEN category = 'Home' THEN 'home item' END AS label
+FROM products LIMIT 3;   -- other rows show NULL
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, CASE WHEN category = 'Home' THEN 'home item' ELSE 'other' END AS label
+FROM products LIMIT 3;
+```
+
+</Right>
+
+When no condition matches and there is no `ELSE`, the result is `NULL`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a CASE expression?">
+
+SQL's conditional expression. It evaluates conditions in order and returns the result for the first one that is true, or the `ELSE` value, or NULL if there is no `ELSE`. It can be used in `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `HAVING` and inside aggregate functions.
+
+</QA>
+
+<QA q="What is the difference between simple CASE and searched CASE?">
+
+**Simple CASE** compares one expression against several values for equality: `CASE status WHEN 'a' THEN ...`. **Searched CASE** evaluates full conditions in each `WHEN`, so it can use ranges, several columns and `IS NULL`: `CASE WHEN salary > 100000 THEN ...`.
+
+</QA>
+
+<QA q="How do you count rows that match different conditions in a single query?">
+
+With conditional aggregation: put a `CASE` inside `SUM` or `COUNT`.
+
+```sql
+SELECT
+  SUM(CASE WHEN salary >= 100000 THEN 1 ELSE 0 END) AS high_paid,
+  SUM(CASE WHEN salary <  100000 THEN 1 ELSE 0 END) AS others
+FROM employees;
+```
+
+</QA>
+
+<QA q="How do you swap two values in a column with one UPDATE?">
+
+Use `CASE` in the `SET` clause, so every row is decided in one pass.
+
+```sql
+UPDATE orders
+SET status = CASE status WHEN 'placed' THEN 'shipped' WHEN 'shipped' THEN 'placed' ELSE status END;
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which keyword closes a CASE expression?',
+      options: ['DONE', 'END', 'STOP', 'ENDCASE'],
+      answer: 1,
+      why: 'Every CASE must finish with END.',
+    },
+    {
+      q: 'What does CASE return when no WHEN matches and there is no ELSE?',
+      options: ['0', 'An empty string', 'NULL', 'An error'],
+      answer: 2,
+      why: 'Without ELSE, an unmatched CASE gives NULL.',
+    },
+    {
+      q: 'If two WHEN conditions are both true, which result is used?',
+      options: ['The last one', 'The first one', 'Both', 'Neither'],
+      answer: 1,
+      why: 'CASE stops at the first condition that is true.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| If-else | `CASE WHEN x > 10 THEN 'big' ELSE 'small' END` |
+| Many levels | `CASE WHEN ... THEN ... WHEN ... THEN ... ELSE ... END` |
+| Compare one column | `CASE status WHEN 'a' THEN 1 WHEN 'b' THEN 2 END` |
+| Name the column | `... END AS label` |
+| Count some rows | `SUM(CASE WHEN cond THEN 1 ELSE 0 END)` |
+| Custom sort | `ORDER BY CASE status WHEN 'placed' THEN 1 ... END` |
+
+</CheatSheet>

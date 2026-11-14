@@ -1,0 +1,293 @@
+---
+id: python-custom-exceptions
+title: Raising and custom exceptions
+summary: raise lets you signal an error yourself, and a custom exception is your own error type with a clear name.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a cricket umpire. When a bowler oversteps, the umpire does not stay silent. He raises his arm and calls "no ball". The call has a specific name, so everyone knows exactly what went wrong.
+
+`raise` is the umpire's signal. A **custom exception** is a call with its own clear name.
+
+</Analogy>
+
+## Simple explanation
+
+So far Python raised errors for you. With `raise`, **you** signal that something is wrong.
+
+Use it when your function receives a value it cannot work with. Failing early with a clear message is better than continuing with bad data.
+
+You can raise a built-in exception, such as `raise ValueError("age cannot be negative")`.
+
+A **custom exception** is a class you define that inherits from `Exception`. Its name describes the problem in the words of your application, such as `InsufficientBalanceError`.
+
+Why make your own:
+
+- The caller can catch exactly that problem and nothing else
+- The name documents what went wrong
+- You can attach extra data, such as the balance and the amount
+
+Inside an `except` block, a bare `raise` sends the same exception onward. This is called **re-raising**. And `raise NewError(...) from error` wraps a low-level error in a clearer one, keeping the original as the cause.
+
+## Code example
+
+```python
+def set_age(age):
+    if age < 0:
+        raise ValueError("age cannot be negative")     # signal the problem yourself
+    return age
+
+try:
+    set_age(-5)
+except ValueError as error:
+    print("Caught:", error)
+
+class InsufficientBalanceError(Exception):             # custom exception: inherit from Exception
+    def __init__(self, balance, amount):
+        super().__init__(f"need {amount}, but balance is {balance}")
+        self.shortfall = amount - balance              # extra data for the caller
+
+def withdraw(balance, amount):
+    if amount > balance:
+        raise InsufficientBalanceError(balance, amount)
+    return balance - amount
+
+print(withdraw(1000, 300))
+
+try:
+    withdraw(500, 800)
+except InsufficientBalanceError as error:              # catch exactly this problem
+    print("Failed:", error)
+    print("Short by:", error.shortfall)
+
+class ConfigError(Exception):
+    pass                                               # the name alone is enough
+
+def load_port(settings):
+    try:
+        return int(settings["port"])
+    except KeyError as error:
+        raise ConfigError("port is missing in settings") from error   # wrap with a clearer error
+
+try:
+    load_port({})
+except ConfigError as error:
+    print(error, "| caused by", type(error.__cause__).__name__)
+```
+
+```output
+Caught: age cannot be negative
+700
+Failed: need 800, but balance is 500
+Short by: 300
+port is missing in settings | caused by KeyError
+```
+
+<Playground kind="python">
+
+```python
+class OutOfStockError(Exception):
+    pass
+
+stock = {"pen": 5, "bag": 0}
+
+def buy(item, quantity):
+    if item not in stock:
+        raise KeyError(f"we do not sell {item}")
+    if stock[item] < quantity:
+        raise OutOfStockError(f"only {stock[item]} {item}(s) left")
+    stock[item] -= quantity
+    return f"bought {quantity} {item}(s)"
+
+for item, quantity in [("pen", 2), ("bag", 1), ("pen", 9)]:
+    try:
+        print(buy(item, quantity))
+    except OutOfStockError as error:
+        print("Sorry:", error)
+
+# Try it: buy a "laptop" and handle the KeyError too.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Returning an error code where an exception is clearer">
+
+<Wrong>
+
+```python
+def withdraw(balance, amount):
+    if amount > balance:
+        return -1
+    return balance - amount
+
+new_balance = withdraw(100, 500)
+print(new_balance + 50)   # 49
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def withdraw(balance, amount):
+    if amount > balance:
+        raise ValueError("insufficient balance")
+    return balance - amount
+
+try:
+    withdraw(100, 500)
+except ValueError as error:
+    print(error)   # insufficient balance
+```
+
+</Right>
+
+A special return value is easy to forget to check, and the bad number spreads. An exception cannot be ignored by accident.
+
+</Mistake>
+
+<Mistake title="Inheriting from BaseException">
+
+<Wrong>
+
+```python
+class PaymentError(BaseException):
+    pass
+
+try:
+    raise PaymentError("card declined")
+except Exception:
+    print("handled")   # never printed: PaymentError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class PaymentError(Exception):
+    pass
+
+try:
+    raise PaymentError("card declined")
+except Exception:
+    print("handled")   # handled
+```
+
+</Right>
+
+`except Exception` does not catch classes that inherit from `BaseException`. Custom errors should inherit from `Exception`.
+
+</Mistake>
+
+<Mistake title="Losing the original error">
+
+<Wrong>
+
+```python
+try:
+    int("abc")
+except ValueError:
+    raise RuntimeError("bad input")   # RuntimeError, and the cause is not linked
+```
+
+</Wrong>
+
+<Right>
+
+```python
+try:
+    try:
+        int("abc")
+    except ValueError as error:
+        raise RuntimeError("bad input") from error
+except RuntimeError as error:
+    print(type(error.__cause__).__name__)   # ValueError
+```
+
+</Right>
+
+`from error` links the original exception as the cause, which makes debugging much easier.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you create a custom exception?">
+
+Define a class that inherits from `Exception` (or a more specific built-in). An empty body with `pass` is enough. Add an `__init__` if you want to store extra data.
+
+```python
+class InvalidOrderError(Exception):
+    pass
+```
+
+</QA>
+
+<QA q="Why create custom exceptions when built-in ones exist?">
+
+They make error handling precise and readable. Callers can catch `InsufficientBalanceError` separately from a generic `ValueError`. Libraries usually define a base class such as `MyLibError` so users can catch every error of that library with one `except`.
+
+</QA>
+
+<QA q="What is the difference between raise and raise ... from ...?">
+
+A bare `raise` inside `except` re-raises the current exception unchanged. `raise NewError() from original` raises a new exception and stores the original in `__cause__`, so the traceback shows both. This is called **exception chaining**.
+
+</QA>
+
+<QA q="What is the difference between raise and assert?">
+
+`raise` is for real error handling in production code. `assert condition` raises `AssertionError` when the condition is false and is meant for debugging and tests. Assertions are removed when Python runs with the `-O` flag, so never use them to validate user input.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which keyword signals an error yourself?',
+      options: ['throw', 'raise', 'error', 'except'],
+      answer: 1,
+      why: 'Python uses raise. Other languages use throw.',
+    },
+    {
+      q: 'Which class should a custom exception inherit from?',
+      options: ['object', 'BaseException', 'Exception', 'str'],
+      answer: 2,
+      why: 'Custom exceptions should inherit from Exception, so that except Exception can catch them.',
+    },
+    {
+      q: 'What does a bare  raise  do inside an except block?',
+      options: [
+        'Ends the program silently',
+        'Re-raises the exception that is being handled',
+        'Raises a new empty error',
+        'Nothing',
+      ],
+      answer: 1,
+      why: 'A bare raise sends the same exception onward to the caller.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Signal an error | `raise ValueError("message")` |
+| Own error type | `class MyError(Exception): pass` |
+| Catch it | `except MyError as e:` |
+| Read the message | `str(e)` |
+| Re-raise | `raise` |
+| Wrap and keep the cause | `raise NewError("...") from e` |
+| Debug check | `assert x > 0, "x must be positive"` |
+
+</CheatSheet>

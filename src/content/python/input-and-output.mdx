@@ -1,0 +1,249 @@
+---
+id: python-input-and-output
+title: Input and output (print, input)
+summary: print() shows values on the screen, and input() reads text that the user types.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of the enquiry counter at a railway station. You ask a question, and the clerk gives you an answer.
+
+A program works the same way. What goes in is **input**. What comes out is **output**.
+
+</Analogy>
+
+## Simple explanation
+
+**Output** means showing something to the user. In Python you use `print()`.
+
+You can give `print()` many values, separated by commas. It joins them with a space.
+
+Two settings change how `print()` behaves:
+
+- `sep` is the text placed between the values. The default is one space
+- `end` is the text placed at the end. The default is a new line
+
+An **f-string** is text with an `f` before the quotes. Inside it, you can put a variable in curly brackets, and Python fills in the value.
+
+**Input** means reading something from the user. `input()` shows a message, waits for the user to type, and gives back what they typed.
+
+`input()` always gives back **text** (a `str`), even if the user types a number. Convert it with `int()` or `float()` before doing maths.
+
+## Code example
+
+```python
+name = "Ravi"
+age = 28
+
+print("Name:", name)                   # values are joined with a space
+print("Age", age, sep=" = ")           # sep changes the joiner
+print("Loading", end="... ")           # end changes what comes last
+print("done")
+print(f"{name} is {age} years old")    # f-string: values inside the text
+print("Line 1\nLine 2")                # \n starts a new line
+```
+
+```output
+Name: Ravi
+Age = 28
+Loading... done
+Ravi is 28 years old
+Line 1
+Line 2
+```
+
+Reading from the user looks like this. Here the user types Meera and 30:
+
+```python
+name = input("Your name: ")        # waits for the user to type
+age = int(input("Your age: "))     # input() gives text, int() makes a number
+
+print(f"Hello {name}, next year you will be {age + 1}")
+```
+
+```output
+Your name: Meera
+Your age: 30
+Hello Meera, next year you will be 31
+```
+
+<Playground kind="python">
+
+```python
+# input() is switched off in this playground, so we set the values directly.
+name = "Meera"
+age = 30
+
+print(f"Hello {name}, next year you will be {age + 1}")
+print("A", "B", "C", sep="-")
+print("No new line here", end=" | ")
+print("same line")
+
+# Try it: change sep to " > " and run again.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Doing maths on input() without converting it">
+
+<Wrong>
+
+```python
+age = "30"        # this is what input() gives you: text
+print(age + 1)    # TypeError: can only concatenate str (not "int") to str
+```
+
+</Wrong>
+
+<Right>
+
+```python
+age = int("30")   # convert the text to a number first
+print(age + 1)    # 31
+```
+
+</Right>
+
+`input()` always returns a string. Wrap it: `int(input("Your age: "))`.
+
+</Mistake>
+
+<Mistake title="Forgetting the f in an f-string">
+
+<Wrong>
+
+```python
+name = "Ravi"
+print("Hello {name}")    # Hello {name}
+```
+
+</Wrong>
+
+<Right>
+
+```python
+name = "Ravi"
+print(f"Hello {name}")   # Hello Ravi
+```
+
+</Right>
+
+Without the `f`, the curly brackets are printed as plain text.
+
+</Mistake>
+
+<Mistake title="Joining text and a number with +">
+
+<Wrong>
+
+```python
+print("Age: " + 28)   # TypeError: can only concatenate str (not "int") to str
+```
+
+</Wrong>
+
+<Right>
+
+```python
+print("Age:", 28)     # Age: 28
+print(f"Age: {28}")   # Age: 28
+```
+
+</Right>
+
+`+` cannot join a string and a number. Use a comma or an f-string.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What does input() return?">
+
+It always returns a **string**. If the user types `25`, you get `"25"`. Convert it with `int()` or `float()` when you need a number.
+
+</QA>
+
+<QA q="What is the difference between sep and end in print()?">
+
+`sep` is placed **between** the values and defaults to a space. `end` is placed **after the last value** and defaults to a new line (`\n`).
+
+```python
+print("a", "b", sep="-", end="!\n")   # a-b!
+```
+
+</QA>
+
+<QA q="How do you print without moving to a new line?">
+
+Set `end` to an empty string or any other text: `print("Hello", end="")`. The next `print()` continues on the same line.
+
+</QA>
+
+<QA q="What are the ways to format a string in Python?">
+
+Three main ways. **f-strings** are the newest and the most readable.
+
+```python
+name = "Ravi"
+print(f"Hello {name}")           # f-string (Python 3.6+)
+print("Hello {}".format(name))   # str.format()
+print("Hello %s" % name)         # old % style
+```
+
+</QA>
+
+<QA q="How do you read two numbers typed on one line?">
+
+Split the text on spaces, then convert each part.
+
+```python
+a, b = map(int, "10 20".split())   # with a user: input().split()
+print(a + b)   # 30
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What type does input() always return?',
+      options: ['int', 'float', 'str', 'It depends on what the user types'],
+      answer: 2,
+      why: 'input() always returns text. You convert it yourself when you need a number.',
+    },
+    {
+      q: 'What does print("A", "B", sep="-") show?',
+      options: ['A B', 'A-B', 'AB', 'A - B'],
+      answer: 1,
+      why: 'sep is the text placed between the values, so the space is replaced with a dash.',
+    },
+    {
+      q: 'What does \\n do inside a string?',
+      options: ['Prints the letter n', 'Starts a new line', 'Adds a tab', 'Ends the program'],
+      answer: 1,
+      why: 'Backslash n is the new-line character.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Show a value | `print(x)` |
+| Show many values | `print("Age:", age)` |
+| Change the joiner | `print(a, b, sep="-")` |
+| Stay on the same line | `print(a, end="")` |
+| Value inside text | `f"Hello {name}"` |
+| Read text | `name = input("Name: ")` |
+| Read a whole number | `age = int(input("Age: "))` |
+| Read a decimal number | `price = float(input("Price: "))` |
+
+</CheatSheet>

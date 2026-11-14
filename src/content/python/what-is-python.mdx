@@ -1,0 +1,205 @@
+---
+id: python-what-is-python
+title: What is Python?
+summary: Python is a simple, readable programming language used for websites, data, automation and AI.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of asking a helper at a kirana shop for something. You say "two packets of milk, please". You do not write a long formal letter.
+
+**Python** lets you talk to a computer in the same plain way. Other languages often need more words and more symbols to say the same thing.
+
+</Analogy>
+
+## Simple explanation
+
+A **programming language** is a way to give instructions to a computer.
+
+Python is a **high-level** language. This means the code reads close to English, and Python handles the hard machine details for you.
+
+Python is an **interpreted** language. A program called the **interpreter** reads your code and runs it line by line. You do not need a separate build step before running.
+
+Python is **general purpose**. People use it for:
+
+- Backend websites and APIs (Django, FastAPI)
+- Data analysis and AI (pandas, NumPy)
+- Automation scripts (rename files, send reports)
+- Testing and DevOps tools
+
+Guido van Rossum created Python. The first version came out in 1991. Today we use **Python 3**.
+
+## Code example
+
+```python
+print("Hello, India!")              # print() shows text on the screen
+print(2 + 3)                        # Python can do maths
+
+language = "Python"                 # store a value in a name
+print("I am learning", language)    # print two things together
+```
+
+```output
+Hello, India!
+5
+I am learning Python
+```
+
+<Playground kind="python">
+
+```python
+import sys
+
+print("Hello from Python", sys.version_info.major)
+print("7 x 8 =", 7 * 8)
+
+# Try it: print your own name on the next line.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting the quotes around text">
+
+<Wrong>
+
+```python
+print(Hello)   # NameError: name 'Hello' is not defined
+```
+
+</Wrong>
+
+<Right>
+
+```python
+print("Hello")   # Hello
+```
+
+</Right>
+
+Without quotes, Python thinks `Hello` is a variable name and looks for it.
+
+</Mistake>
+
+<Mistake title="Writing Print with a capital P">
+
+<Wrong>
+
+```python
+Print("Hello")   # NameError: name 'Print' is not defined
+```
+
+</Wrong>
+
+<Right>
+
+```python
+print("Hello")   # Hello
+```
+
+</Right>
+
+Python is **case sensitive**. `print` and `Print` are two different names.
+
+</Mistake>
+
+<Mistake title="Using the old Python 2 style">
+
+<Wrong>
+
+```python
+print "Hello"   # SyntaxError in Python 3
+```
+
+</Wrong>
+
+<Right>
+
+```python
+print("Hello")   # Hello
+```
+
+</Right>
+
+In Python 3, `print` is a function, so it always needs brackets.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Is Python compiled or interpreted?">
+
+Both steps happen. Python first turns your code into **bytecode** (a simpler form, saved as `.pyc` files). Then the **Python Virtual Machine** runs that bytecode line by line. Because you never run a separate compiler yourself, we call Python an interpreted language.
+
+</QA>
+
+<QA q="What are the main features of Python?">
+
+Easy to read, dynamically typed (no type declarations), interpreted, object-oriented, a huge standard library, and it runs on Windows, Linux and macOS without changes.
+
+</QA>
+
+<QA q="What is CPython?">
+
+**CPython** is the standard Python interpreter, written in C. It is what you get from python.org. Other interpreters exist too, such as PyPy (faster for some programs) and Jython (runs on Java).
+
+</QA>
+
+<QA q="What is PEP 8?">
+
+**PEP 8** is the official style guide for Python code. It covers things like 4 spaces for indentation and `snake_case` names. Following it makes code easier for a team to read.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does the Python interpreter do?',
+      options: [
+        'Reads your code and runs it',
+        'Designs the web page',
+        'Stores data in a database',
+        'Checks your spelling',
+      ],
+      answer: 0,
+      why: 'The interpreter is the program that reads Python code and executes it.',
+    },
+    {
+      q: 'Which line is correct in Python 3?',
+      options: ['print Hello', 'Print("Hello")', 'print("Hello")', 'echo "Hello"'],
+      answer: 2,
+      why: 'print is written in small letters, needs brackets, and text needs quotes.',
+    },
+    {
+      q: 'Why is Python called a high-level language?',
+      options: [
+        'It only runs on powerful computers',
+        'Its code reads close to English and hides machine details',
+        'It is only for experts',
+        'It was made after all other languages',
+      ],
+      answer: 1,
+      why: 'High-level means close to human language and far from machine code.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What | Answer |
+| --- | --- |
+| Type of language | High-level, interpreted, general purpose |
+| Show something | `print("Hello")` |
+| File extension | `.py` |
+| Run a file | `python app.py` |
+| Check version | `python --version` |
+| Style guide | PEP 8 |
+| Standard interpreter | CPython |
+
+</CheatSheet>

@@ -1,0 +1,251 @@
+---
+id: sql-operators
+title: AND, OR, NOT, IN, BETWEEN, LIKE
+summary: These operators combine and shorten conditions in WHERE, such as matching a list of values, a range, or a text pattern.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of searching for a flat on a rental app. You set filters: city is Pune **or** Mumbai, rent **between** 15,000 and 25,000, **not** on the ground floor, and the society name **starts with** "Green".
+
+These operators are those filters for a database.
+
+</Analogy>
+
+## Simple explanation
+
+**Logical operators** join conditions:
+
+- `AND`: both conditions must be true
+- `OR`: at least one condition must be true
+- `NOT`: reverses a condition
+
+`AND` is applied before `OR`. When you mix them, use **brackets** to say what you mean.
+
+**Shortcut operators** make conditions shorter:
+
+- `IN (a, b, c)`: the value is any one from the list. It replaces many `OR`s
+- `BETWEEN low AND high`: the value is within the range, and **both ends are included**
+- `LIKE pattern`: the text matches a pattern
+
+`LIKE` uses two **wildcards**:
+
+- `%` stands for any number of characters, including none
+- `_` stands for exactly one character
+
+So `'A%'` means "starts with A", `'%a'` means "ends with a", and `'%sh%'` means "contains sh".
+
+Each has a negative form: `NOT IN`, `NOT BETWEEN`, `NOT LIKE`.
+
+In SQLite and MySQL, `LIKE` ignores upper and lower case for English letters. In PostgreSQL, `LIKE` is case sensitive, and `ILIKE` ignores case.
+
+## Code example
+
+```sql
+SELECT name, city, salary
+FROM employees
+WHERE city IN ('Pune', 'Delhi')              -- any value from the list
+  AND salary BETWEEN 60000 AND 90000         -- 60000 and 90000 are included
+ORDER BY salary DESC;
+```
+
+```output
+name           | city  | salary
+---------------+-------+-------
+Neha Gupta     | Delhi | 88000
+Arjun Mehta    | Pune  | 72000
+Suresh Patil   | Delhi | 68000
+Lakshmi Pillai | Pune  | 64000
+Tanvi Joshi    | Pune  | 61000
+```
+
+```sql
+SELECT name
+FROM customers
+WHERE name LIKE 'A%'                         -- starts with A
+   OR name LIKE '%a';                        -- or ends with a
+```
+
+```output
+name
+--------------
+Aarav Sharma
+Karan Malhotra
+Aditya Ghosh
+Varun Saxena
+```
+
+```sql
+SELECT name, department_id, salary
+FROM employees
+WHERE (department_id = 2 OR department_id = 3)   -- brackets: decide the OR first
+  AND NOT salary < 70000;                        -- NOT reverses the condition
+```
+
+```output
+name        | department_id | salary
+------------+---------------+-------
+Vikram Shah | 2             | 150000
+Meera Nair  | 3             | 120000
+Ravi Kumar  | 2             | 82000
+Priya Iyer  | 2             | 78000
+```
+
+<Playground kind="sql">
+
+```sql
+SELECT name, category, price
+FROM products
+WHERE category IN ('Home', 'Clothing')
+  AND price BETWEEN 400 AND 1000
+  AND name NOT LIKE '%Shirt%';
+
+-- Try it: find products whose name contains the letters "le".
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Mixing AND and OR without brackets">
+
+<Wrong>
+
+```sql
+SELECT name, city, salary FROM employees
+WHERE city = 'Pune' OR city = 'Delhi' AND salary > 100000;   -- returns every Pune employee
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, city, salary FROM employees
+WHERE (city = 'Pune' OR city = 'Delhi') AND salary > 100000;
+```
+
+</Right>
+
+`AND` binds tighter than `OR`. The first query means "Pune, or (Delhi and high salary)".
+
+</Mistake>
+
+<Mistake title="Using = with a wildcard">
+
+<Wrong>
+
+```sql
+SELECT name FROM customers WHERE name = 'A%';   -- no rows: looks for the exact text A%
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM customers WHERE name LIKE 'A%';
+```
+
+</Right>
+
+Wildcards only work with `LIKE`. With `=`, `%` is an ordinary character.
+
+</Mistake>
+
+<Mistake title="Using NOT IN with a list that contains NULL">
+
+<Wrong>
+
+```sql
+SELECT name FROM employees
+WHERE id NOT IN (SELECT manager_id FROM employees);   -- returns no rows at all
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM employees
+WHERE id NOT IN (SELECT manager_id FROM employees WHERE manager_id IS NOT NULL)
+LIMIT 5;
+```
+
+</Right>
+
+If the list contains a `NULL`, `NOT IN` can never be true. Remove the NULLs, or use `NOT EXISTS`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between IN and BETWEEN?">
+
+`IN` checks whether a value matches any item in a list of separate values. `BETWEEN` checks whether a value lies within a continuous range, including both end points. `IN` suits specific choices; `BETWEEN` suits numbers and dates in a range.
+
+</QA>
+
+<QA q="What are the wildcards used with LIKE?">
+
+`%` matches zero or more characters and `_` matches exactly one character. For example, `'_a%'` matches any text whose second character is `a`.
+
+</QA>
+
+<QA q="Why can LIKE '%text' be slow?">
+
+An index on the column is sorted from the first character. A pattern that starts with `%` gives the database no starting point, so it must scan every row. A pattern like `'text%'` can use the index. For searching inside text, use a full-text index.
+
+</QA>
+
+<QA q="Is BETWEEN inclusive? What about dates?">
+
+Yes, both ends are included. With date-time columns this can miss data: `BETWEEN '2024-01-01' AND '2024-01-31'` stops at midnight on the 31st. A safer form is `>= '2024-01-01' AND < '2024-02-01'`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: "What does  WHERE name LIKE 'S%'  match?",
+      options: ['Names that end with S', 'Names that start with S', 'Names that contain S anywhere', 'Only the name S'],
+      answer: 1,
+      why: 'S followed by % means: starts with S, then anything.',
+    },
+    {
+      q: 'Is 100 included in  BETWEEN 50 AND 100?',
+      options: ['Yes', 'No', 'Only in MySQL', 'Only for dates'],
+      answer: 0,
+      why: 'BETWEEN includes both end values.',
+    },
+    {
+      q: "Which is the same as  city = 'Pune' OR city = 'Delhi'?",
+      options: ["city IN ('Pune', 'Delhi')", "city BETWEEN 'Pune' AND 'Delhi'", "city LIKE 'Pune, Delhi'", "city = 'Pune' AND city = 'Delhi'"],
+      answer: 0,
+      why: 'IN checks whether the value equals any item in the list.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Operator | Example | Meaning |
+| --- | --- | --- |
+| `AND` | `a > 1 AND b > 1` | Both true |
+| `OR` | `a > 1 OR b > 1` | At least one true |
+| `NOT` | `NOT a > 1` | The opposite |
+| `IN` | `city IN ('Pune', 'Goa')` | Any from the list |
+| `BETWEEN` | `price BETWEEN 100 AND 500` | In the range, ends included |
+| `LIKE 'A%'` | | Starts with A |
+| `LIKE '%a'` | | Ends with a |
+| `LIKE '%sh%'` | | Contains sh |
+| `LIKE '_a%'` | | Second letter is a |
+
+Mixing `AND` and `OR`? Use brackets.
+
+</CheatSheet>

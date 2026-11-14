@@ -1,0 +1,258 @@
+---
+id: python-decorator-vs-generator
+title: Decorator vs generator
+summary: A decorator changes how a function behaves, while a generator produces a series of values one at a time.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+A **decorator** is like a phone cover. The phone works the same, and the cover adds protection around it.
+
+A **generator** is like a water dispenser. It does not hand you the whole tank. It gives one glass each time you press the tap.
+
+One wraps something. The other supplies things one by one. They solve different problems.
+
+</Analogy>
+
+## Simple explanation
+
+The two names sound similar, so interviewers like to ask the difference. They are not related.
+
+A **decorator** is about **behaviour**. It takes a function, wraps it, and returns a new function. You use it to add something around a function, such as logging, timing or a permission check. You apply it with `@name`.
+
+A **generator** is about **data**. It is a function that uses `yield` to produce values one at a time. It pauses after each value and continues when asked. You use it to save memory and to handle big or endless data.
+
+| Point | Decorator | Generator |
+| --- | --- | --- |
+| Purpose | Add behaviour to a function | Produce values lazily |
+| Key syntax | `@decorator` | `yield` |
+| Takes | A function | Normal arguments |
+| Returns | A new function | A generator object (an iterator) |
+| Built on | Closures | The iterator protocol |
+| Typical use | Logging, auth, caching, retry | Large files, streams, pipelines |
+| Saves | Repeated code | Memory |
+
+They can also work together: you can decorate a generator function.
+
+## Code example
+
+```python
+import functools
+import time
+
+def timer(func):                               # DECORATOR: wraps a function
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        took = time.perf_counter() - start
+        print(f"{func.__name__} finished (took under 1s: {took < 1})")
+        return result
+    return wrapper
+
+@timer                                         # behaviour is added around total()
+def total(numbers):
+    return sum(numbers)
+
+print(total([10, 20, 30]))
+
+def even_numbers(limit):                       # GENERATOR: produces values
+    for n in range(2, limit + 1, 2):
+        yield n                                # one value, then pause
+
+gen = even_numbers(8)
+print(next(gen), next(gen))                    # values come one at a time
+print(list(gen))                               # the remaining values
+
+print(type(total).__name__, type(gen).__name__)   # a function vs a generator object
+
+@timer                                         # both together: decorate a function
+def first_squares(count):                      # that uses a generator inside
+    return list(n * n for n in range(count))
+
+print(first_squares(5))
+```
+
+```output
+total finished (took under 1s: True)
+60
+2 4
+[6, 8]
+function generator
+first_squares finished (took under 1s: True)
+[0, 1, 4, 9, 16]
+```
+
+<Playground kind="python">
+
+```python
+import functools
+
+def shout(func):                     # decorator
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs).upper()
+    return wrapper
+
+@shout
+def greet(name):
+    return f"hello {name}"
+
+def countdown(start):                # generator
+    while start > 0:
+        yield start
+        start -= 1
+
+print(greet("asha"))
+print(list(countdown(5)))
+
+# Try it: write a generator that yields greet(name) for each name in a list.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using a generator when you want to change behaviour">
+
+<Wrong>
+
+```python
+def log(func):
+    yield func          # this makes log a generator, not a decorator
+
+@log
+def pay():
+    return "paid"
+
+print(pay())   # TypeError: 'generator' object is not callable
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def log(func):
+    def wrapper():
+        print("calling", func.__name__)
+        return func()
+    return wrapper
+
+@log
+def pay():
+    return "paid"
+
+print(pay())
+```
+
+</Right>
+
+A decorator must **return a function**. `yield` belongs in generators.
+
+</Mistake>
+
+<Mistake title="Returning a full list when values should be produced lazily">
+
+<Wrong>
+
+```python
+def read_ids(count):
+    ids = []
+    for n in range(count):
+        ids.append(n)
+    return ids          # builds everything in memory first
+
+print(len(read_ids(100000)))   # 100000
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def read_ids(count):
+    for n in range(count):
+        yield n         # one at a time
+
+print(sum(1 for _ in read_ids(100000)))   # 100000
+```
+
+</Right>
+
+For large data that you process item by item, a generator avoids holding everything in memory.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a decorator and a generator?">
+
+A decorator is a function that takes another function and returns a wrapped version, to extend its behaviour without modifying it; it uses closures and the `@` syntax. A generator is a function with `yield` that returns an iterator and produces values lazily, one at a time, keeping its state between calls. Decorators are about wrapping behaviour; generators are about producing data efficiently.
+
+</QA>
+
+<QA q="Give one real use of each.">
+
+Decorator: `@login_required` in Django checks that the user is logged in before the view runs. Generator: reading a 5 GB log file line by line, where each line is yielded and processed without loading the whole file.
+
+</QA>
+
+<QA q="What does each one return when called?">
+
+Calling a decorator (with a function) returns a **function**. Calling a generator function returns a **generator object**, and no code in its body runs until the first `next()`.
+
+</QA>
+
+<QA q="Can a decorator be applied to a generator function?">
+
+Yes. A generator function is still a function, so it can be decorated. The wrapper usually returns the generator, or loops over it and yields the items itself if it needs to act on each one.
+
+</QA>
+
+<QA q="Which concept is each built on?">
+
+Decorators are built on **first-class functions and closures**. Generators are built on the **iterator protocol** (`__iter__` and `__next__`), which Python implements for you when it sees `yield`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which one uses the yield keyword?',
+      options: ['Decorator', 'Generator', 'Both', 'Neither'],
+      answer: 1,
+      why: 'yield is what makes a function a generator.',
+    },
+    {
+      q: 'You want to log every call of 20 different functions without editing them. What do you use?',
+      options: ['A generator', 'A decorator', 'A list comprehension', 'A tuple'],
+      answer: 1,
+      why: 'A decorator adds the same behaviour around many functions.',
+    },
+    {
+      q: 'You must process 10 million rows without loading all of them into memory. What do you use?',
+      options: ['A decorator', 'A generator', 'A class attribute', 'A lambda'],
+      answer: 1,
+      why: 'A generator yields one row at a time, keeping memory use small.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| | Decorator | Generator |
+| --- | --- | --- |
+| One line | Wraps a function | Yields values one by one |
+| Keyword | `@name` | `yield` |
+| Returns | A function | An iterator |
+| Good for | Logging, auth, caching | Big data, streams |
+| Runs | Around each call | On each `next()` |
+| Example | `@functools.lru_cache` | `(x for x in data)` |
+
+</CheatSheet>

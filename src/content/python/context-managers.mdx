@@ -1,0 +1,324 @@
+---
+id: python-context-managers
+title: Context managers (with)
+summary: A context manager sets something up, lets you use it, and always cleans it up afterwards, even if an error happens.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a hotel room. At check-in you get the key. You use the room. At check-out the key goes back, whatever happened during your stay.
+
+A **context manager** does the check-in and the check-out for you. You only write the part in the middle.
+
+</Analogy>
+
+## Simple explanation
+
+Some things must be released after use: a file must be closed, a database connection returned, a lock unlocked. A resource that is opened and never released is called a **resource leak**.
+
+A **context manager** guarantees the clean-up. You use it with the `with` statement:
+
+`with open("data.txt") as f:`
+
+Three things happen:
+
+1. **Enter**: the set-up runs, and its result is stored in the name after `as`
+2. Your indented block runs
+3. **Exit**: the clean-up runs. It runs even if your block raised an error or hit a `return`
+
+It replaces the longer `try` ... `finally` pattern.
+
+There are two ways to write your own:
+
+- A class with `__enter__` (set-up) and `__exit__` (clean-up)
+- A generator function with the `@contextmanager` decorator from `contextlib`. Code before `yield` is the set-up, and code after it is the clean-up
+
+`__exit__` receives details of any error that happened. If it returns `True`, the error is swallowed. Normally it returns nothing, and the error continues.
+
+## Code example
+
+```python
+from contextlib import contextmanager
+
+class Connection:                              # a context manager as a class
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):                       # set-up: runs at the start of with
+        print("open", self.name)
+        return self                            # this becomes the "as" name
+
+    def __exit__(self, exc_type, exc, tb):     # clean-up: always runs
+        print("close", self.name)
+        return False                           # do not hide errors
+
+    def query(self, sql):
+        return f"rows for: {sql}"
+
+with Connection("orders_db") as db:
+    print(db.query("SELECT 1"))
+
+try:
+    with Connection("users_db") as db:
+        raise ValueError("query failed")       # an error inside the block
+except ValueError as error:
+    print("handled:", error)                   # close still happened first
+
+@contextmanager                                # a context manager as a generator
+def section(title):
+    print(f"--- {title} start")                # set-up
+    try:
+        yield title.upper()                    # the value for "as"
+    finally:
+        print(f"--- {title} end")              # clean-up
+
+with section("report") as name:
+    print("working on", name)
+
+with open("demo.txt", "w") as f:               # files are context managers
+    f.write("hello")
+print(f.closed)
+```
+
+```output
+open orders_db
+rows for: SELECT 1
+close orders_db
+open users_db
+close users_db
+handled: query failed
+--- report start
+working on REPORT
+--- report end
+True
+```
+
+<Playground kind="python">
+
+```python
+import time
+from contextlib import contextmanager
+
+@contextmanager
+def timer(label):
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        seconds = time.perf_counter() - start
+        print(f"{label}: finished in under a second: {seconds < 1}")
+
+with timer("sum of squares"):
+    total = sum(n * n for n in range(100000))
+    print(total)
+
+# Try it: raise an error inside the with block. Does the timer line still print?
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Managing a resource by hand">
+
+<Wrong>
+
+```python
+f = open("log.txt", "w")
+f.write("start")
+# if an error happens here, close() never runs
+f.close()
+print(f.closed)   # True, but only because nothing failed
+```
+
+</Wrong>
+
+<Right>
+
+```python
+with open("log.txt", "w") as f:
+    f.write("start")
+print(f.closed)   # True, guaranteed
+```
+
+</Right>
+
+Manual `close()` is skipped when an error happens before it. `with` always cleans up.
+
+</Mistake>
+
+<Mistake title="Forgetting to return self from __enter__">
+
+<Wrong>
+
+```python
+class Session:
+    def __enter__(self):
+        print("start")          # returns None
+
+    def __exit__(self, *args):
+        print("end")
+
+with Session() as s:
+    print(s)   # None
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Session:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+with Session() as s:
+    print(type(s).__name__)   # Session
+```
+
+</Right>
+
+The name after `as` gets whatever `__enter__` returns.
+
+</Mistake>
+
+<Mistake title="No try-finally around yield in @contextmanager">
+
+<Wrong>
+
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def locked():
+    print("lock")
+    yield
+    print("unlock")             # skipped if the block raises
+
+try:
+    with locked():
+        raise RuntimeError("boom")
+except RuntimeError:
+    print("unlock never printed")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def locked():
+    print("lock")
+    try:
+        yield
+    finally:
+        print("unlock")         # always runs
+
+try:
+    with locked():
+        raise RuntimeError("boom")
+except RuntimeError:
+    print("handled")
+```
+
+</Right>
+
+An error in the block is raised at the `yield`. Put the clean-up in `finally`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a context manager?">
+
+An object that defines what happens on entering and leaving a `with` block, through `__enter__` and `__exit__`. It is used to acquire and release resources reliably: files, locks, database connections and transactions, temporary settings.
+
+</QA>
+
+<QA q="What do __enter__ and __exit__ do?">
+
+`__enter__` runs at the start of the `with` block and its return value is bound to the `as` variable. `__exit__(exc_type, exc_value, traceback)` runs when the block ends, whether normally or by exception. If it returns a true value, the exception is suppressed.
+
+</QA>
+
+<QA q="How is with different from try-finally?">
+
+They achieve the same guarantee, but `with` packages the set-up and clean-up into a reusable object, so every caller gets correct handling in one line and cannot forget the `finally`.
+
+</QA>
+
+<QA q="How do you create a context manager without a class?">
+
+Use `@contextlib.contextmanager` on a generator function that yields exactly once. The part before `yield` is the enter logic, the yielded value goes to `as`, and the part after `yield` (in `finally`) is the exit logic.
+
+</QA>
+
+<QA q="Can you use more than one context manager in a single with?">
+
+Yes. Separate them with commas. They are exited in reverse order.
+
+```python
+with open("demo.txt") as src, open("copy.txt", "w") as dst:
+    dst.write(src.read())
+print(src.closed, dst.closed)   # True True
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which two methods make a class a context manager?',
+      options: [
+        '__init__ and __del__',
+        '__enter__ and __exit__',
+        '__open__ and __close__',
+        '__start__ and __stop__',
+      ],
+      answer: 1,
+      why: '__enter__ runs at the start of the with block and __exit__ at the end.',
+    },
+    {
+      q: 'If an error happens inside a with block, does the clean-up still run?',
+      options: ['Yes', 'No', 'Only for files', 'Only if you catch the error'],
+      answer: 0,
+      why: '__exit__ always runs, which is the whole point of a context manager.',
+    },
+    {
+      q: 'In  with open("a.txt") as f:  what is f?',
+      options: [
+        'The file name',
+        'The value returned by __enter__',
+        'Always None',
+        'The with keyword',
+      ],
+      answer: 1,
+      why: 'The name after as receives whatever __enter__ returns, here the file object.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Use one | `with thing() as x:` |
+| Set-up (class) | `def __enter__(self): return self` |
+| Clean-up (class) | `def __exit__(self, exc_type, exc, tb):` |
+| Generator style | `@contextmanager` and one `yield` |
+| Safe clean-up | `try: yield` then `finally:` |
+| Two at once | `with a() as x, b() as y:` |
+| Ignore an error | `with contextlib.suppress(KeyError):` |
+
+</CheatSheet>

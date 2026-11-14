@@ -1,0 +1,265 @@
+---
+id: python-file-handling
+title: File handling
+summary: File handling means reading data from files and writing data to files on the disk.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a register in a shop. To use it, you open it, read or write some lines, and close it so the pages are safe.
+
+Working with a file in Python has the same three steps: open, read or write, close.
+
+</Analogy>
+
+## Simple explanation
+
+Variables are lost when a program ends. A **file** keeps data on the disk, so it stays.
+
+You open a file with `open(name, mode)`. The **mode** says what you want to do:
+
+- `"r"` read (the default). The file must exist
+- `"w"` write. It creates the file, or **erases** it if it already exists
+- `"a"` append. It adds to the end and keeps the old content
+- Add `"b"` for binary files such as images, for example `"rb"`
+
+A file must be closed after use. The safe way is the `with` statement. It closes the file for you, even if an error happens.
+
+Reading:
+
+- `f.read()` gives the whole file as one string
+- `f.readlines()` gives a list of lines
+- `for line in f:` reads one line at a time. This is best for big files
+
+Writing uses `f.write(text)`. It does not add a new line for you, so write `\n` yourself.
+
+Always pass `encoding="utf-8"` for text files, so Hindi and other non-English text works on every computer.
+
+## Code example
+
+```python
+from pathlib import Path
+
+with open("notes.txt", "w", encoding="utf-8") as f:   # w: create or overwrite
+    f.write("Buy milk\n")                             # write() needs \n for a new line
+    f.write("Pay rent\n")
+
+with open("notes.txt", "a", encoding="utf-8") as f:   # a: add at the end
+    f.write("Call Asha\n")
+
+with open("notes.txt", encoding="utf-8") as f:        # default mode is r: read
+    content = f.read()                                # the whole file as one string
+print(content, end="")
+
+with open("notes.txt", encoding="utf-8") as f:
+    for number, line in enumerate(f, start=1):        # one line at a time
+        print(number, line.strip())                   # strip() removes the \n
+
+print(f.closed)                                       # with closed the file for us
+print(Path("notes.txt").exists(), Path("missing.txt").exists())
+```
+
+```output
+Buy milk
+Pay rent
+Call Asha
+1 Buy milk
+2 Pay rent
+3 Call Asha
+True
+True False
+```
+
+<Playground kind="python">
+
+```python
+# Files here live in the browser's memory and vanish when you reload the page.
+with open("marks.txt", "w", encoding="utf-8") as f:
+    for name, marks in [("Asha", 82), ("Ravi", 67), ("Meera", 91)]:
+        f.write(f"{name},{marks}\n")
+
+total = 0
+with open("marks.txt", encoding="utf-8") as f:
+    for line in f:
+        name, marks = line.strip().split(",")
+        total += int(marks)
+        print(name, marks)
+
+print("Total:", total)
+
+# Try it: append one more student to the file, then read it again.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Opening a file that does not exist">
+
+<Wrong>
+
+```python
+with open("report_2030.txt") as f:   # FileNotFoundError
+    print(f.read())
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from pathlib import Path
+
+path = Path("report_2030.txt")
+if path.exists():
+    print(path.read_text(encoding="utf-8"))
+else:
+    print("File not found")   # File not found
+```
+
+</Right>
+
+Read mode needs an existing file. Check first, or catch `FileNotFoundError`.
+
+</Mistake>
+
+<Mistake title="Using w when you wanted to add">
+
+<Wrong>
+
+```python
+with open("log.txt", "w") as f:
+    f.write("first\n")
+with open("log.txt", "w") as f:
+    f.write("second\n")
+print(open("log.txt").read().strip())   # second
+```
+
+</Wrong>
+
+<Right>
+
+```python
+with open("log.txt", "w") as f:
+    f.write("first\n")
+with open("log.txt", "a") as f:
+    f.write("second\n")
+print(open("log.txt").read().split())   # ['first', 'second']
+```
+
+</Right>
+
+`"w"` wipes the file every time. Use `"a"` to keep what is already there.
+
+</Mistake>
+
+<Mistake title="Forgetting to close the file">
+
+<Wrong>
+
+```python
+f = open("data.txt", "w")
+f.write("hello")
+print(f.closed)   # False
+```
+
+</Wrong>
+
+<Right>
+
+```python
+with open("data.txt", "w") as f:
+    f.write("hello")
+print(f.closed)   # True
+```
+
+</Right>
+
+An open file can lose data or stay locked. `with` closes it automatically.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the file modes in Python?">
+
+`r` read, `w` write (truncate or create), `a` append, `x` create and fail if the file exists. Add `b` for binary and `+` for read and write together, for example `rb`, `w+` or `r+`.
+
+</QA>
+
+<QA q="Why should you use the with statement to open files?">
+
+`with` uses a **context manager**. It guarantees that the file is closed when the block ends, even if an exception is raised inside. It replaces a `try`-`finally` with `f.close()`.
+
+</QA>
+
+<QA q="What is the difference between read(), readline() and readlines()?">
+
+`read()` returns the whole file as one string. `readline()` returns the next single line. `readlines()` returns a list of all lines. For large files, loop over the file object, which reads one line at a time.
+
+</QA>
+
+<QA q="How do you read a very large file without running out of memory?">
+
+Do not call `read()`. Iterate over the file, which loads one line at a time, or read fixed-size chunks with `f.read(4096)`.
+
+```python
+with open("notes.txt", encoding="utf-8") as f:
+    count = sum(1 for line in f)
+print(count)
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which mode adds text to the end of a file without erasing it?',
+      options: ['"r"', '"w"', '"a"', '"x"'],
+      answer: 2,
+      why: 'a means append: new text goes after the existing content.',
+    },
+    {
+      q: 'What happens when you open an existing file with mode "w"?',
+      options: [
+        'Python raises an error',
+        'The old content is erased',
+        'Text is added at the end',
+        'The file opens read-only',
+      ],
+      answer: 1,
+      why: 'Write mode truncates the file to empty before writing.',
+    },
+    {
+      q: 'What is the main benefit of  with open(...) as f:?',
+      options: [
+        'It reads the file faster',
+        'It closes the file automatically',
+        'It encrypts the file',
+        'It creates a backup',
+      ],
+      answer: 1,
+      why: 'The with block closes the file when it ends, even if an error occurs.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Read everything | `open("a.txt").read()` inside `with` |
+| Read line by line | `for line in f:` |
+| Write (overwrite) | `open("a.txt", "w")` |
+| Append | `open("a.txt", "a")` |
+| Binary file | `open("a.png", "rb")` |
+| Safe open | `with open("a.txt", encoding="utf-8") as f:` |
+| Does it exist? | `Path("a.txt").exists()` |
+| Quick read | `Path("a.txt").read_text()` |
+
+</CheatSheet>

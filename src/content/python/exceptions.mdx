@@ -1,0 +1,288 @@
+---
+id: python-exceptions
+title: Exceptions (try, except, finally)
+summary: An exception is an error that happens while the program runs, and try-except lets you handle it so the program does not crash.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of paying by UPI at a shop. Sometimes the payment fails. A good shopkeeper does not close the shop. He says "no problem, pay by cash", and business goes on.
+
+**try-except** is that backup plan. Try the main way, and if it fails, handle it calmly.
+
+</Analogy>
+
+## Simple explanation
+
+An **exception** is an error that happens while the program is running. If nobody handles it, the program stops and prints a **traceback** (the error report).
+
+You handle exceptions with four blocks:
+
+- `try` holds the code that might fail
+- `except` runs only if an error happens in `try`
+- `else` runs only if **no** error happened
+- `finally` runs **always**, error or not. Use it for clean-up, such as closing a file
+
+Name the exact exception you expect, for example `except ValueError:`. You can write several `except` blocks, or catch a group with a tuple.
+
+`as error` gives you the exception object, so you can read its message.
+
+Common exceptions:
+
+| Exception | When it happens |
+| --- | --- |
+| `ValueError` | Right type, wrong value: `int("abc")` |
+| `TypeError` | Wrong type: `"5" + 5` |
+| `KeyError` | Dictionary key is missing |
+| `IndexError` | List index is out of range |
+| `ZeroDivisionError` | Dividing by zero |
+| `FileNotFoundError` | The file does not exist |
+| `AttributeError` | The object has no such attribute or method |
+
+## Code example
+
+```python
+def to_number(text):
+    try:
+        number = int(text)                 # this line might fail
+    except ValueError as error:            # runs only if int() failed
+        print("Not a number:", error)
+        return 0
+    else:                                  # runs only if there was no error
+        print("Converted", number)
+        return number
+    finally:                               # always runs
+        print("Done with", repr(text))
+
+to_number("42")
+to_number("abc")
+
+def divide(a, b):
+    try:
+        return a / b
+    except ZeroDivisionError:              # one specific error
+        return "cannot divide by zero"
+    except TypeError:                      # another specific error
+        return "numbers only"
+
+print(divide(10, 2), divide(10, 0), divide(10, "x"), sep=" | ")
+
+data = {"name": "Asha"}
+try:
+    print(data["email"])
+except (KeyError, IndexError) as error:    # catch either one
+    print("Missing:", error)
+```
+
+```output
+Converted 42
+Done with '42'
+Not a number: invalid literal for int() with base 10: 'abc'
+Done with 'abc'
+5.0 | cannot divide by zero | numbers only
+Missing: 'email'
+```
+
+<Playground kind="python">
+
+```python
+prices = ["120", "45.5", "free", "", "300"]
+total = 0
+
+for text in prices:
+    try:
+        total += float(text)
+    except ValueError:
+        print("Skipping bad value:", repr(text))
+
+print("Total:", total)
+
+# Try it: add None to the list. Which new exception do you need to catch?
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Catching everything with a bare except">
+
+<Wrong>
+
+```python
+try:
+    total = 10 / 0
+except:
+    pass          # hides every error, even typos
+print("done")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+try:
+    total = 10 / 0
+except ZeroDivisionError as error:
+    print("Problem:", error)   # Problem: division by zero
+```
+
+</Right>
+
+A bare `except` swallows bugs you did not expect. Catch the specific exception and at least log it.
+
+</Mistake>
+
+<Mistake title="Putting too much code inside try">
+
+<Wrong>
+
+```python
+try:
+    marks = {"Asha": 80}
+    name = "Ravi"
+    print(marks[name] / 0)
+except Exception:
+    print("something failed")   # which line? no idea
+```
+
+</Wrong>
+
+<Right>
+
+```python
+marks = {"Asha": 80}
+name = "Ravi"
+try:
+    score = marks[name]
+except KeyError:
+    score = 0
+print(score)   # 0
+```
+
+</Right>
+
+Wrap only the line that can fail. Then you know exactly what went wrong.
+
+</Mistake>
+
+<Mistake title="Ordering except blocks from general to specific">
+
+<Wrong>
+
+```python
+try:
+    int("abc")
+except Exception:
+    print("general")   # general
+except ValueError:
+    print("specific")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+try:
+    int("abc")
+except ValueError:
+    print("specific")   # specific
+except Exception:
+    print("general")
+```
+
+</Right>
+
+Python uses the first matching `except`. `Exception` matches almost everything, so put it last.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a syntax error and an exception?">
+
+A **syntax error** is found before the program runs, because the code breaks the grammar rules. An **exception** happens during execution, in code that is valid, such as dividing by zero. Exceptions can be caught with `try`-`except`; syntax errors cannot.
+
+</QA>
+
+<QA q="What is the use of else and finally in try-except?">
+
+`else` runs only when the `try` block raised no exception. It keeps the "success" code out of the `try`. `finally` runs in every case, even after a `return` or an unhandled error, so it is used for clean-up like closing connections.
+
+</QA>
+
+<QA q="Does finally run if there is a return in try?">
+
+Yes. `finally` runs before the function actually returns. If `finally` has its own `return`, that value replaces the earlier one.
+
+```python
+def f():
+    try:
+        return "try"
+    finally:
+        print("cleanup")
+
+print(f())
+```
+
+</QA>
+
+<QA q="What is the difference between except Exception and a bare except?">
+
+`except Exception` catches normal errors. A bare `except:` also catches `KeyboardInterrupt` and `SystemExit`, which you almost never want to block, because the user could not stop the program with Ctrl+C.
+
+</QA>
+
+<QA q="What is the exception hierarchy?">
+
+All exceptions inherit from `BaseException`. Normal errors inherit from `Exception`. Under it are groups such as `ArithmeticError` (with `ZeroDivisionError`) and `LookupError` (with `KeyError` and `IndexError`). Catching a parent class also catches its children.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which block always runs, whether or not an error happened?',
+      options: ['try', 'except', 'else', 'finally'],
+      answer: 3,
+      why: 'finally runs in every case, which makes it the place for clean-up code.',
+    },
+    {
+      q: 'Which exception does int("hello") raise?',
+      options: ['TypeError', 'ValueError', 'KeyError', 'NameError'],
+      answer: 1,
+      why: 'The type (str) is acceptable for int(), but the value is not a number, so it is a ValueError.',
+    },
+    {
+      q: 'When does the else block of a try statement run?',
+      options: [
+        'When an exception happens',
+        'When no exception happens',
+        'Always',
+        'Never',
+      ],
+      answer: 1,
+      why: 'else runs only if the try block finished without raising an exception.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Block | Runs when |
+| --- | --- |
+| `try:` | Always first. Holds the risky code |
+| `except ValueError:` | That error happened |
+| `except (A, B) as e:` | Either error happened; `e` has the details |
+| `else:` | No error happened |
+| `finally:` | Always, at the end |
+
+Catch specific exceptions. Keep the `try` block small.
+
+</CheatSheet>

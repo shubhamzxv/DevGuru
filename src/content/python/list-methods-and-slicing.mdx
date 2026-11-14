@@ -1,0 +1,251 @@
+---
+id: python-list-methods-and-slicing
+title: List methods and slicing
+summary: List methods add, remove and sort items, and slicing takes a part of a list.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a train. Workers can attach a coach at the end, put one in the middle, remove a coach, or arrange the coaches in order.
+
+**List methods** are those workers. **Slicing** is like looking at only coaches 2 to 5.
+
+</Analogy>
+
+## Simple explanation
+
+List **methods** change the list in place. Most of them return `None`, so do not store their result.
+
+Adding items:
+
+- `append(x)` adds one item at the end
+- `insert(i, x)` adds an item at position `i`
+- `extend(other)` adds every item from another list
+
+Removing items:
+
+- `remove(x)` removes the first item equal to `x`
+- `pop()` removes and gives back the last item. `pop(i)` does it for position `i`
+
+Ordering:
+
+- `sort()` sorts the list itself
+- `sorted(items)` leaves the list alone and returns a new sorted list
+- `reverse()` flips the order
+
+A **slice** is written `items[start:stop:step]`. It returns a new list. `start` is included and `stop` is not. Leave one out to mean "from the beginning" or "to the end".
+
+## Code example
+
+```python
+nums = [40, 10, 30]
+
+nums.append(20)                  # add at the end
+nums.insert(0, 50)               # add at position 0
+print(nums)
+
+nums.remove(10)                  # remove the value 10
+last = nums.pop()                # remove and return the last item
+print(last, nums)
+
+print(sorted(nums))              # new sorted list, nums is unchanged
+nums.sort(reverse=True)          # sort nums itself, biggest first
+print(nums)
+
+letters = ["a", "b", "c", "d", "e"]
+print(letters[1:4])              # positions 1, 2, 3
+print(letters[:2], letters[3:])  # first two, and from position 3
+print(letters[::2])              # every second item
+print(letters[::-1])             # reversed copy
+```
+
+```output
+[50, 40, 10, 30, 20]
+20 [50, 40, 30]
+[30, 40, 50]
+[50, 40, 30]
+['b', 'c', 'd']
+['a', 'b'] ['d', 'e']
+['a', 'c', 'e']
+['e', 'd', 'c', 'b', 'a']
+```
+
+<Playground kind="python">
+
+```python
+queue = ["Asha", "Ravi", "Meera"]
+
+queue.append("Kabir")        # a new person joins at the end
+served = queue.pop(0)        # the first person is served
+print("Served:", served)
+print("Waiting:", queue)
+print("First two:", queue[:2])
+
+# Try it: insert "Zoya" at position 1.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Saving the result of sort()">
+
+<Wrong>
+
+```python
+nums = [3, 1, 2]
+nums = nums.sort()
+print(nums)   # None
+```
+
+</Wrong>
+
+<Right>
+
+```python
+nums = [3, 1, 2]
+nums.sort()
+print(nums)   # [1, 2, 3]
+```
+
+</Right>
+
+`sort()` changes the list and returns `None`. Use `sorted(nums)` if you want a new list back.
+
+</Mistake>
+
+<Mistake title="Removing items while looping over the same list">
+
+<Wrong>
+
+```python
+nums = [1, 2, 2, 3]
+for n in nums:
+    if n == 2:
+        nums.remove(n)
+print(nums)   # [1, 2, 3]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+nums = [1, 2, 2, 3]
+nums = [n for n in nums if n != 2]
+print(nums)   # [1, 3]
+```
+
+</Right>
+
+Removing during a loop makes Python skip items. Build a new list instead.
+
+</Mistake>
+
+<Mistake title="Removing a value that is not in the list">
+
+<Wrong>
+
+```python
+nums = [1, 2, 3]
+nums.remove(9)   # ValueError: list.remove(x): x not in list
+```
+
+</Wrong>
+
+<Right>
+
+```python
+nums = [1, 2, 3]
+if 9 in nums:
+    nums.remove(9)
+print(nums)   # [1, 2, 3]
+```
+
+</Right>
+
+Check with `in` first, or catch the `ValueError`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between sort() and sorted()?">
+
+`list.sort()` sorts the list in place and returns `None`. It works only on lists. `sorted()` works on any iterable and returns a new list, leaving the original unchanged. Both accept `key` and `reverse`.
+
+```python
+names = ["Ravi", "asha", "Meera"]
+print(sorted(names, key=str.lower))   # ['asha', 'Meera', 'Ravi']
+```
+
+</QA>
+
+<QA q="What is the difference between remove(), pop() and del?">
+
+`remove(x)` deletes the first item with the value `x`. `pop(i)` deletes the item at index `i` and returns it. `del items[i]` deletes by index (or a whole slice) and returns nothing.
+
+</QA>
+
+<QA q="How do you copy a list?">
+
+Use `items.copy()`, `items[:]` or `list(items)`. All three make a **shallow copy**: a new outer list that still shares any nested lists. For a fully separate copy, use `copy.deepcopy()`.
+
+</QA>
+
+<QA q="How do you get the last three items of a list?">
+
+Use a negative slice.
+
+```python
+nums = [1, 2, 3, 4, 5]
+print(nums[-3:])   # [3, 4, 5]
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does [5, 6, 7, 8][1:3] give?',
+      options: ['[5, 6]', '[6, 7]', '[6, 7, 8]', '[7, 8]'],
+      answer: 1,
+      why: 'The slice takes positions 1 and 2. Position 3 is not included.',
+    },
+    {
+      q: 'What does nums.sort() return?',
+      options: ['A new sorted list', 'The same list', 'None', 'True'],
+      answer: 2,
+      why: 'sort() changes the list in place and returns None.',
+    },
+    {
+      q: 'What does [1, 2, 3].pop() return?',
+      options: ['1', '3', '[1, 2]', 'None'],
+      answer: 1,
+      why: 'pop() removes the last item and gives it back.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Add at the end | `items.append(x)` |
+| Add at a position | `items.insert(0, x)` |
+| Add many | `items.extend([x, y])` |
+| Remove by value | `items.remove(x)` |
+| Remove by position | `items.pop(0)` |
+| Sort in place | `items.sort()` |
+| New sorted list | `sorted(items)` |
+| Reverse in place | `items.reverse()` |
+| First three | `items[:3]` |
+| Last three | `items[-3:]` |
+| Reversed copy | `items[::-1]` |
+
+</CheatSheet>

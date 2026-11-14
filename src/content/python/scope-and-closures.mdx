@@ -1,0 +1,259 @@
+---
+id: python-scope-and-closures
+title: Scope and closures (LEGB)
+summary: Scope decides where a variable can be used, and a closure is a function that remembers variables from the place where it was made.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of looking for your keys. First you check your pocket. Then your room. Then the whole house. Last, you ask the building's security desk.
+
+Python looks for a variable name in the same way: from the nearest place to the farthest.
+
+</Analogy>
+
+## Simple explanation
+
+**Scope** is the part of the code where a variable can be seen.
+
+When you use a name, Python searches four scopes in this order. The short form is **LEGB**:
+
+1. **Local**: inside the current function
+2. **Enclosing**: inside any outer function that wraps the current one
+3. **Global**: at the top level of the file
+4. **Built-in**: names that come with Python, such as `len` and `print`
+
+A variable made inside a function is **local**. It disappears when the function ends, and code outside cannot see it.
+
+A function can **read** a global variable. To **assign** to it, you must say `global name` first. For a variable of an outer function, you say `nonlocal name`.
+
+A **closure** is an inner function that remembers the variables of its outer function, even after the outer function has finished. Closures let you make functions that carry their own private data.
+
+## Code example
+
+```python
+tax_rate = 0.18                        # global: made at the top level
+
+def price_with_tax(price):
+    tax = price * tax_rate             # tax is local; tax_rate is read from global
+    return price + tax
+
+print(price_with_tax(100))
+
+def outer():
+    message = "from outer"             # enclosing scope for inner()
+    def inner():
+        return message                 # found in the enclosing scope
+    return inner()
+
+print(outer())
+
+def make_counter():
+    count = 0                          # private to each counter
+    def increment():
+        nonlocal count                 # allow assigning to the outer variable
+        count += 1
+        return count
+    return increment                   # return the inner function itself
+
+counter = make_counter()               # outer function has finished here
+print(counter(), counter(), counter()) # but count is still remembered: a closure
+
+def make_multiplier(n):
+    return lambda x: x * n             # the lambda remembers n
+
+double = make_multiplier(2)
+triple = make_multiplier(3)
+print(double(10), triple(10))
+```
+
+```output
+118.0
+from outer
+1 2 3
+20 30
+```
+
+<Playground kind="python">
+
+```python
+def make_discount(percent):
+    def apply(price):
+        return price - price * percent / 100
+    return apply
+
+festival = make_discount(20)
+clearance = make_discount(50)
+
+print(festival(1000))
+print(clearance(1000))
+
+# Try it: make a  student  discount of 10 percent.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Assigning to a global variable without global">
+
+<Wrong>
+
+```python
+count = 0
+
+def add_one():
+    count += 1   # UnboundLocalError
+
+add_one()
+```
+
+</Wrong>
+
+<Right>
+
+```python
+count = 0
+
+def add_one():
+    global count
+    count += 1
+
+add_one()
+print(count)   # 1
+```
+
+</Right>
+
+Assigning inside a function makes the name local. Say `global count`, or better, pass the value in and return the new one.
+
+</Mistake>
+
+<Mistake title="Using a local variable outside its function">
+
+<Wrong>
+
+```python
+def compute():
+    result = 42
+
+compute()
+print(result)   # NameError: name 'result' is not defined
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def compute():
+    return 42
+
+result = compute()
+print(result)   # 42
+```
+
+</Right>
+
+A local variable lives only inside its function. Return the value to use it outside.
+
+</Mistake>
+
+<Mistake title="Naming a variable after a built-in">
+
+<Wrong>
+
+```python
+list = [1, 2, 3]
+print(list("abc"))   # TypeError: 'list' object is not callable
+```
+
+</Wrong>
+
+<Right>
+
+```python
+numbers = [1, 2, 3]
+print(list("abc"))   # ['a', 'b', 'c']
+```
+
+</Right>
+
+Your global name hides the built-in one, because Global is searched before Built-in. Avoid names like `list`, `str`, `sum`, `id` and `max`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the LEGB rule?">
+
+The order in which Python resolves a name: **L**ocal (current function), **E**nclosing (outer functions), **G**lobal (module level), **B**uilt-in. Python uses the first match it finds.
+
+</QA>
+
+<QA q="What is a closure?">
+
+A closure is an inner function that keeps access to variables from its enclosing function after that function has returned. Three things are needed: a nested function, the inner function uses a variable of the outer one, and the outer function returns the inner function.
+
+</QA>
+
+<QA q="What is the difference between global and nonlocal?">
+
+`global x` lets a function assign to a module-level variable. `nonlocal x` lets an inner function assign to a variable of the nearest enclosing function. Without them, an assignment creates a new local variable.
+
+</QA>
+
+<QA q="Where are closures used in practice?">
+
+In **decorators**, in function factories (like `make_multiplier`), in callbacks that need to remember some data, and to keep state private without writing a class.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In LEGB, which scope does Python search first?',
+      options: ['Global', 'Built-in', 'Local', 'Enclosing'],
+      answer: 2,
+      why: 'Python starts with the Local scope of the current function.',
+    },
+    {
+      q: 'Which keyword lets an inner function assign to a variable of its outer function?',
+      options: ['global', 'nonlocal', 'outer', 'static'],
+      answer: 1,
+      why: 'nonlocal refers to a variable in the nearest enclosing function.',
+    },
+    {
+      q: 'What is a closure?',
+      options: [
+        'A function with no return value',
+        'A function that remembers variables from its enclosing function',
+        'A function that closes a file',
+        'A class with one method',
+      ],
+      answer: 1,
+      why: 'A closure keeps the variables of the outer function alive and uses them later.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Meaning |
+| --- | --- |
+| Local | Made inside the current function |
+| Enclosing | Belongs to an outer function |
+| Global | Made at the top level of the file |
+| Built-in | Comes with Python (`len`, `print`) |
+| `global x` | Assign to the global `x` from a function |
+| `nonlocal x` | Assign to the outer function's `x` |
+| Closure | Inner function that remembers outer variables |
+
+Search order: Local, Enclosing, Global, Built-in.
+
+</CheatSheet>

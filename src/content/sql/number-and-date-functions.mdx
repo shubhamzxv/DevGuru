@@ -1,0 +1,243 @@
+---
+id: sql-number-and-date-functions
+title: Number and date functions
+summary: Number functions round and calculate values, and date functions read parts of a date, add time to it, or find the gap between two dates.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a shopkeeper with a calculator and a wall calendar. With the calculator he rounds a bill to the nearest rupee. With the calendar he finds which month a bill belongs to, and how many days are left until payment is due.
+
+**Number functions** are the calculator. **Date functions** are the calendar.
+
+</Analogy>
+
+## Simple explanation
+
+**Number functions** work on numeric values:
+
+| Function | What it does |
+| --- | --- |
+| `ROUND(x, n)` | Round to `n` decimal places |
+| `ABS(x)` | Remove the minus sign |
+| `CEIL(x)`, `FLOOR(x)` | Round up, round down to a whole number |
+| `x % y` or `MOD(x, y)` | Remainder after division |
+| `MAX(a, b)`, `MIN(a, b)` | Larger or smaller of two values (SQLite; elsewhere `GREATEST`, `LEAST`) |
+
+**Date functions** are the part of SQL that differs most between databases. The ideas are the same everywhere:
+
+1. Get today's date
+2. Take out a part: the year, the month, the weekday
+3. Add or subtract days, months or years
+4. Find the difference between two dates
+
+How each database spells them:
+
+| Task | SQLite (this playground) | MySQL | PostgreSQL |
+| --- | --- | --- | --- |
+| Today | `date('now')` | `CURDATE()` | `CURRENT_DATE` |
+| Year of a date | `strftime('%Y', d)` | `YEAR(d)` | `EXTRACT(YEAR FROM d)` |
+| Add 7 days | `date(d, '+7 days')` | `DATE_ADD(d, INTERVAL 7 DAY)` | `d + INTERVAL '7 days'` |
+| Days between | `julianday(b) - julianday(a)` | `DATEDIFF(b, a)` | `b - a` |
+
+Always store dates in the form `YYYY-MM-DD`. In that form, sorting and comparing them as text gives the right answer.
+
+## Code example
+
+```sql
+SELECT
+  name,
+  price,
+  ROUND(price * 1.18, 2)     AS with_gst,          -- two decimal places
+  ROUND(price * 1.18)        AS rounded,           -- nearest whole number
+  CAST(price AS INTEGER) % 100 AS last_two_digits  -- remainder
+FROM products
+LIMIT 3;
+```
+
+```output
+name                | price  | with_gst | rounded | last_two_digits
+--------------------+--------+----------+---------+----------------
+Wireless Mouse      | 599.0  | 706.82   | 707.0   | 99
+Mechanical Keyboard | 2499.0 | 2948.82  | 2949.0  | 99
+USB-C Cable         | 299.0  | 352.82   | 353.0   | 99
+```
+
+```sql
+SELECT
+  name,
+  hire_date,
+  strftime('%Y', hire_date)                         AS year,          -- take out a part
+  strftime('%m', hire_date)                         AS month,
+  date(hire_date, '+6 months')                      AS probation_ends, -- add time
+  CAST(julianday('2024-12-31') - julianday(hire_date) AS INTEGER) AS days_in_company  -- gap
+FROM employees
+ORDER BY hire_date DESC
+LIMIT 3;
+```
+
+```output
+name           | hire_date  | year | month | probation_ends | days_in_company
+---------------+------------+------+-------+----------------+----------------
+Nikhil Das     | 2024-07-01 | 2024 | 07    | 2025-01-01     | 183
+Zoya Fernandes | 2024-02-12 | 2024 | 02    | 2024-08-12     | 323
+Divya Menon    | 2023-06-12 | 2023 | 06    | 2023-12-12     | 568
+```
+
+<Playground kind="sql">
+
+```sql
+-- Orders per month
+SELECT
+  strftime('%Y-%m', order_date) AS month,
+  COUNT(*)                      AS orders
+FROM orders
+GROUP BY month
+ORDER BY month;
+
+-- Try it: show only orders placed in the first half of the month (day 15 or earlier).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Storing dates as DD-MM-YYYY text">
+
+<Wrong>
+
+```sql
+SELECT '15-01-2024' < '02-12-2023' AS earlier;   -- gives 0: text compares day first
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT '2023-12-02' < '2024-01-15' AS earlier;   -- gives 1 (true)
+```
+
+</Right>
+
+Only `YYYY-MM-DD` sorts correctly as text. Better still, use a real `DATE` column in MySQL or PostgreSQL.
+
+</Mistake>
+
+<Mistake title="Wrapping a date column in a function inside WHERE">
+
+<Wrong>
+
+```sql
+SELECT COUNT(*) FROM orders WHERE strftime('%Y', order_date) = '2024';   -- works, but scans every row
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT COUNT(*) FROM orders WHERE order_date >= '2024-01-01' AND order_date < '2025-01-01';
+```
+
+</Right>
+
+A range on the plain column can use an index. A function on the column cannot.
+
+</Mistake>
+
+<Mistake title="Expecting ROUND to return a whole-number type">
+
+<Wrong>
+
+```sql
+SELECT ROUND(7.5) AS value, typeof(ROUND(7.5)) AS type;   -- 8.0, real
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT CAST(ROUND(7.5) AS INTEGER) AS value;   -- 8
+```
+
+</Right>
+
+`ROUND` returns a decimal value in SQLite. Cast it when you need an integer.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between ROUND, CEIL and FLOOR?">
+
+`ROUND` goes to the nearest value at the given number of decimals. `CEIL` (ceiling) always goes up to the next whole number, and `FLOOR` always goes down. For 4.2: `ROUND` gives 4, `CEIL` gives 5, `FLOOR` gives 4.
+
+</QA>
+
+<QA q="How do you find the number of days between two dates?">
+
+MySQL: `DATEDIFF(end, start)`. PostgreSQL: `end - start` for dates. SQL Server: `DATEDIFF(day, start, end)`. SQLite: `julianday(end) - julianday(start)`.
+
+</QA>
+
+<QA q="How do you get all records from the last 30 days?">
+
+Compare the date column with "today minus 30 days".
+
+```mysql
+SELECT * FROM orders WHERE order_date >= CURDATE() - INTERVAL 30 DAY;
+```
+
+In SQLite: `WHERE order_date >= date('now', '-30 days')`.
+
+</QA>
+
+<QA q="What is the difference between NOW() and CURDATE() in MySQL?">
+
+`NOW()` returns the current date **and** time. `CURDATE()` returns only the date. `CURTIME()` returns only the time.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does ROUND(12.3456, 2) return?',
+      options: ['12', '12.3', '12.35', '12.34'],
+      answer: 2,
+      why: 'It keeps two decimal places and rounds the last one up.',
+    },
+    {
+      q: 'What does 17 % 5 return?',
+      options: ['3', '2', '3.4', '5'],
+      answer: 1,
+      why: '17 is 5 x 3 + 2, so the remainder is 2.',
+    },
+    {
+      q: 'Which date format sorts correctly as text?',
+      options: ['DD-MM-YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD', 'DD Month YYYY'],
+      answer: 2,
+      why: 'With the year first, then month, then day, text order equals date order.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | SQLite | MySQL |
+| --- | --- | --- |
+| Round to 2 places | `ROUND(x, 2)` | Same |
+| Remainder | `x % y` | `MOD(x, y)` |
+| Today | `date('now')` | `CURDATE()` |
+| Year | `strftime('%Y', d)` | `YEAR(d)` |
+| Month | `strftime('%m', d)` | `MONTH(d)` |
+| Add days | `date(d, '+7 days')` | `DATE_ADD(d, INTERVAL 7 DAY)` |
+| Days between | `julianday(b) - julianday(a)` | `DATEDIFF(b, a)` |
+
+</CheatSheet>

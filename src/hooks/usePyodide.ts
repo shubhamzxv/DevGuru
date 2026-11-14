@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cleanTraceback } from '../utils/pythonError';
+import { parseTrace, type TraceResult } from '../utils/trace';
 
 export type WorkerMessage =
   | { type: 'stdout'; text: string }
   | { type: 'stderr'; text: string }
   | { type: 'started' }
   | { type: 'done' }
+  | { type: 'trace'; result: string }
   | { type: 'error'; message: string }
   | { type: 'loadError'; message: string };
 
@@ -22,7 +24,9 @@ const MAX_LINES = 1000;
 
 /**
  * Runs Python code in a Web Worker.
- * The worker (and the ~8 MB Pyodide download) starts only on the first run().
+ * The worker (and the ~8 MB Pyodide download) starts only on the first run.
+ * run(code)       -> normal run, printed lines arrive in `output`
+ * runSteps(code)  -> step-by-step run, the recording arrives in `trace`
  */
 export function usePyodide() {
   const workerRef = useRef<Worker | null>(null);
@@ -30,6 +34,7 @@ export function usePyodide() {
   const lineCountRef = useRef(0);
   const [status, setStatus] = useState<PythonStatus>('idle');
   const [output, setOutput] = useState<OutputLine[]>([]);
+  const [trace, setTrace] = useState<TraceResult | null>(null);
 
   const append = useCallback((line: OutputLine) => {
     setOutput((lines) => [...lines, line]);
@@ -47,11 +52,12 @@ export function usePyodide() {
     [append],
   );
 
-  const run = useCallback(
-    (code: string) => {
+  const start = useCallback(
+    (mode: 'run' | 'trace', code: string) => {
       window.clearTimeout(timerRef.current);
       lineCountRef.current = 0;
       setOutput([]);
+      setTrace(null);
       setStatus('loading');
 
       let worker = workerRef.current;
@@ -79,6 +85,12 @@ export function usePyodide() {
                 stop(`Stopped: the code ran for more than ${TIMEOUT_MS / 1000} seconds.`);
               }, TIMEOUT_MS);
               break;
+            case 'trace': {
+              const parsed = parseTrace(message.result);
+              if (parsed) setTrace(parsed);
+              else append({ kind: 'err', text: 'Could not read the step-by-step result.' });
+              break;
+            }
             case 'done':
               window.clearTimeout(timerRef.current);
               setStatus('idle');
@@ -89,19 +101,23 @@ export function usePyodide() {
               setStatus('idle');
               break;
             case 'loadError':
-              stop('Could not load Python. Check your internet connection and press Run again.');
+              stop('Could not load Python. Check your internet connection and try again.');
               break;
           }
         };
         worker.onerror = () => {
-          stop('Could not load Python. Check your internet connection and press Run again.');
+          stop('Could not load Python. Check your internet connection and try again.');
         };
       }
 
-      worker.postMessage({ type: 'run', code });
+      worker.postMessage({ type: mode, code });
     },
     [append, stop],
   );
+
+  const run = useCallback((code: string) => start('run', code), [start]);
+  const runSteps = useCallback((code: string) => start('trace', code), [start]);
+  const clearTrace = useCallback(() => setTrace(null), []);
 
   // Leaving the page: free the worker.
   useEffect(
@@ -112,5 +128,5 @@ export function usePyodide() {
     [],
   );
 
-  return { status, output, run, stop };
+  return { status, output, trace, run, runSteps, clearTrace, stop };
 }

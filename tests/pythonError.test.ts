@@ -20,6 +20,17 @@ describe('cleanTraceback', () => {
     );
   });
 
+  it('hides the line about the playground input() helper', () => {
+    const raw = [
+      'Traceback (most recent call last):',
+      '  File "<exec>", line 1, in <module>',
+      '  File "<exec>", line 4, in _devguru_input',
+      'RuntimeError: input() is not supported in this playground.',
+    ].join('\n');
+    expect(cleanTraceback(raw)).not.toContain('_devguru_input');
+    expect(cleanTraceback(raw)).toContain('line 1, in <module>');
+  });
+
   it('leaves other messages unchanged', () => {
     expect(cleanTraceback('Something else went wrong\n')).toBe('Something else went wrong');
   });

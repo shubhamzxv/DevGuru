@@ -1,0 +1,275 @@
+---
+id: python-multithreading-vs-multiprocessing
+title: Multithreading vs multiprocessing
+summary: Threads share memory and suit tasks that wait, while processes have separate memory and suit tasks that calculate.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+**Multithreading** is one cook handling many dishes in one kitchen. He is quick to switch, and everything is within reach. But he has only one pair of hands, so he gains time only while something is boiling.
+
+**Multiprocessing** is four cooks in four separate kitchens. Four dishes are really made at once. But each kitchen costs money, and passing ingredients between kitchens takes effort.
+
+</Analogy>
+
+## Simple explanation
+
+Both let a program do more than one thing. The right choice depends on **what the task spends its time on**.
+
+Two words first:
+
+- **Concurrency** means dealing with many tasks by switching between them. They overlap in time, but only one runs at any instant
+- **Parallelism** means tasks really run at the same instant, on different CPU cores
+
+In CPython, threads give concurrency (because of the GIL). Processes give parallelism.
+
+| Point | Multithreading | Multiprocessing |
+| --- | --- | --- |
+| Unit | Thread | Process |
+| Memory | Shared | Separate for each process |
+| GIL | One GIL shared by all threads | One GIL per process |
+| True parallel Python code | No | Yes |
+| Best for | I/O-bound: API calls, DB, files | CPU-bound: maths, image and data processing |
+| Start-up cost | Low | High |
+| Memory use | Low | High |
+| Sharing data | Easy, but needs locks | Needs Queue, Pipe or pickling |
+| A crash affects | The whole process | Only that process |
+| Module | `threading` | `multiprocessing` |
+
+A simple rule:
+
+- The task **waits** (network, disk, database): use **threads**, or `asyncio` for very many tasks
+- The task **calculates** (keeps a CPU core busy): use **processes**
+
+`concurrent.futures` gives both the same interface. You can switch between `ThreadPoolExecutor` and `ProcessPoolExecutor` by changing one word.
+
+Neither runs in this page's browser playground, so this topic has no "Try it yourself" box.
+
+## Code example
+
+```python
+import time
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
+def io_task(n):                               # I/O-bound: mostly waiting
+    time.sleep(0.2)
+    return n
+
+def cpu_task(n):                              # CPU-bound: mostly calculating
+    return sum(i * i for i in range(n))
+
+def timed(executor_class, func, jobs):
+    start = time.perf_counter()
+    with executor_class(max_workers=4) as pool:
+        results = list(pool.map(func, jobs))
+    return results, time.perf_counter() - start
+
+if __name__ == "__main__":
+    io_jobs = [1, 2, 3, 4]
+    cpu_jobs = [50000] * 4
+
+    results, seconds = timed(ThreadPoolExecutor, io_task, io_jobs)
+    print("threads, I/O task:", results, "| about 0.2s, not 0.8s:", seconds < 0.6)
+
+    thread_results, _ = timed(ThreadPoolExecutor, cpu_task, cpu_jobs)
+    process_results, _ = timed(ProcessPoolExecutor, cpu_task, cpu_jobs)
+    print("same answers from threads and processes:", thread_results == process_results)
+    print("only the processes used several CPU cores for the calculation")
+```
+
+```output
+threads, I/O task: [1, 2, 3, 4] | about 0.2s, not 0.8s: True
+same answers from threads and processes: True
+only the processes used several CPU cores for the calculation
+```
+
+<Visual caption="Threads live inside one process and share its memory and its single GIL. Processes are separate, each with its own memory and GIL.">
+  <svg viewBox="0 0 340 140" width="340" height="140" role="img" aria-label="Left: one process containing three threads that share memory and one GIL. Right: three separate processes, each with its own memory and GIL.">
+    <rect x="8" y="8" width="150" height="124" rx="10" fill="#f1f5f9" stroke="#64748b" strokeWidth="2" />
+    <text x="83" y="26" textAnchor="middle" fontSize="12" fontWeight="bold" fill="#334155">One process</text>
+    <rect x="20" y="36" width="36" height="40" rx="6" fill="#c7d2fe" stroke="#4f46e5" strokeWidth="2" />
+    <text x="38" y="60" textAnchor="middle" fontSize="11" fill="#1e1b4b">T1</text>
+    <rect x="65" y="36" width="36" height="40" rx="6" fill="#c7d2fe" stroke="#4f46e5" strokeWidth="2" />
+    <text x="83" y="60" textAnchor="middle" fontSize="11" fill="#1e1b4b">T2</text>
+    <rect x="110" y="36" width="36" height="40" rx="6" fill="#c7d2fe" stroke="#4f46e5" strokeWidth="2" />
+    <text x="128" y="60" textAnchor="middle" fontSize="11" fill="#1e1b4b">T3</text>
+    <rect x="20" y="86" width="126" height="18" rx="4" fill="#fde68a" stroke="#d97706" strokeWidth="1.5" />
+    <text x="83" y="99" textAnchor="middle" fontSize="10" fill="#78350f">shared memory</text>
+    <rect x="20" y="108" width="126" height="18" rx="4" fill="#fecaca" stroke="#dc2626" strokeWidth="1.5" />
+    <text x="83" y="121" textAnchor="middle" fontSize="10" fill="#7f1d1d">one GIL</text>
+    <rect x="176" y="8" width="48" height="124" rx="8" fill="#f1f5f9" stroke="#64748b" strokeWidth="2" />
+    <text x="200" y="26" textAnchor="middle" fontSize="11" fontWeight="bold" fill="#334155">P1</text>
+    <rect x="182" y="86" width="36" height="18" rx="4" fill="#fde68a" stroke="#d97706" strokeWidth="1.5" />
+    <text x="200" y="99" textAnchor="middle" fontSize="9" fill="#78350f">memory</text>
+    <rect x="182" y="108" width="36" height="18" rx="4" fill="#fecaca" stroke="#dc2626" strokeWidth="1.5" />
+    <text x="200" y="121" textAnchor="middle" fontSize="9" fill="#7f1d1d">GIL</text>
+    <rect x="232" y="8" width="48" height="124" rx="8" fill="#f1f5f9" stroke="#64748b" strokeWidth="2" />
+    <text x="256" y="26" textAnchor="middle" fontSize="11" fontWeight="bold" fill="#334155">P2</text>
+    <rect x="238" y="86" width="36" height="18" rx="4" fill="#fde68a" stroke="#d97706" strokeWidth="1.5" />
+    <text x="256" y="99" textAnchor="middle" fontSize="9" fill="#78350f">memory</text>
+    <rect x="238" y="108" width="36" height="18" rx="4" fill="#fecaca" stroke="#dc2626" strokeWidth="1.5" />
+    <text x="256" y="121" textAnchor="middle" fontSize="9" fill="#7f1d1d">GIL</text>
+    <rect x="288" y="8" width="48" height="124" rx="8" fill="#f1f5f9" stroke="#64748b" strokeWidth="2" />
+    <text x="312" y="26" textAnchor="middle" fontSize="11" fontWeight="bold" fill="#334155">P3</text>
+    <rect x="294" y="86" width="36" height="18" rx="4" fill="#fde68a" stroke="#d97706" strokeWidth="1.5" />
+    <text x="312" y="99" textAnchor="middle" fontSize="9" fill="#78350f">memory</text>
+    <rect x="294" y="108" width="36" height="18" rx="4" fill="#fecaca" stroke="#dc2626" strokeWidth="1.5" />
+    <text x="312" y="121" textAnchor="middle" fontSize="9" fill="#7f1d1d">GIL</text>
+  </svg>
+</Visual>
+
+<Mistakes>
+
+<Mistake title="Choosing threads for CPU-heavy work">
+
+<Wrong>
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+def resize(n):
+    return sum(i * i for i in range(n))   # pure calculation
+
+with ThreadPoolExecutor(4) as pool:        # no speed-up: one GIL
+    print(len(list(pool.map(resize, [100000] * 4))))   # 4
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+
+def resize(n):
+    return sum(i * i for i in range(n))
+
+if __name__ == "__main__":
+    with ProcessPoolExecutor(4) as pool:   # uses four cores
+        print(len(list(pool.map(resize, [100000] * 4))))   # 4
+```
+
+</Right>
+
+Threads take turns on the GIL, so calculations do not get faster. Use processes.
+
+</Mistake>
+
+<Mistake title="Choosing processes for work that only waits">
+
+<Wrong>
+
+```python
+import time
+from concurrent.futures import ProcessPoolExecutor
+
+def call_api(n):
+    time.sleep(0.1)                        # waiting for a reply
+    return n
+
+if __name__ == "__main__":
+    with ProcessPoolExecutor(4) as pool:   # heavy: four interpreters just to wait
+        print(list(pool.map(call_api, [1, 2])))   # [1, 2]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+def call_api(n):
+    time.sleep(0.1)
+    return n
+
+with ThreadPoolExecutor(4) as pool:        # light: threads are enough for waiting
+    print(list(pool.map(call_api, [1, 2])))   # [1, 2]
+```
+
+</Right>
+
+For waiting, threads give the same benefit at a fraction of the memory and start-up cost.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between multithreading and multiprocessing?">
+
+Multithreading runs multiple threads inside one process; they share memory and, in CPython, one GIL, so only one executes Python code at a time. It suits I/O-bound work. Multiprocessing runs multiple processes, each with its own memory and its own GIL, so they execute in parallel on multiple cores. It suits CPU-bound work, at the cost of more memory and slower communication.
+
+</QA>
+
+<QA q="What is the difference between concurrency and parallelism?">
+
+Concurrency is about structure: several tasks make progress during the same period by interleaving. Parallelism is about execution: several tasks run at the exact same moment on different cores. Threads in CPython are concurrent; processes are parallel.
+
+</QA>
+
+<QA q="How do you decide which one to use?">
+
+Ask where the time goes. If the task mostly waits for the network, disk or a database, use threads or asyncio. If the task keeps the CPU busy with computation, use multiprocessing. For a mix, use processes for the heavy part and threads or asyncio inside each for I/O.
+
+</QA>
+
+<QA q="Which is easier for sharing data, and which is safer?">
+
+Threads share memory directly, so sharing is easy, but it requires locks and risks race conditions and deadlocks. Processes are isolated, so there are no accidental shared-state bugs and one crash does not take down the others, but data must be passed explicitly through queues or pipes.
+
+</QA>
+
+<QA q="Where does asyncio fit in?">
+
+`asyncio` is a third option for I/O-bound work: one thread, one event loop, and coroutines that give up control at each `await`. It handles thousands of connections with very little memory. It does not help CPU-bound work.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'You must download 200 files from the internet. What fits best?',
+      options: ['Multiprocessing', 'Multithreading or asyncio', 'A single for loop is always fastest', 'Recursion'],
+      answer: 1,
+      why: 'Downloading is I/O-bound, so overlapping the waiting time with threads or asyncio helps most.',
+    },
+    {
+      q: 'You must resize 10,000 images with pure Python calculations. What fits best?',
+      options: ['Multithreading', 'Multiprocessing', 'asyncio', 'A global variable'],
+      answer: 1,
+      why: 'Image resizing is CPU-bound, and only processes use several cores for Python code.',
+    },
+    {
+      q: 'Which statement is true?',
+      options: [
+        'Threads have separate memory; processes share memory',
+        'Threads share memory; processes have separate memory',
+        'Both share memory',
+        'Neither uses memory',
+      ],
+      answer: 1,
+      why: 'Threads of one process share its memory. Each process has its own.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Question | Threads | Processes |
+| --- | --- | --- |
+| Memory | Shared | Separate |
+| GIL | One for all | One each |
+| Parallel Python code | No | Yes |
+| Good for | Waiting (I/O) | Calculating (CPU) |
+| Cost | Light | Heavy |
+| Tool | `ThreadPoolExecutor` | `ProcessPoolExecutor` |
+
+Waits? Threads. Calculates? Processes. Thousands of waits? `asyncio`.
+
+</CheatSheet>

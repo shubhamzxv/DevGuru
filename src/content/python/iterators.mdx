@@ -1,0 +1,277 @@
+---
+id: python-iterators
+title: Iterators
+summary: An iterator is an object that gives you the items of a collection one at a time, and remembers where it stopped.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a token machine at a bank. Each time you press the button, it gives the next token number. It remembers the last number it gave. When the roll is finished, it gives nothing more.
+
+An **iterator** is that machine: ask for the next item, get it, repeat until none are left.
+
+</Analogy>
+
+## Simple explanation
+
+Two words sound alike but mean different things.
+
+An **iterable** is anything you can loop over: a list, a string, a dictionary, a file. It can give you an iterator.
+
+An **iterator** is the object that actually walks through the items. It has two jobs:
+
+- give the **next** item when asked
+- **remember** its position
+
+You get an iterator from an iterable with `iter()`. You ask for the next item with `next()`. When nothing is left, `next()` raises **StopIteration**.
+
+A `for` loop does exactly this behind the scenes: it calls `iter()` once, then calls `next()` again and again, and stops quietly at `StopIteration`.
+
+An iterator can be used **only once**. After it is finished, it stays empty. A list is different: you can loop over a list many times, because each loop gets a fresh iterator.
+
+To make your own iterator, write a class with `__iter__` (returns itself) and `__next__` (returns the next item or raises `StopIteration`).
+
+Iterators are **lazy**: they produce each item only when needed, so they use very little memory.
+
+## Code example
+
+```python
+fruits = ["mango", "banana"]             # a list is an iterable
+
+it = iter(fruits)                        # get an iterator from it
+print(next(it))                          # ask for the next item
+print(next(it))
+
+try:
+    next(it)                             # nothing left
+except StopIteration:
+    print("no more items")
+
+print(list(it))                          # a finished iterator stays empty
+print(list(fruits))                      # the list itself can be used again
+
+class Countdown:                         # our own iterator
+    def __init__(self, start):
+        self.current = start
+
+    def __iter__(self):                  # an iterator returns itself
+        return self
+
+    def __next__(self):                  # give the next value
+        if self.current <= 0:
+            raise StopIteration          # signal the end
+        value = self.current
+        self.current -= 1
+        return value
+
+for number in Countdown(3):              # works in a for loop
+    print(number)
+
+print(next(iter([]), "empty"))           # a default avoids StopIteration
+```
+
+```output
+mango
+banana
+no more items
+[]
+['mango', 'banana']
+3
+2
+1
+empty
+```
+
+<Playground kind="python">
+
+```python
+class EvenNumbers:
+    def __init__(self, limit):
+        self.limit = limit
+        self.current = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.current += 2
+        if self.current > self.limit:
+            raise StopIteration
+        return self.current
+
+print(list(EvenNumbers(10)))
+print(sum(EvenNumbers(100)))
+
+# Try it: change the class so it gives odd numbers.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using an iterator twice">
+
+<Wrong>
+
+```python
+numbers = iter([1, 2, 3])
+print(sum(numbers))
+print(sum(numbers))   # 0 the second time
+```
+
+</Wrong>
+
+<Right>
+
+```python
+numbers = [1, 2, 3]
+print(sum(numbers))
+print(sum(numbers))   # 6 both times
+```
+
+</Right>
+
+An iterator is used up after one pass. Keep the list, or create a new iterator.
+
+</Mistake>
+
+<Mistake title="Calling next() on a list">
+
+<Wrong>
+
+```python
+numbers = [1, 2, 3]
+print(next(numbers))   # TypeError: 'list' object is not an iterator
+```
+
+</Wrong>
+
+<Right>
+
+```python
+numbers = [1, 2, 3]
+print(next(iter(numbers)))   # 1
+```
+
+</Right>
+
+A list is an iterable, not an iterator. Call `iter()` on it first.
+
+</Mistake>
+
+<Mistake title="Forgetting to raise StopIteration">
+
+<Wrong>
+
+```python
+class Ones:
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return 1
+
+for n in Ones():       # runs forever: the iterator never ends
+    pass
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Ones:
+    def __init__(self, count):
+        self.left = count
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.left == 0:
+            raise StopIteration
+        self.left -= 1
+        return 1
+
+print(list(Ones(3)))   # [1, 1, 1]
+```
+
+</Right>
+
+A `for` loop stops only when `__next__` raises `StopIteration`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between an iterable and an iterator?">
+
+An **iterable** has an `__iter__` method that returns an iterator; lists, strings and dicts are iterables. An **iterator** has `__next__` (and `__iter__` returning itself) and produces items one at a time, keeping its position. Every iterator is an iterable, but not every iterable is an iterator.
+
+</QA>
+
+<QA q="How does a for loop work internally?">
+
+It calls `iter()` on the object to get an iterator, then calls `next()` repeatedly, assigning each value to the loop variable. When `StopIteration` is raised, the loop catches it and ends.
+
+</QA>
+
+<QA q="What is the iterator protocol?">
+
+The rule that an iterator must implement two methods: `__iter__()`, which returns the iterator object itself, and `__next__()`, which returns the next value or raises `StopIteration` when finished.
+
+</QA>
+
+<QA q="Why use iterators at all?">
+
+They are lazy and memory-efficient: only one item is in memory at a time. That allows processing huge files, database result sets, or even endless streams, which would not fit in a list.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which function gives the next item of an iterator?',
+      options: ['iter()', 'next()', 'get()', 'pop()'],
+      answer: 1,
+      why: 'next(iterator) returns the next item, or raises StopIteration at the end.',
+    },
+    {
+      q: 'What is raised when an iterator has no more items?',
+      options: ['IndexError', 'ValueError', 'StopIteration', 'EOFError'],
+      answer: 2,
+      why: 'StopIteration is the signal that the iterator is finished.',
+    },
+    {
+      q: 'Which statement is true?',
+      options: [
+        'A list is an iterator',
+        'A list is an iterable, and iter(list) gives an iterator',
+        'An iterator can be reused many times',
+        'next() works directly on a list',
+      ],
+      answer: 1,
+      why: 'A list is an iterable. You get an iterator from it with iter().',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Thing | Meaning |
+| --- | --- |
+| Iterable | Can be looped over (`list`, `str`, `dict`) |
+| Iterator | Gives items one by one and remembers its place |
+| `iter(x)` | Get an iterator from an iterable |
+| `next(it)` | Get the next item |
+| `next(it, default)` | Next item, or the default at the end |
+| `StopIteration` | No items left |
+| Own iterator | Class with `__iter__` and `__next__` |
+| One pass only | A finished iterator stays empty |
+
+</CheatSheet>

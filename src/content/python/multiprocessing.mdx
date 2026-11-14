@@ -1,0 +1,311 @@
+---
+id: python-multiprocessing
+title: Multiprocessing
+summary: Multiprocessing runs tasks in separate processes, each with its own Python interpreter, so heavy calculations can use several CPU cores at once.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a busy restaurant that opens four separate kitchens. Each kitchen has its own cook, its own stove and its own knife. Four dishes are really cooked at the same time.
+
+The cost: each kitchen needs its own equipment, and the cooks cannot reach into each other's fridge. They must pass things through a window.
+
+**Multiprocessing** is those separate kitchens.
+
+</Analogy>
+
+## Simple explanation
+
+A **process** is a running program with its **own memory** and its **own Python interpreter**.
+
+Each process has its **own GIL**. So several processes can run Python code at the same instant, on different CPU cores. This is real **parallelism**.
+
+Use it for **CPU-bound** work: number crunching, image processing, data transformation.
+
+The costs:
+
+- Starting a process is slower and uses more memory than starting a thread
+- Processes **do not share memory**. Data sent between them is copied (it is **pickled**, sent, and unpickled)
+- To share or exchange data, you need special tools such as `Queue`, `Pipe` or `Value`
+
+The tools, from the `multiprocessing` module:
+
+- `Process(target=function, args=(...))` with `start()` and `join()`, like a thread
+- `Pool(n)` creates `n` worker processes; `pool.map()` splits a list of jobs across them
+- `ProcessPoolExecutor` from `concurrent.futures` has the same interface as the thread pool
+
+Always put the starting code under `if __name__ == "__main__":`. On Windows and macOS, each new process imports your file again, and without this guard it would start processes forever.
+
+Processes do not run in this page's browser playground, so this topic has no "Try it yourself" box. Run the code on your computer.
+
+## Code example
+
+```python
+import multiprocessing
+import os
+from concurrent.futures import ProcessPoolExecutor
+
+def heavy_square_sum(n):                      # CPU-bound: pure calculation
+    return sum(i * i for i in range(n))
+
+counter = 0
+
+def change_counter():
+    global counter
+    counter = 99                              # changes the CHILD's own copy only
+
+def send_greeting(queue):
+    queue.put("hello from child")             # send data to the parent
+
+if __name__ == "__main__":                    # required guard for multiprocessing
+    jobs = [10, 100, 1000, 10000]
+
+    with multiprocessing.Pool(processes=4) as pool:        # four worker processes
+        print(pool.map(heavy_square_sum, jobs))            # jobs are spread across them
+
+    with ProcessPoolExecutor(max_workers=4) as executor:   # the same idea, newer API
+        print(list(executor.map(heavy_square_sum, jobs)))
+
+    child = multiprocessing.Process(target=change_counter)
+    child.start()
+    child.join()
+    print("counter in the parent:", counter)               # memory is not shared
+
+    queue = multiprocessing.Queue()                        # a safe channel between processes
+    worker = multiprocessing.Process(target=send_greeting, args=(queue,))
+    worker.start()
+    print(queue.get())
+    worker.join()
+
+    print("CPU cores available:", os.cpu_count() >= 1)
+```
+
+```output
+[285, 328350, 332833500, 333283335000]
+[285, 328350, 332833500, 333283335000]
+counter in the parent: 0
+hello from child
+CPU cores available: True
+```
+
+<Visual caption="Each process has its own interpreter, its own GIL and its own memory, so four processes can use four CPU cores.">
+  <svg viewBox="0 0 340 130" width="340" height="130" role="img" aria-label="Four separate boxes, each a process with its own interpreter, GIL and memory, mapped to four CPU cores">
+    <rect x="8" y="10" width="74" height="70" rx="8" fill="#e0e7ff" stroke="#4f46e5" strokeWidth="2" />
+    <text x="45" y="28" textAnchor="middle" fontSize="11" fontWeight="bold" fill="#1e1b4b">Process 1</text>
+    <text x="45" y="46" textAnchor="middle" fontSize="10" fill="#1e1b4b">own GIL</text>
+    <text x="45" y="62" textAnchor="middle" fontSize="10" fill="#1e1b4b">own memory</text>
+    <rect x="90" y="10" width="74" height="70" rx="8" fill="#e0e7ff" stroke="#4f46e5" strokeWidth="2" />
+    <text x="127" y="28" textAnchor="middle" fontSize="11" fontWeight="bold" fill="#1e1b4b">Process 2</text>
+    <text x="127" y="46" textAnchor="middle" fontSize="10" fill="#1e1b4b">own GIL</text>
+    <text x="127" y="62" textAnchor="middle" fontSize="10" fill="#1e1b4b">own memory</text>
+    <rect x="172" y="10" width="74" height="70" rx="8" fill="#e0e7ff" stroke="#4f46e5" strokeWidth="2" />
+    <text x="209" y="28" textAnchor="middle" fontSize="11" fontWeight="bold" fill="#1e1b4b">Process 3</text>
+    <text x="209" y="46" textAnchor="middle" fontSize="10" fill="#1e1b4b">own GIL</text>
+    <text x="209" y="62" textAnchor="middle" fontSize="10" fill="#1e1b4b">own memory</text>
+    <rect x="254" y="10" width="74" height="70" rx="8" fill="#e0e7ff" stroke="#4f46e5" strokeWidth="2" />
+    <text x="291" y="28" textAnchor="middle" fontSize="11" fontWeight="bold" fill="#1e1b4b">Process 4</text>
+    <text x="291" y="46" textAnchor="middle" fontSize="10" fill="#1e1b4b">own GIL</text>
+    <text x="291" y="62" textAnchor="middle" fontSize="10" fill="#1e1b4b">own memory</text>
+    <rect x="8" y="96" width="74" height="24" rx="6" fill="#dcfce7" stroke="#16a34a" strokeWidth="2" />
+    <text x="45" y="112" textAnchor="middle" fontSize="11" fill="#14532d">Core 1</text>
+    <rect x="90" y="96" width="74" height="24" rx="6" fill="#dcfce7" stroke="#16a34a" strokeWidth="2" />
+    <text x="127" y="112" textAnchor="middle" fontSize="11" fill="#14532d">Core 2</text>
+    <rect x="172" y="96" width="74" height="24" rx="6" fill="#dcfce7" stroke="#16a34a" strokeWidth="2" />
+    <text x="209" y="112" textAnchor="middle" fontSize="11" fill="#14532d">Core 3</text>
+    <rect x="254" y="96" width="74" height="24" rx="6" fill="#dcfce7" stroke="#16a34a" strokeWidth="2" />
+    <text x="291" y="112" textAnchor="middle" fontSize="11" fill="#14532d">Core 4</text>
+  </svg>
+</Visual>
+
+<Mistakes>
+
+<Mistake title="Expecting processes to share a variable">
+
+<Wrong>
+
+```python
+import multiprocessing
+
+results = []
+
+def work():
+    results.append("done")      # appends to the child's copy
+
+if __name__ == "__main__":
+    p = multiprocessing.Process(target=work)
+    p.start()
+    p.join()
+    print(results)   # []
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import multiprocessing
+
+def work(queue):
+    queue.put("done")           # send the result back through a queue
+
+if __name__ == "__main__":
+    queue = multiprocessing.Queue()
+    p = multiprocessing.Process(target=work, args=(queue,))
+    p.start()
+    print([queue.get()])   # ['done']
+    p.join()
+```
+
+</Right>
+
+Each process has its own memory. Return results through a `Queue`, or use `pool.map()`.
+
+</Mistake>
+
+<Mistake title="Leaving out the __main__ guard">
+
+<Wrong>
+
+```python
+import multiprocessing
+
+def work(n):
+    return n * 2
+
+# On Windows and macOS this file is imported again by every child,
+# so starting a pool here, at the top level, fails or spawns endlessly.
+pool_would_start_here = True
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import multiprocessing
+
+def work(n):
+    return n * 2
+
+if __name__ == "__main__":
+    with multiprocessing.Pool(2) as pool:
+        print(pool.map(work, [1, 2, 3]))   # [2, 4, 6]
+```
+
+</Right>
+
+Start processes only inside `if __name__ == "__main__":`.
+
+</Mistake>
+
+<Mistake title="Using processes for small or I/O-bound tasks">
+
+<Wrong>
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+
+def tiny(n):
+    return n + 1
+
+if __name__ == "__main__":
+    with ProcessPoolExecutor() as pool:       # start-up cost is far bigger than the work
+        print(sum(pool.map(tiny, range(10))))   # 55
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def tiny(n):
+    return n + 1
+
+print(sum(tiny(n) for n in range(10)))   # 55
+```
+
+</Right>
+
+Creating processes and copying data has a cost. Use them only when each task is heavy enough to repay it.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is multiprocessing and why is it used in Python?">
+
+Running work in multiple processes, each with its own interpreter and memory space. Because each process has its own GIL, CPU-bound Python code can truly run in parallel on multiple cores, which threads cannot do in CPython.
+
+</QA>
+
+<QA q="How do processes communicate?">
+
+Through inter-process communication (IPC), since memory is not shared: `multiprocessing.Queue` and `Pipe` for passing messages, `Value` and `Array` for simple shared memory, `Manager` for shared dicts and lists, or `shared_memory` for large buffers. Data sent between processes is pickled.
+
+</QA>
+
+<QA q="What is the difference between Pool.map and Process?">
+
+`Process` starts one process for one function call; you manage start, join and result passing yourself. `Pool` keeps a fixed number of worker processes and distributes many tasks among them, collecting the results in order. A pool avoids the cost of creating a process per task.
+
+</QA>
+
+<QA q="Why is the if __name__ == '__main__' guard needed?">
+
+With the **spawn** start method (the default on Windows and macOS), each child process starts a fresh interpreter and imports the main module. Without the guard, that import would run the process-creating code again, recursively. The guard makes that code run only in the original process.
+
+</QA>
+
+<QA q="What are the downsides of multiprocessing?">
+
+Higher memory use, slower start-up, the overhead of pickling data between processes, and harder debugging. For I/O-bound work it is usually worse than threads or asyncio.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Why can several processes run Python code truly in parallel?',
+      options: [
+        'They share one GIL',
+        'Each process has its own interpreter and its own GIL',
+        'Processes do not use the CPU',
+        'Python turns the GIL off automatically',
+      ],
+      answer: 1,
+      why: 'The GIL is per interpreter, and each process has its own.',
+    },
+    {
+      q: 'Do two processes share the same global variables?',
+      options: ['Yes, always', 'No, each has its own copy of memory', 'Only lists', 'Only on Linux'],
+      answer: 1,
+      why: 'Processes have separate memory. A change in one is not seen by the other.',
+    },
+    {
+      q: 'Which kind of task is multiprocessing best for?',
+      options: ['Waiting for API replies', 'CPU-heavy calculations', 'Reading one small file', 'Printing text'],
+      answer: 1,
+      why: 'CPU-bound work benefits from running on several cores at once.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| One process | `p = Process(target=func, args=(1,))` |
+| Start and wait | `p.start()` then `p.join()` |
+| Pool of workers | `with Pool(4) as pool:` |
+| Run many jobs | `pool.map(func, items)` |
+| Newer pool API | `ProcessPoolExecutor(max_workers=4)` |
+| Send data back | `Queue()` with `put()` and `get()` |
+| Required guard | `if __name__ == "__main__":` |
+| Number of cores | `os.cpu_count()` |
+
+</CheatSheet>

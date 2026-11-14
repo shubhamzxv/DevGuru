@@ -1,0 +1,226 @@
+---
+id: python-string-formatting
+title: String formatting (f-strings)
+summary: String formatting puts values inside text and controls how they look, such as two decimal places or padding.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a printed wedding card with blanks: "Dear ____, please join us on ____". The printer fills each blank with a name and a date.
+
+An **f-string** is that card. The curly brackets are the blanks, and Python fills them with your values.
+
+</Analogy>
+
+## Simple explanation
+
+**String formatting** means building text that contains values.
+
+The best way is an **f-string**. Write `f` before the quotes, then put a variable or any expression inside curly brackets.
+
+After the value, you can add a colon and a **format spec**. It tells Python how to show the value:
+
+- `:.2f` shows 2 digits after the decimal point
+- `:,` adds commas to big numbers
+- `:>10` pushes the text to the right in a space of 10 characters. `<` is left and `^` is centre
+- `:05d` pads a whole number with zeros up to 5 digits
+- `:.1%` shows a fraction as a percentage
+
+Writing `=` after a name, like `{qty=}`, prints both the name and the value. It is handy for debugging.
+
+Older code uses `"...".format()` or the `%` style. They still work, but f-strings are shorter and faster.
+
+## Code example
+
+```python
+name = "Asha"
+price = 1234.5678
+qty = 3
+
+print(f"{name} bought {qty} items")              # values inside the text
+print(f"Total: {price * qty:.2f}")               # expression + 2 decimals
+print(f"With commas: {price * 1000:,.0f}")       # commas, no decimals
+print(f"|{name:<10}|{name:>10}|{name:^10}|")     # left, right, centre
+print(f"Order {42:05d}")                         # pad with zeros
+print(f"Discount: {0.125:.1%}")                  # as a percentage
+print(f"{qty=}")                                 # name and value together
+print("Hello {}".format(name))                   # the older format() style
+```
+
+```output
+Asha bought 3 items
+Total: 3703.70
+With commas: 1,234,568
+|Asha      |      Asha|   Asha   |
+Order 00042
+Discount: 12.5%
+qty=3
+Hello Asha
+```
+
+<Playground kind="python">
+
+```python
+item = "Notebook"
+price = 45.5
+qty = 4
+
+print(f"{item:<12}{qty:>3} x {price:>7.2f}")
+print(f"{'Total':<12}{qty * price:>13.2f}")
+
+# Try it: add a second item line with a longer name.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting the f before the quotes">
+
+<Wrong>
+
+```python
+name = "Asha"
+print("Hello {name}")   # Hello {name}
+```
+
+</Wrong>
+
+<Right>
+
+```python
+name = "Asha"
+print(f"Hello {name}")   # Hello Asha
+```
+
+</Right>
+
+Without the `f`, Python prints the brackets as plain text.
+
+</Mistake>
+
+<Mistake title="Treating formatted text as a number">
+
+<Wrong>
+
+```python
+price = 99.456
+total = f"{price:.2f}"
+print(total + 1)   # TypeError: can only concatenate str (not "int") to str
+```
+
+</Wrong>
+
+<Right>
+
+```python
+price = 99.456
+total = round(price, 2)
+print(total + 1)   # 100.46
+```
+
+</Right>
+
+Formatting always gives a string. Use `round()` when you still need a number.
+
+</Mistake>
+
+<Mistake title="Printing real curly brackets">
+
+<Wrong>
+
+```python
+print(f"Use {} for a dict")   # SyntaxError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+print(f"Use {{}} for a dict")   # Use {} for a dict
+```
+
+</Right>
+
+Inside an f-string, write the bracket twice to show it as text.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the ways to format strings in Python?">
+
+Three: f-strings (`f"{name}"`), the `str.format()` method (`"{}".format(name)`), and the old `%` operator (`"%s" % name`). f-strings came in Python 3.6 and are preferred today.
+
+</QA>
+
+<QA q="Why are f-strings preferred?">
+
+They are the easiest to read because the value sits right where it appears in the text. They are also the fastest, and they allow any expression inside the brackets, such as `{price * qty:.2f}`.
+
+</QA>
+
+<QA q="How do you show a number with exactly two decimal places?">
+
+Use the format spec `.2f`.
+
+```python
+print(f"{3.14159:.2f}")   # 3.14
+```
+
+</QA>
+
+<QA q="How do you pad a number with leading zeros?">
+
+Use a zero and a width in the format spec, or the `zfill()` string method.
+
+```python
+print(f"{7:03d}")      # 007
+print("7".zfill(3))    # 007
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does f"{3.14159:.2f}" give?',
+      options: ['3.14159', '3.14', '3.1', '3'],
+      answer: 1,
+      why: '.2f keeps two digits after the decimal point.',
+    },
+    {
+      q: 'What does f"{5:03d}" give?',
+      options: ['5', '500', '005', '0.005'],
+      answer: 2,
+      why: '03d means: at least 3 digits wide, padded with zeros on the left.',
+    },
+    {
+      q: 'What is the type of f"{10 + 5}"?',
+      options: ['int', 'str', 'float', 'bool'],
+      answer: 1,
+      why: 'An f-string always produces a string, here the text 15.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code | Result |
+| --- | --- | --- |
+| Value in text | `f"Hi {name}"` | `Hi Asha` |
+| 2 decimals | `f"{3.14159:.2f}"` | `3.14` |
+| Commas | `f"{1234567:,}"` | `1,234,567` |
+| Percentage | `f"{0.25:.0%}"` | `25%` |
+| Zero padding | `f"{7:03d}"` | `007` |
+| Right align | `f"{'a':>5}"` | 4 spaces, then `a` |
+| Name and value | `f"{qty=}"` | `qty=3` |
+| Real brackets | `f"{{}}"` | `{}` |
+
+</CheatSheet>

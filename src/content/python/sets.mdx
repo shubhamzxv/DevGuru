@@ -1,0 +1,233 @@
+---
+id: python-sets
+title: Sets
+summary: A set is a collection of unique items with no fixed order.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of the guest list for a wedding. Even if three relatives suggest the same person, that name is written only once.
+
+A Python **set** keeps each item once. Duplicates are dropped automatically.
+
+</Analogy>
+
+## Simple explanation
+
+A **set** holds **unique** items. You write it with curly brackets.
+
+A set is **unordered**. Items have no position, so you cannot use an index like `items[0]`.
+
+A set is mutable. You can add and remove items:
+
+- `add(x)` adds an item
+- `remove(x)` removes an item and gives an error if it is missing
+- `discard(x)` removes an item and stays quiet if it is missing
+
+Sets are very fast at answering "is this item present?" with `in`.
+
+Sets also do maths between groups:
+
+- `a | b` is the **union**: items in either set
+- `a & b` is the **intersection**: items in both sets
+- `a - b` is the **difference**: items in `a` but not in `b`
+
+An empty set is written `set()`, because empty curly brackets make a dict.
+
+## Code example
+
+```python
+numbers = {3, 1, 3, 2, 1}          # duplicates are dropped
+print(numbers)
+print(len(numbers))
+
+numbers.add(5)                     # add an item
+numbers.discard(1)                 # remove if present
+print(numbers)
+print(2 in numbers)                # fast membership check
+
+maths = {1, 2, 3}                 # roll numbers in each class
+physics = {2, 3, 4}
+
+print(maths | physics)             # union: in either class
+print(maths & physics)             # intersection: in both classes
+print(maths - physics)             # difference: only in maths
+
+names = ["Asha", "Ravi", "Asha"]
+print(sorted(set(names)))          # unique names, sorted for a fixed order
+```
+
+```output
+{1, 2, 3}
+3
+{2, 3, 5}
+True
+{1, 2, 3, 4}
+{2, 3}
+{1}
+['Asha', 'Ravi']
+```
+
+<Playground kind="python">
+
+```python
+visitors_mon = {1, 2, 3, 4}
+visitors_tue = {3, 4, 5}
+
+print("Came on both days:", visitors_mon & visitors_tue)
+print("Came on any day:", visitors_mon | visitors_tue)
+print("Only Monday:", visitors_mon - visitors_tue)
+
+# Try it: add visitor 6 to Tuesday and run again.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Making an empty set with curly brackets">
+
+<Wrong>
+
+```python
+seen = {}
+print(type(seen).__name__)   # dict
+```
+
+</Wrong>
+
+<Right>
+
+```python
+seen = set()
+print(type(seen).__name__)   # set
+```
+
+</Right>
+
+Empty `{}` is a dict. Use `set()`.
+
+</Mistake>
+
+<Mistake title="Trying to read a set by index">
+
+<Wrong>
+
+```python
+ids = {10, 20, 30}
+print(ids[0])   # TypeError: 'set' object is not subscriptable
+```
+
+</Wrong>
+
+<Right>
+
+```python
+ids = {10, 20, 30}
+print(sorted(ids)[0])   # 10
+```
+
+</Right>
+
+A set has no order, so it has no index. Convert it to a sorted list first.
+
+</Mistake>
+
+<Mistake title="Putting a list inside a set">
+
+<Wrong>
+
+```python
+groups = {[1, 2], [3, 4]}   # TypeError: unhashable type: 'list'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+groups = {(1, 2), (3, 4)}
+print(len(groups))   # 2
+```
+
+</Right>
+
+Set items must be hashable. Use tuples in place of lists.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a set and when do you use it?">
+
+A set is an unordered collection of unique, hashable items. Use it to remove duplicates, to test membership quickly, and for union, intersection and difference between groups.
+
+</QA>
+
+<QA q="Why is checking membership faster in a set than in a list?">
+
+A set is built on a **hash table**. Python computes the hash of the item and jumps straight to its slot, which takes O(1) time on average. A list has to check items one by one, which takes O(n) time.
+
+</QA>
+
+<QA q="What is the difference between remove() and discard()?">
+
+Both delete an item. `remove()` raises a `KeyError` if the item is missing. `discard()` does nothing in that case.
+
+</QA>
+
+<QA q="What is a frozenset?">
+
+An immutable set. It cannot be changed after it is made, so it is hashable and can be used as a dictionary key or placed inside another set.
+
+```python
+key = frozenset([1, 2])
+print({key: "ok"}[frozenset([2, 1])])   # ok
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is len({1, 2, 2, 3, 3, 3})?',
+      options: ['6', '3', '2', '1'],
+      answer: 1,
+      why: 'A set keeps each value once, so it holds 1, 2 and 3.',
+    },
+    {
+      q: 'What does {1, 2, 3} & {2, 3, 4} give?',
+      options: ['{1, 2, 3, 4}', '{2, 3}', '{1}', '{4}'],
+      answer: 1,
+      why: '& is intersection: the items that are in both sets.',
+    },
+    {
+      q: 'How do you create an empty set?',
+      options: ['{}', '[]', 'set()', '()'],
+      answer: 2,
+      why: 'Empty curly brackets create a dict, so an empty set needs set().',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Make a set | `s = {1, 2, 3}` |
+| Empty set | `s = set()` |
+| Add | `s.add(4)` |
+| Remove (error if missing) | `s.remove(4)` |
+| Remove (no error) | `s.discard(4)` |
+| Is it present? | `2 in s` |
+| In either | `a.union(b)` |
+| In both | `a.intersection(b)` |
+| Only in a | `a.difference(b)` |
+| Unique items of a list | `set(items)` |
+
+</CheatSheet>

@@ -1,0 +1,264 @@
+---
+id: python-functions
+title: Functions
+summary: A function is a named block of code that does one job and can be used again and again.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a mixer-grinder in the kitchen. You put in ingredients, press the button, and get chutney. You do not rebuild the machine each time. You just use it with different ingredients.
+
+A **function** is that machine. What you put in are the **arguments**. What comes out is the **return value**.
+
+</Analogy>
+
+## Simple explanation
+
+A **function** is a block of code with a name. You write it once and **call** it whenever you need it.
+
+You create a function with the `def` keyword. This is called **defining** the function. The code inside does not run until you call it.
+
+Words to know:
+
+- A **parameter** is a name listed in the function definition
+- An **argument** is the real value you pass when you call the function
+- `return` sends a value back to the caller and ends the function
+- A function without `return` gives back `None`
+
+Functions help in three ways. You avoid repeating code. You fix a bug in one place. And a good name makes the code easy to read.
+
+A **docstring** is a string on the first line of a function, in triple quotes. It explains what the function does.
+
+## Code example
+
+```python
+def greet(name):                       # define: name is a parameter
+    """Return a greeting for one person."""
+    return f"Hello, {name}!"           # send a value back
+
+message = greet("Asha")                # call: "Asha" is the argument
+print(message)
+print(greet("Ravi"))                   # reuse with another value
+
+def bill_total(price, quantity):       # two parameters
+    total = price * quantity
+    return total
+
+print(bill_total(40, 3))
+
+def log(text):                         # no return statement
+    print("LOG:", text)
+
+result = log("saved")                  # the function prints, then gives None
+print(result)
+
+def min_max(numbers):
+    return min(numbers), max(numbers)  # return two values as a tuple
+
+low, high = min_max([4, 9, 1])
+print(low, high)
+print(greet.__doc__)                   # read the docstring
+```
+
+```output
+Hello, Asha!
+Hello, Ravi!
+120
+LOG: saved
+None
+1 9
+Return a greeting for one person.
+```
+
+<Playground kind="python">
+
+```python
+def is_even(number):
+    return number % 2 == 0
+
+def describe(number):
+    kind = "even" if is_even(number) else "odd"
+    return f"{number} is {kind}"
+
+for n in [3, 8, 11]:
+    print(describe(n))
+
+# Try it: write a function  square(n)  and print square(12).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Printing inside the function when you need the value">
+
+<Wrong>
+
+```python
+def add(a, b):
+    print(a + b)
+
+total = add(2, 3)
+print(total * 2)   # TypeError: unsupported operand type(s) for *: 'NoneType' and 'int'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def add(a, b):
+    return a + b
+
+total = add(2, 3)
+print(total * 2)   # 10
+```
+
+</Right>
+
+`print()` only shows a value. `return` hands it back so you can use it.
+
+</Mistake>
+
+<Mistake title="Forgetting the brackets when calling">
+
+<Wrong>
+
+```python
+def get_name():
+    return "Asha"
+
+name = get_name
+print(name == "Asha")   # False
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def get_name():
+    return "Asha"
+
+name = get_name()
+print(name == "Asha")   # True
+```
+
+</Right>
+
+Without `()`, you get the function object itself, not its result.
+
+</Mistake>
+
+<Mistake title="Writing code after return">
+
+<Wrong>
+
+```python
+def area(w, h):
+    return w * h
+    print("done")   # never runs
+
+print(area(2, 3))   # 6
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def area(w, h):
+    result = w * h
+    print("done")
+    return result
+
+print(area(2, 3))
+```
+
+</Right>
+
+`return` ends the function immediately. Lines after it are never reached.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a parameter and an argument?">
+
+A **parameter** is the variable name in the function definition. An **argument** is the actual value passed in the call. In `def greet(name)`, `name` is the parameter. In `greet("Asha")`, `"Asha"` is the argument.
+
+</QA>
+
+<QA q="What does a function return if there is no return statement?">
+
+`None`. The same happens with a bare `return`.
+
+</QA>
+
+<QA q="What is the difference between return and print?">
+
+`print()` writes text to the screen and gives back `None`. `return` passes a value back to the caller so it can be stored or used in more code. Real programs mostly use `return`.
+
+</QA>
+
+<QA q="Are functions objects in Python?">
+
+Yes. Functions are **first-class objects**. You can store a function in a variable, put it in a list, pass it to another function, and return it from a function.
+
+```python
+def shout(text):
+    return text.upper()
+
+action = shout
+print(action("hello"))   # HELLO
+```
+
+</QA>
+
+<QA q="Is Python pass-by-value or pass-by-reference?">
+
+Neither exactly. Python passes a **reference to the object** (often called pass-by-object-reference). If the object is mutable, like a list, changes made inside the function are seen outside. Reassigning the parameter name inside the function does not affect the caller.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which keyword defines a function?',
+      options: ['function', 'def', 'func', 'define'],
+      answer: 1,
+      why: 'Python uses def, followed by the function name and brackets.',
+    },
+    {
+      q: 'What does this print?  def f(): pass   then   print(f())',
+      options: ['0', 'pass', 'None', 'An error'],
+      answer: 2,
+      why: 'A function with no return statement gives back None.',
+    },
+    {
+      q: 'In  def area(w, h):  what are w and h called?',
+      options: ['Arguments', 'Parameters', 'Returns', 'Docstrings'],
+      answer: 1,
+      why: 'Names in the definition are parameters. The values passed in a call are arguments.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Define | `def name(a, b):` |
+| Send a value back | `return a + b` |
+| Call | `name(1, 2)` |
+| Return two values | `return x, y` |
+| Explain it | `"""What it does."""` on the first line |
+| Empty for now | `pass` |
+| No return | The call gives `None` |
+
+</CheatSheet>

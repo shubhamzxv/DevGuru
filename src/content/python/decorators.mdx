@@ -1,0 +1,342 @@
+---
+id: python-decorators
+title: Decorators
+summary: A decorator is a function that wraps another function to add extra behaviour without changing its code.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of gift wrapping. The gift inside stays exactly the same. The wrapping adds something around it: paper, a ribbon, a name tag.
+
+A **decorator** wraps a function. The function stays the same, and the wrapper adds something before or after it runs, such as logging or a login check.
+
+</Analogy>
+
+## Simple explanation
+
+A **decorator** is a function that takes a function and returns a new function.
+
+It builds on two ideas you already know:
+
+- Functions are objects. You can pass a function to another function
+- A **closure**: an inner function remembers the function it wraps
+
+The usual shape has three parts:
+
+1. The decorator receives the original function, `func`
+2. It defines an inner function, usually named `wrapper`, that does something extra and calls `func`
+3. It returns `wrapper`
+
+You apply it with the `@` sign above a function. `@log` above `def pay()` means the same as `pay = log(pay)`.
+
+Write `wrapper(*args, **kwargs)` so the decorator works with any function, whatever its arguments are. And return the result of `func`, or the decorated function will return `None`.
+
+Put `@functools.wraps(func)` on the wrapper. It copies the original name and docstring onto the wrapper.
+
+Common uses: logging, timing, checking permissions, caching results and retrying failed calls. Django's `@login_required` and FastAPI's `@app.get()` are decorators.
+
+## Code example
+
+```python
+import functools
+
+def log_calls(func):                          # 1. takes the original function
+    @functools.wraps(func)                    # keep the original name and docstring
+    def wrapper(*args, **kwargs):             # 2. accepts any arguments
+        print(f"-> calling {func.__name__}{args}")
+        result = func(*args, **kwargs)        # run the original function
+        print(f"<- {func.__name__} returned {result}")
+        return result                         # pass the result back
+    return wrapper                            # 3. return the new function
+
+@log_calls                                    # same as: add = log_calls(add)
+def add(a, b):
+    return a + b
+
+print(add(2, 3))
+print(add.__name__)                           # still "add", thanks to wraps
+
+def repeat(times):                            # a decorator that takes an argument
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            for _ in range(times):
+                func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+@repeat(times=2)
+def greet(name):
+    print("Hello", name)
+
+greet("Asha")
+
+@functools.lru_cache                          # a built-in decorator: remembers results
+def square(n):
+    print("computing", n)
+    return n * n
+
+print(square(9), square(9))                   # computed only once
+```
+
+```output
+-> calling add(2, 3)
+<- add returned 5
+5
+add
+Hello Asha
+Hello Asha
+computing 9
+81 81
+```
+
+<Playground kind="python">
+
+```python
+import functools
+
+def require_admin(func):
+    @functools.wraps(func)
+    def wrapper(user, *args, **kwargs):
+        if user.get("role") != "admin":
+            return f"{user['name']}: access denied"
+        return func(user, *args, **kwargs)
+    return wrapper
+
+@require_admin
+def delete_order(user, order_id):
+    return f"{user['name']} deleted order {order_id}"
+
+print(delete_order({"name": "Asha", "role": "admin"}, 101))
+print(delete_order({"name": "Ravi", "role": "viewer"}, 101))
+
+# Try it: write a decorator that prints "done" after the function runs.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting to return the result in the wrapper">
+
+<Wrong>
+
+```python
+def log(func):
+    def wrapper(*args, **kwargs):
+        func(*args, **kwargs)      # the result is thrown away
+    return wrapper
+
+@log
+def add(a, b):
+    return a + b
+
+print(add(2, 3))   # None
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def log(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@log
+def add(a, b):
+    return a + b
+
+print(add(2, 3))   # 5
+```
+
+</Right>
+
+The wrapper replaces the function, so it must hand back what the function returned.
+
+</Mistake>
+
+<Mistake title="Calling the function when decorating">
+
+<Wrong>
+
+```python
+def log(func):
+    def wrapper():
+        return func()
+    return wrapper()               # brackets: this calls wrapper now
+
+@log
+def hello():
+    return "hi"
+
+print(hello())   # TypeError: 'str' object is not callable
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def log(func):
+    def wrapper():
+        return func()
+    return wrapper                 # no brackets: return the function itself
+
+@log
+def hello():
+    return "hi"
+
+print(hello())   # hi
+```
+
+</Right>
+
+Return the wrapper function, not the result of calling it.
+
+</Mistake>
+
+<Mistake title="Not using functools.wraps">
+
+<Wrong>
+
+```python
+def log(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@log
+def pay():
+    """Charge the customer."""
+
+print(pay.__name__, pay.__doc__)   # wrapper None
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import functools
+
+def log(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@log
+def pay():
+    """Charge the customer."""
+
+print(pay.__name__, pay.__doc__)   # pay Charge the customer.
+```
+
+</Right>
+
+Without `wraps`, the function loses its name and docstring, which confuses debugging and tools.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a decorator in Python?">
+
+A callable that takes a function (or class) and returns a modified or wrapped version of it. It lets you add behaviour such as logging, authentication, caching or timing around a function without editing the function itself. `@decorator` above a function is shorthand for `func = decorator(func)`.
+
+</QA>
+
+<QA q="How does a decorator work internally?">
+
+It relies on first-class functions and closures. The decorator receives the original function, defines an inner wrapper that keeps a reference to it, and returns the wrapper. The name of the original function is then rebound to the wrapper.
+
+</QA>
+
+<QA q="How do you write a decorator that accepts arguments?">
+
+Add one more level. The outer function takes the arguments and returns the real decorator, which takes the function and returns the wrapper. So `@repeat(3)` first calls `repeat(3)`, and the result decorates the function.
+
+</QA>
+
+<QA q="Why use functools.wraps?">
+
+The wrapper replaces the original function, so by default `__name__`, `__doc__` and other metadata come from the wrapper. `@functools.wraps(func)` copies them from the original, which keeps tracebacks, documentation and introspection correct.
+
+</QA>
+
+<QA q="What happens when you stack several decorators?">
+
+They are applied from the bottom up. The decorator closest to the function wraps it first, and the top one wraps the result. At call time, the top decorator's wrapper runs first.
+
+```python
+def bold(f):
+    return lambda: "<b>" + f() + "</b>"
+
+def italic(f):
+    return lambda: "<i>" + f() + "</i>"
+
+@bold
+@italic
+def text():
+    return "hi"
+
+print(text())   # <b><i>hi</i></b>
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does a decorator take and return?',
+      options: [
+        'Takes a number, returns a string',
+        'Takes a function, returns a function',
+        'Takes a class, returns a number',
+        'Takes nothing, returns nothing',
+      ],
+      answer: 1,
+      why: 'A decorator receives a function and returns a new (wrapped) function.',
+    },
+    {
+      q: 'What is  @log  above  def pay():  short for?',
+      options: ['log = pay(log)', 'pay = log(pay)', 'pay(log)', 'log.pay()'],
+      answer: 1,
+      why: 'The function is passed to the decorator, and the result replaces the original name.',
+    },
+    {
+      q: 'Why does the wrapper use *args and **kwargs?',
+      options: [
+        'To make it faster',
+        'So it can accept and pass on any arguments',
+        'Because Python requires it',
+        'To hide the arguments',
+      ],
+      answer: 1,
+      why: 'It lets one decorator wrap functions with any number of positional and keyword arguments.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Part | Code |
+| --- | --- |
+| Decorator | `def deco(func):` |
+| Wrapper | `def wrapper(*args, **kwargs):` |
+| Call the original | `result = func(*args, **kwargs)` |
+| Hand back the result | `return result` |
+| Return the wrapper | `return wrapper` |
+| Keep name and docstring | `@functools.wraps(func)` |
+| Apply | `@deco` above the function |
+| With arguments | `@deco(arg)`: one more outer function |
+| Built-in examples | `@property`, `@staticmethod`, `@functools.lru_cache` |
+
+</CheatSheet>

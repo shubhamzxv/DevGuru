@@ -1,0 +1,231 @@
+---
+id: python-packages-and-pip
+title: Packages, pip and virtual environments
+summary: pip installs packages written by other people, and a virtual environment keeps each project's packages separate.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of two kitchens in one building. One cook needs mild masala, and the other needs extra-hot masala of the same brand. If they share one shelf, someone gets the wrong one. So each kitchen keeps its own shelf.
+
+A **virtual environment** is that private shelf. Each project gets its own set of packages.
+
+</Analogy>
+
+## Simple explanation
+
+A **package** is code that someone else wrote and shared, such as Django, FastAPI or requests.
+
+**PyPI** (the Python Package Index) is the online store where these packages live.
+
+**pip** is the tool that downloads a package from PyPI and installs it.
+
+Different projects often need different versions of the same package. Project A may need Django 4, and project B may need Django 5. If you install everything in one place, they clash.
+
+A **virtual environment** (short: **venv**) solves this. It is a folder that holds a private copy of Python's package area for one project. You **activate** it before you work, and pip then installs into that folder only.
+
+A **requirements.txt** file lists the packages a project needs, with versions. Anyone can install the same set with one command.
+
+## Code example
+
+These are terminal commands, not Python code.
+
+```bash
+python -m venv .venv                 # create a virtual environment in the folder .venv
+
+.venv\Scripts\activate               # activate it on Windows
+source .venv/bin/activate            # activate it on Linux or macOS
+
+pip install requests                 # install the newest version
+pip install "django==5.0.6"          # install an exact version
+pip list                             # see what is installed
+pip freeze > requirements.txt        # save the exact versions to a file
+pip install -r requirements.txt      # install everything listed in the file
+pip uninstall requests               # remove a package
+
+deactivate                           # leave the virtual environment
+```
+
+A `requirements.txt` file looks like this:
+
+```text
+django==5.0.6
+djangorestframework==3.15.1
+requests==2.32.3
+```
+
+<Playground kind="python">
+
+```python
+import sys
+
+print("Python version:", sys.version.split()[0])
+print("Modules in the standard library:", len(sys.stdlib_module_names))
+print("Is json built in?", "json" in sys.stdlib_module_names)
+print("Is django built in?", "django" in sys.stdlib_module_names)
+
+# Try it: check whether "sqlite3" and "requests" are in the standard library.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Installing packages without a virtual environment">
+
+<Wrong>
+
+```bash
+pip install django      # goes into the system-wide Python
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install django      # goes into this project only
+```
+
+</Right>
+
+Global installs mix the packages of all your projects. Make one venv per project.
+
+</Mistake>
+
+<Mistake title="Forgetting to activate the environment">
+
+<Wrong>
+
+```bash
+python -m venv .venv
+pip install requests    # still the system pip
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install requests    # the prompt now shows (.venv)
+```
+
+</Right>
+
+Creating a venv is not enough. Activate it in every new terminal. The prompt shows `(.venv)` when it is active.
+
+</Mistake>
+
+<Mistake title="Committing the .venv folder to Git">
+
+<Wrong>
+
+```bash
+git add .venv           # thousands of files that only work on your computer
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+echo ".venv/" >> .gitignore
+pip freeze > requirements.txt
+git add requirements.txt .gitignore
+```
+
+</Right>
+
+Share the list of packages, not the packages. Others rebuild the venv from `requirements.txt`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is pip?">
+
+pip is Python's package installer. It downloads packages from PyPI and installs them with their dependencies. Common commands are `pip install`, `pip uninstall`, `pip list` and `pip freeze`.
+
+</QA>
+
+<QA q="What is a virtual environment and why do you need it?">
+
+An isolated folder with its own Python interpreter link and its own `site-packages`. It lets each project have its own package versions, so projects do not conflict and the system Python stays clean. It also makes a project reproducible on another machine or server.
+
+</QA>
+
+<QA q="What is requirements.txt?">
+
+A text file that lists a project's dependencies, usually with pinned versions like `django==5.0.6`. It is created with `pip freeze > requirements.txt` and used with `pip install -r requirements.txt`, for example in a Dockerfile or CI pipeline.
+
+</QA>
+
+<QA q="What is the difference between pip list and pip freeze?">
+
+Both show installed packages. `pip list` prints a readable table. `pip freeze` prints `name==version` lines in the format that `requirements.txt` needs.
+
+</QA>
+
+<QA q="What is the difference between a module, a package and a library?">
+
+A module is one `.py` file. A package is a folder of modules. A library is a general word for a collection of packages that you install and use, such as requests or pandas.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command creates a virtual environment?',
+      options: ['pip install venv', 'python -m venv .venv', 'venv create', 'python new env'],
+      answer: 1,
+      why: 'python -m venv followed by a folder name creates the environment in that folder.',
+    },
+    {
+      q: 'What is requirements.txt used for?',
+      options: [
+        'To store passwords',
+        'To list the packages a project needs',
+        'To write Python code',
+        'To configure the editor',
+      ],
+      answer: 1,
+      why: 'It lists the dependencies so anyone can install the same set.',
+    },
+    {
+      q: 'Why should each project have its own virtual environment?',
+      options: [
+        'It makes Python run faster',
+        'It is required by law',
+        'Projects can then use different package versions without clashing',
+        'It encrypts the code',
+      ],
+      answer: 2,
+      why: 'A venv isolates packages per project, which prevents version conflicts.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Create a venv | `python -m venv .venv` |
+| Activate (Windows) | `.venv\Scripts\activate` |
+| Activate (Linux, macOS) | `source .venv/bin/activate` |
+| Leave | `deactivate` |
+| Install | `pip install requests` |
+| Exact version | `pip install "requests==2.32.3"` |
+| Save versions | `pip freeze > requirements.txt` |
+| Install from the file | `pip install -r requirements.txt` |
+| Upgrade | `pip install --upgrade requests` |
+
+</CheatSheet>

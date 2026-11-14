@@ -1,0 +1,341 @@
+---
+id: python-interview-revision
+title: Python interview revision
+summary: A quick revision page with the Python questions asked most often in backend interviews, short answers, and links to the full topics.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+The night before an exam, you do not read the whole textbook again. You read your short notes: one line for each important point, and you open the chapter only where you feel unsure.
+
+This page is those short notes for a Python interview.
+
+</Analogy>
+
+## Simple explanation
+
+Interviewers for Python backend roles ask the same core questions again and again. Most of them are "what is the difference between X and Y".
+
+Use this page in three steps:
+
+1. Read each question below and say the answer aloud before you open it
+2. If the answer is not clear, follow the link to the full topic
+3. Type the code snippets yourself. Interviewers often ask for small programs
+
+Questions that were asked in real interviews, with their topics:
+
+- Lambda function: [Lambda functions](/track/python/lambda-functions)
+- List vs tuple: [List vs tuple](/track/python/list-vs-tuple)
+- `==` vs `is`: [== vs is](/track/python/equality-vs-identity)
+- `*args` and `**kwargs`: [*args and **kwargs](/track/python/args-and-kwargs)
+- Shallow copy vs deep copy: [Shallow copy vs deep copy](/track/python/shallow-vs-deep-copy)
+- Decorator vs generator: [Decorator vs generator](/track/python/decorator-vs-generator)
+- Multiprocessing vs multithreading: [Multithreading vs multiprocessing](/track/python/multithreading-vs-multiprocessing)
+- asyncio: [asyncio in practice](/track/python/asyncio)
+- Memory management: [Memory management](/track/python/memory-management)
+
+A tip for answering: give the one-line difference first, then one example, then when you would use each. Keep it under a minute.
+
+## Code example
+
+Small programs that interviewers often ask you to write:
+
+```python
+from collections import Counter
+
+text = "interview"
+
+print(text[::-1])                                   # 1. reverse a string
+print("madam" == "madam"[::-1])                     # 2. palindrome check
+print(Counter(text).most_common(2))                 # 3. most common characters
+
+numbers = [4, 1, 4, 3, 1, 9]
+print(list(dict.fromkeys(numbers)))                 # 4. remove duplicates, keep the order
+print(sorted(set(numbers))[-2])                     # 5. second largest number
+
+def fibonacci(count):                               # 6. Fibonacci with a generator
+    a, b = 0, 1
+    for _ in range(count):
+        yield a
+        a, b = b, a + b
+
+print(list(fibonacci(8)))
+
+nested = [[1, 2], [3], [4, 5]]
+print([x for row in nested for x in row])           # 7. flatten a list of lists
+
+print(sorted("listen") == sorted("silent"))         # 8. anagram check
+
+words = ["apple", "kiwi", "banana"]
+print(sorted(words, key=len))                       # 9. sort by a custom key
+print({word: len(word) for word in words})          # 10. dict comprehension
+
+a, b = 5, 10
+a, b = b, a                                         # 11. swap without a third variable
+print(a, b)
+
+print([n for n in range(1, 16) if n % 3 == 0 and n % 5 != 0])   # 12. filter with conditions
+```
+
+```output
+weivretni
+True
+[('i', 2), ('e', 2)]
+[4, 1, 3, 9]
+4
+[0, 1, 1, 2, 3, 5, 8, 13]
+[1, 2, 3, 4, 5]
+True
+['kiwi', 'apple', 'banana']
+{'apple': 5, 'kiwi': 4, 'banana': 6}
+10 5
+[3, 6, 9, 12]
+```
+
+<Playground kind="python">
+
+```python
+def is_prime(n):
+    if n < 2:
+        return False
+    for divisor in range(2, int(n ** 0.5) + 1):
+        if n % divisor == 0:
+            return False
+    return True
+
+def fizzbuzz(n):
+    if n % 15 == 0:
+        return "FizzBuzz"
+    if n % 3 == 0:
+        return "Fizz"
+    if n % 5 == 0:
+        return "Buzz"
+    return str(n)
+
+print([n for n in range(1, 30) if is_prime(n)])
+print(" ".join(fizzbuzz(n) for n in range(1, 16)))
+
+# Try it: write  count_vowels(text)  and test it with your name.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Giving only the definition, with no example">
+
+<Wrong>
+
+```python
+answer = "A decorator is a function that modifies another function."
+print(len(answer.split()) < 12)   # True: too short to show understanding
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def log(func):
+    def wrapper(*args, **kwargs):
+        print("calling", func.__name__)
+        return func(*args, **kwargs)
+    return wrapper
+
+@log
+def pay(amount):
+    return f"paid {amount}"
+
+print(pay(100))
+```
+
+</Right>
+
+After the one-line definition, write or describe a small example. It proves you have used the feature.
+
+</Mistake>
+
+<Mistake title="Mixing up the classic pairs">
+
+<Wrong>
+
+```python
+notes = {
+    "*args": "a dict of keyword arguments",       # wrong way round
+    "**kwargs": "a tuple of positional arguments",
+}
+print(notes["*args"].startswith("a tuple"))   # False
+```
+
+</Wrong>
+
+<Right>
+
+```python
+notes = {
+    "*args": "a tuple of positional arguments",
+    "**kwargs": "a dict of keyword arguments",
+}
+print(notes["*args"].startswith("a tuple"))   # True
+```
+
+</Right>
+
+Learn each pair with a memory hook: one star, one kind of value (positions); two stars, two parts (key and value).
+
+</Mistake>
+
+<Mistake title="Writing the mutable default argument bug in live coding">
+
+<Wrong>
+
+```python
+def add_tag(tag, tags=[]):
+    tags.append(tag)
+    return tags
+
+add_tag("a")
+print(add_tag("b"))   # ['a', 'b']
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def add_tag(tag, tags=None):
+    if tags is None:
+        tags = []
+    tags.append(tag)
+    return tags
+
+add_tag("a")
+print(add_tag("b"))   # ['b']
+```
+
+</Right>
+
+Interviewers watch for this one. A default list is created once and shared by every call.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a list and a tuple?">
+
+A list is mutable; a tuple is immutable. So a tuple is smaller, slightly faster, hashable (usable as a dict key) and has only `count()` and `index()`. Use a list for data that changes and a tuple for fixed groups of values. Full topic: [List vs tuple](/track/python/list-vs-tuple).
+
+</QA>
+
+<QA q="What is the difference between == and is?">
+
+`==` compares values (it calls `__eq__`). `is` compares identity: whether both names refer to the same object. Use `is` only for `None`, `True` and `False`. Full topic: [== vs is](/track/python/equality-vs-identity).
+
+</QA>
+
+<QA q="What is the difference between *args and **kwargs?">
+
+`*args` collects extra positional arguments into a tuple. `**kwargs` collects extra keyword arguments into a dict. In a call, `*` unpacks an iterable and `**` unpacks a dict. Full topic: [*args and **kwargs](/track/python/args-and-kwargs).
+
+</QA>
+
+<QA q="What is the difference between a shallow copy and a deep copy?">
+
+A shallow copy makes a new outer object that still shares the inner objects. A deep copy also copies every inner object, so nothing is shared. It matters only for nested mutable data. Full topic: [Shallow copy vs deep copy](/track/python/shallow-vs-deep-copy).
+
+</QA>
+
+<QA q="What is the difference between a decorator and a generator?">
+
+A decorator wraps a function to add behaviour and returns a new function (`@name`). A generator uses `yield` to produce values lazily, one at a time, and returns an iterator. Full topic: [Decorator vs generator](/track/python/decorator-vs-generator).
+
+</QA>
+
+<QA q="What is the difference between multithreading and multiprocessing?">
+
+Threads share memory and one GIL, so they suit I/O-bound work. Processes have separate memory and their own GIL, so they run in parallel and suit CPU-bound work. Full topic: [Multithreading vs multiprocessing](/track/python/multithreading-vs-multiprocessing).
+
+</QA>
+
+<QA q="How does memory management work in Python?">
+
+Objects live on a private heap. CPython frees an object as soon as its reference count reaches zero, and a generational garbage collector cleans up reference cycles. Full topic: [Memory management](/track/python/memory-management).
+
+</QA>
+
+<QA q="What is a lambda function?">
+
+A small anonymous function with a single expression: `lambda x: x * 2`. It is mostly used as a short `key` or callback. Full topic: [Lambda functions](/track/python/lambda-functions).
+
+</QA>
+
+<QA q="What is asyncio?">
+
+The standard library for async I/O. One thread runs an event loop; coroutines pause at `await` so other tasks can run while they wait. It suits many concurrent network operations. Full topic: [asyncio in practice](/track/python/asyncio).
+
+</QA>
+
+<QA q="What is the GIL?">
+
+A lock in CPython that lets only one thread execute Python bytecode at a time. It makes threads useless for CPU-bound speed-ups but fine for I/O. Full topic: [The GIL](/track/python/gil).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which is mutable?',
+      options: ['tuple', 'str', 'list', 'frozenset'],
+      answer: 2,
+      why: 'A list can be changed in place. The other three are immutable.',
+    },
+    {
+      q: 'Inside  def f(*args, **kwargs):  what are the types of args and kwargs?',
+      options: ['list and dict', 'tuple and dict', 'tuple and list', 'dict and tuple'],
+      answer: 1,
+      why: 'args is a tuple of positional values and kwargs is a dict of keyword values.',
+    },
+    {
+      q: 'Which tool gives true parallelism for CPU-bound Python code?',
+      options: ['threading', 'asyncio', 'multiprocessing', 'A generator'],
+      answer: 2,
+      why: 'Each process has its own GIL, so processes run on several cores at once.',
+    },
+    {
+      q: 'Which keyword makes a function a generator?',
+      options: ['return', 'yield', 'await', 'lambda'],
+      answer: 1,
+      why: 'A function that contains yield is a generator function.',
+    },
+    {
+      q: 'What is the correct way to check whether x is None?',
+      options: ['x == None', 'x is None', 'x = None', 'not x'],
+      answer: 1,
+      why: 'None is a singleton, so identity is the right check. "not x" is also true for 0 and empty values.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Pair | One-line difference |
+| --- | --- |
+| list vs tuple | Mutable vs immutable |
+| `==` vs `is` | Same value vs same object |
+| `*args` vs `**kwargs` | Tuple of positions vs dict of names |
+| Shallow vs deep copy | Shares inner objects vs copies them |
+| Decorator vs generator | Wraps a function vs yields values |
+| Thread vs process | Shared memory, I/O vs separate memory, CPU |
+| Iterable vs iterator | Can be looped vs does the looping |
+| `sort()` vs `sorted()` | In place, returns None vs returns a new list |
+| `append` vs `extend` | Adds one item vs adds each item |
+| `@staticmethod` vs `@classmethod` | No first argument vs gets `cls` |
+| `__str__` vs `__repr__` | For users vs for developers |
+| `return` vs `yield` | Ends the function vs pauses it |
+
+</CheatSheet>

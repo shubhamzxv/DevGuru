@@ -1,0 +1,228 @@
+---
+id: sql-data-types
+title: Data types
+summary: A data type tells the database what kind of value a column holds, such as a whole number, text or a date.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a bank form. The "Amount" box accepts only digits. The "Name" box accepts letters. The "Date" box has slots for day, month and year. Each box is made for one kind of value, so mistakes are caught early.
+
+A column's **data type** is the shape of that box.
+
+</Analogy>
+
+## Simple explanation
+
+Every column has a **data type**. It tells the database what kind of value is allowed, how much space to use, and how to compare and sort the values.
+
+The common groups are the same in every database:
+
+| Group | Typical types | Example value |
+| --- | --- | --- |
+| Whole numbers | `INT`, `BIGINT`, `SMALLINT` | `42` |
+| Exact decimals | `DECIMAL(10, 2)`, `NUMERIC` | `1499.50` |
+| Approximate decimals | `FLOAT`, `DOUBLE`, `REAL` | `3.14159` |
+| Short text | `VARCHAR(100)`, `CHAR(2)` | `'Asha'` |
+| Long text | `TEXT` | A product description |
+| Date and time | `DATE`, `TIME`, `TIMESTAMP`, `DATETIME` | `'2024-06-20'` |
+| True or false | `BOOLEAN` | `TRUE` |
+
+Two choices matter a lot:
+
+- For **money**, use `DECIMAL`, never `FLOAT`. Floats are not exact, so paise can go missing
+- `CHAR(n)` always uses exactly n characters. `VARCHAR(n)` uses only what is needed, up to n
+
+**SQLite**, the engine in this playground, is more relaxed. It has only five storage classes: `INTEGER`, `REAL`, `TEXT`, `BLOB` and `NULL`. Dates are stored as text such as `'2024-06-20'`, and true or false as `1` or `0`. The function `typeof()` shows how a value is stored.
+
+## Code example
+
+```sql
+SELECT
+  name,
+  typeof(name)      AS name_type,       -- text
+  price,
+  typeof(price)     AS price_type,      -- decimal number
+  stock,
+  typeof(stock)     AS stock_type       -- whole number
+FROM products
+LIMIT 3;
+```
+
+```output
+name                | name_type | price  | price_type | stock | stock_type
+--------------------+-----------+--------+------------+-------+-----------
+Wireless Mouse      | text      | 599.0  | real       | 120   | integer
+Mechanical Keyboard | text      | 2499.0 | real       | 45    | integer
+USB-C Cable         | text      | 299.0  | real       | 300   | integer
+```
+
+Converting a value to another type is called **casting**:
+
+```sql
+SELECT
+  CAST('25' AS INTEGER) + 1     AS text_to_number,
+  CAST(599.99 AS INTEGER)       AS decimal_to_whole,
+  CAST(42 AS TEXT) || ' items'  AS number_to_text;
+```
+
+```output
+text_to_number | decimal_to_whole | number_to_text
+---------------+------------------+---------------
+26             | 599              | 42 items
+```
+
+<Playground kind="sql">
+
+```sql
+SELECT
+  hire_date,
+  typeof(hire_date)              AS stored_as,
+  CAST(substr(hire_date, 1, 4) AS INTEGER) AS hire_year,
+  salary / 12                    AS whole_division,
+  salary / 12.0                  AS decimal_division
+FROM employees
+LIMIT 4;
+
+-- Try it: show  typeof(NULL)  and  typeof(1 = 1).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Dividing two whole numbers and expecting a decimal">
+
+<Wrong>
+
+```sql
+SELECT 7 / 2 AS result;   -- gives 3
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT 7 / 2.0 AS result;   -- gives 3.5
+```
+
+</Right>
+
+Integer divided by integer drops the decimal part in SQLite, PostgreSQL and SQL Server. Make one side a decimal. (MySQL's `/` gives 3.5 by itself.)
+
+</Mistake>
+
+<Mistake title="Storing numbers as text">
+
+<Wrong>
+
+```sql
+SELECT '100' < '25' AS text_compare;   -- gives 1 (true): text is compared letter by letter
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT 100 < 25 AS number_compare;   -- gives 0 (false)
+```
+
+</Right>
+
+Text sorts character by character, so `'100'` comes before `'25'`. Keep numbers in number columns.
+
+</Mistake>
+
+<Mistake title="Using FLOAT for money">
+
+<Wrong>
+
+```sql
+SELECT 0.1 + 0.2 = 0.3 AS equal;   -- gives 0 (false)
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT 10 + 20 = 30 AS equal_in_paise;   -- gives 1 (true)
+```
+
+</Right>
+
+Floating-point numbers are approximate. Store money as `DECIMAL(10, 2)`, or as whole paise in an integer column.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between CHAR and VARCHAR?">
+
+`CHAR(n)` is fixed length: shorter values are padded with spaces to n characters. `VARCHAR(n)` is variable length: it stores only the characters given, up to n. Use `CHAR` for values that are always the same length, such as a two-letter state code, and `VARCHAR` for everything else.
+
+</QA>
+
+<QA q="What is the difference between DECIMAL and FLOAT?">
+
+`DECIMAL(p, s)` stores exact values with p total digits and s digits after the point, so it is right for money. `FLOAT` and `DOUBLE` store binary approximations: faster and smaller, but with rounding errors, so they suit measurements, not accounts.
+
+</QA>
+
+<QA q="What is the difference between DATETIME and TIMESTAMP in MySQL?">
+
+`DATETIME` stores the date and time exactly as given, with no time zone, and covers years 1000 to 9999. `TIMESTAMP` is stored in UTC and converted to the session's time zone when read, and its range is 1970 to 2038. Use `TIMESTAMP` for "when did this happen" across time zones.
+
+</QA>
+
+<QA q="How does SQLite handle data types differently?">
+
+SQLite uses **dynamic typing** with **type affinity**. A column's declared type is only a preference: any column can hold any of the five storage classes (`NULL`, `INTEGER`, `REAL`, `TEXT`, `BLOB`). It has no separate date or boolean type; dates are stored as text or numbers, and booleans as 0 and 1.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which type is best for a price in rupees and paise?',
+      options: ['FLOAT', 'DECIMAL(10, 2)', 'TEXT', 'BOOLEAN'],
+      answer: 1,
+      why: 'DECIMAL stores exact values, which money needs.',
+    },
+    {
+      q: 'What does 7 / 2 return in SQLite?',
+      options: ['3.5', '3', '4', 'An error'],
+      answer: 1,
+      why: 'Both values are integers, so the decimal part is dropped.',
+    },
+    {
+      q: 'How does SQLite store a date like 2024-06-20?',
+      options: ['In a special DATE type', 'As text (or a number)', 'It cannot store dates', 'As an image'],
+      answer: 1,
+      why: 'SQLite has no date type. Dates are usually stored as text in the form YYYY-MM-DD.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Use | In SQLite |
+| --- | --- | --- |
+| Whole number | `INT`, `BIGINT` | `INTEGER` |
+| Money | `DECIMAL(10, 2)` | `REAL` or integer paise |
+| Measurement | `FLOAT`, `DOUBLE` | `REAL` |
+| Short text | `VARCHAR(n)` | `TEXT` |
+| Long text | `TEXT` | `TEXT` |
+| Date | `DATE` | `TEXT` as `'YYYY-MM-DD'` |
+| True or false | `BOOLEAN` | `INTEGER` 1 or 0 |
+| Convert | `CAST(x AS INTEGER)` | Same |
+| Check | | `typeof(x)` |
+
+</CheatSheet>

@@ -1,0 +1,261 @@
+---
+id: python-init-and-self
+title: __init__ and self
+summary: __init__ sets up a new object, and self is the name a method uses for the object it is working on.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of opening a new bank account. On day one, the clerk fills a form with your name and first deposit. That set-up happens once, when the account is created.
+
+Later, when you say "my balance", you mean your own account, not someone else's. In Python, the set-up form is `__init__`, and the word "my" is `self`.
+
+</Analogy>
+
+## Simple explanation
+
+`__init__` is a special method. Python calls it automatically, right after a new object is created. Its job is to give the object its starting data.
+
+It is often called the **constructor**. More exactly, it is the **initializer**: the object already exists, and `__init__` fills it in.
+
+`self` is the first parameter of every normal method. It refers to **the object the method was called on**.
+
+When you write `asha.deposit(500)`, Python turns it into `BankAccount.deposit(asha, 500)`. So inside the method, `self` is `asha`.
+
+A name written as `self.balance` is an **instance attribute**. It lives on the object and stays after the method ends. A plain name such as `balance` is a local variable and disappears when the method ends.
+
+`self` is not a keyword. It is a strong convention, and everyone uses it.
+
+## Code example
+
+```python
+class Student:
+    def __init__(self, name, marks):       # called automatically on creation
+        print("Setting up", name)
+        self.name = name                   # saved on the object
+        self.marks = marks
+        self.passed = marks >= 40          # a value worked out during set-up
+
+    def report(self):                      # self is the object before the dot
+        status = "pass" if self.passed else "fail"   # status is only a local variable
+        return f"{self.name}: {self.marks} ({status})"
+
+asha = Student("Asha", 82)                 # __init__ runs here
+ravi = Student("Ravi", 35)
+
+print(asha.report())                       # self is asha
+print(ravi.report())                       # self is ravi
+print(Student.report(asha))                # the same call, written the long way
+
+print(asha.__dict__)                       # all instance attributes of this object
+asha.marks = 90                            # attributes can be changed later
+print(asha.marks)
+```
+
+```output
+Setting up Asha
+Setting up Ravi
+Asha: 82 (pass)
+Ravi: 35 (fail)
+Asha: 82 (pass)
+{'name': 'Asha', 'marks': 82, 'passed': True}
+90
+```
+
+<Playground kind="python">
+
+```python
+class Rectangle:
+    def __init__(self, width, height):
+        self.width = width
+        self.height = height
+
+    def area(self):
+        return self.width * self.height
+
+    def is_square(self):
+        return self.width == self.height
+
+box = Rectangle(4, 4)
+print("Area:", box.area())
+print("Square?", box.is_square())
+
+# Try it: add a  perimeter()  method that uses self.width and self.height.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting self. when saving a value">
+
+<Wrong>
+
+```python
+class User:
+    def __init__(self, name):
+        name = name          # only a local variable
+
+user = User("Asha")
+print(user.name)   # AttributeError: 'User' object has no attribute 'name'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class User:
+    def __init__(self, name):
+        self.name = name
+
+user = User("Asha")
+print(user.name)   # Asha
+```
+
+</Right>
+
+Without `self.`, the value is not stored on the object.
+
+</Mistake>
+
+<Mistake title="Misspelling __init__">
+
+<Wrong>
+
+```python
+class User:
+    def _init_(self, name):      # one underscore on each side
+        self.name = name
+
+user = User("Asha")   # TypeError: User() takes no arguments
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class User:
+    def __init__(self, name):    # two underscores on each side
+        self.name = name
+
+print(User("Asha").name)   # Asha
+```
+
+</Right>
+
+Python only recognises `__init__` with two underscores before and after.
+
+</Mistake>
+
+<Mistake title="Returning a value from __init__">
+
+<Wrong>
+
+```python
+class User:
+    def __init__(self, name):
+        self.name = name
+        return name
+
+User("Asha")   # TypeError: __init__() should return None, not 'str'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class User:
+    def __init__(self, name):
+        self.name = name
+
+print(User("Asha").name)   # Asha
+```
+
+</Right>
+
+`__init__` only sets up the object. It must not return anything.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is __init__ in Python?">
+
+A special method that Python calls automatically after an object is created. It initialises the object's attributes. It is commonly called the constructor, though the object is actually created earlier by `__new__`.
+
+</QA>
+
+<QA q="What is self?">
+
+`self` is the reference to the current instance. It is passed automatically as the first argument when a method is called on an object. It lets the method read and change that object's attributes. The name is a convention, not a keyword.
+
+</QA>
+
+<QA q="What is the difference between __new__ and __init__?">
+
+`__new__` **creates** the object and returns it. `__init__` then **initialises** it. You rarely override `__new__`; it is used for things like singletons and for subclassing immutable types such as `tuple`.
+
+</QA>
+
+<QA q="Can a class have more than one __init__?">
+
+No. Python has no method overloading, so a second `__init__` replaces the first. Use default arguments, or add alternative constructors with `@classmethod`.
+
+```python
+class User:
+    def __init__(self, name, role="member"):
+        self.name, self.role = name, role
+
+print(User("Asha").role, User("Ravi", "admin").role)   # member admin
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'When does __init__ run?',
+      options: [
+        'When the class is defined',
+        'Automatically, each time an object is created',
+        'Only when you call it yourself',
+        'When the program ends',
+      ],
+      answer: 1,
+      why: 'Python calls __init__ on every new object right after creating it.',
+    },
+    {
+      q: 'In  asha.report(),  what does self refer to inside report?',
+      options: ['The class', 'The object asha', 'The method', 'Nothing'],
+      answer: 1,
+      why: 'self is the object the method was called on.',
+    },
+    {
+      q: 'Which line stores a value on the object?',
+      options: ['name = name', 'self.name = name', 'self = name', 'name.self = name'],
+      answer: 1,
+      why: 'Only an assignment to self.something creates an instance attribute.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Thing | Meaning |
+| --- | --- |
+| `__init__(self, ...)` | Runs once for each new object |
+| `self` | The object being used |
+| `self.x = value` | Save data on the object |
+| `x = value` | Local variable, lost after the method |
+| `obj.method()` | Python passes `obj` as `self` |
+| `obj.__dict__` | All attributes stored on the object |
+
+</CheatSheet>

@@ -1,0 +1,288 @@
+---
+id: python-pep8-and-clean-code
+title: PEP 8 and clean code
+summary: PEP 8 is the official style guide for Python, and clean code is code that other people can read and change easily.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of road rules. Everyone drives on the left, stops at red and uses indicators. No single rule makes a car faster, but because everyone follows the same rules, traffic flows and people do not crash.
+
+**PEP 8** is the set of road rules for Python code. When a whole team follows it, anyone can read anyone's code.
+
+</Analogy>
+
+## Simple explanation
+
+Code is read far more often than it is written. **Clean code** is code that a teammate can understand quickly and change safely.
+
+**PEP 8** is the official style guide. PEP means Python Enhancement Proposal. Its main rules:
+
+**Naming**
+
+- Variables and functions: `snake_case`, like `total_price`
+- Classes: `CapWords`, like `BankAccount`
+- Constants: `UPPER_CASE`, like `MAX_RETRIES`
+- Names should say what the thing is. `days_left` is better than `d`
+
+**Layout**
+
+- 4 spaces per indentation level, never tabs
+- Lines up to 79 characters (many teams allow 88 or 100)
+- Two blank lines around top-level functions and classes
+- Spaces around operators and after commas: `total = price * qty`
+- Imports at the top, one per line, in three groups: standard library, third-party, your own
+
+**Clean code habits**
+
+- A function should do **one thing** and be short
+- Avoid **magic numbers**. Give them a name: `GST_RATE = 0.18`
+- Do not repeat yourself (**DRY**). Put repeated logic in a function
+- Return early to avoid deep nesting
+- Write comments that explain **why**, not what
+
+You do not format by hand. Tools do it: **Black** and **Ruff** format code automatically, and **Ruff**, **Flake8** and **Pylint** point out style problems.
+
+## Code example
+
+```python
+GST_RATE = 0.18                            # constant: UPPER_CASE, no magic number
+FREE_DELIVERY_ABOVE = 500
+
+
+class Order:                               # class: CapWords
+    """One customer order."""
+
+    def __init__(self, items):
+        self.items = items                 # attribute: snake_case
+
+    def subtotal(self):                    # one job: add up the items
+        return sum(price * quantity for price, quantity in self.items)
+
+    def gst(self):                         # one job: work out the tax
+        return round(self.subtotal() * GST_RATE, 2)
+
+    def delivery_charge(self):
+        if self.subtotal() >= FREE_DELIVERY_ABOVE:   # return early, no nesting
+            return 0
+        return 40
+
+    def total(self):
+        return self.subtotal() + self.gst() + self.delivery_charge()
+
+
+def format_rupees(amount):                 # function: snake_case, a clear name
+    return f"Rs {amount:,.2f}"
+
+
+order = Order([(120, 2), (60, 1)])
+print(format_rupees(order.subtotal()))
+print(format_rupees(order.gst()))
+print(format_rupees(order.delivery_charge()))
+print(format_rupees(order.total()))
+```
+
+```output
+Rs 300.00
+Rs 54.00
+Rs 40.00
+Rs 394.00
+```
+
+<Playground kind="python">
+
+```python
+PASS_MARK = 40
+
+
+def is_pass(marks):
+    return marks >= PASS_MARK
+
+
+def summarize(scores):
+    passed = [name for name, marks in scores.items() if is_pass(marks)]
+    return {"passed": passed, "pass_rate": len(passed) / len(scores)}
+
+
+report = summarize({"Asha": 82, "Ravi": 35, "Meera": 67})
+print(report)
+
+# Try it: add a constant DISTINCTION_MARK and list the students above it.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Names that say nothing">
+
+<Wrong>
+
+```python
+def f(a, b):
+    x = a * b
+    y = x * 0.18
+    return x + y
+
+print(f(100, 2))   # 236.0
+```
+
+</Wrong>
+
+<Right>
+
+```python
+GST_RATE = 0.18
+
+def price_with_gst(unit_price, quantity):
+    subtotal = unit_price * quantity
+    gst = subtotal * GST_RATE
+    return subtotal + gst
+
+print(price_with_gst(100, 2))   # 236.0
+```
+
+</Right>
+
+Same result, but the second version explains itself. Good names remove the need for comments.
+
+</Mistake>
+
+<Mistake title="Deep nesting">
+
+<Wrong>
+
+```python
+def can_order(user, cart):
+    if user:
+        if user["active"]:
+            if cart:
+                return True
+    return False
+
+print(can_order({"active": True}, ["pen"]))   # True
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def can_order(user, cart):
+    if not user or not user["active"]:
+        return False
+    return bool(cart)
+
+print(can_order({"active": True}, ["pen"]))   # True
+```
+
+</Right>
+
+Handle the "no" cases first and return early. The main path stays flat and easy to follow.
+
+</Mistake>
+
+<Mistake title="Repeating the same logic">
+
+<Wrong>
+
+```python
+pen_total = 10 * 3 + 10 * 3 * 0.18
+bag_total = 700 * 1 + 700 * 1 * 0.18
+print(pen_total, bag_total)   # 35.4 826.0
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def total_with_gst(price, quantity, rate=0.18):
+    subtotal = price * quantity
+    return subtotal + subtotal * rate
+
+print(total_with_gst(10, 3), total_with_gst(700, 1))   # 35.4 826.0
+```
+
+</Right>
+
+Copy-pasted logic must be fixed in every copy. Put it in one function (DRY: do not repeat yourself).
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is PEP 8?">
+
+PEP 8 is the official style guide for Python code. It covers naming conventions, indentation (4 spaces), line length, blank lines, import ordering and whitespace. Its goal is readability and consistency across the Python community.
+
+</QA>
+
+<QA q="What naming conventions does Python use?">
+
+`snake_case` for variables, functions and module names; `CapWords` (PascalCase) for classes; `UPPER_SNAKE_CASE` for constants; a leading underscore `_name` for internal names; and double underscores on both sides `__init__` only for Python's special methods.
+
+</QA>
+
+<QA q="Which tools do you use to keep code clean?">
+
+A formatter such as **Black** or **Ruff format** to apply a uniform style, a linter such as **Ruff**, **Flake8** or **Pylint** to catch style issues and likely bugs, **isort** (or Ruff) to order imports, and **mypy** or **pyright** for type checking. They are usually run from a pre-commit hook and in CI.
+
+</QA>
+
+<QA q="What is a docstring and how is it different from a comment?">
+
+A docstring is a string literal as the first statement of a module, class or function. It is stored in `__doc__` and shown by `help()` and documentation tools. A comment starts with `#`, is ignored by Python and explains a specific line or decision.
+
+</QA>
+
+<QA q="What does the Zen of Python say?">
+
+It is a short list of guiding principles (PEP 20), shown by `import this`. Well-known lines: "Readability counts", "Simple is better than complex", "Explicit is better than implicit" and "There should be one obvious way to do it".
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which name follows PEP 8 for a function?',
+      options: ['CalculateTotal', 'calculateTotal', 'calculate_total', 'CALCULATE_TOTAL'],
+      answer: 2,
+      why: 'Functions and variables use snake_case.',
+    },
+    {
+      q: 'Which name follows PEP 8 for a class?',
+      options: ['bank_account', 'BankAccount', 'bankAccount', 'BANK_ACCOUNT'],
+      answer: 1,
+      why: 'Classes use CapWords, also called PascalCase.',
+    },
+    {
+      q: 'How many spaces does PEP 8 recommend per indentation level?',
+      options: ['2', '4', '8', 'One tab'],
+      answer: 1,
+      why: 'Four spaces per level, and no tabs.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Thing | Style | Example |
+| --- | --- | --- |
+| Variable, function | snake_case | `total_price` |
+| Class | CapWords | `BankAccount` |
+| Constant | UPPER_CASE | `MAX_RETRIES` |
+| Internal name | Leading underscore | `_cache` |
+| Indentation | 4 spaces | |
+| Line length | 79 (or the team's limit) | |
+| Around operators | One space | `a = b + c` |
+| Between functions | 2 blank lines | |
+| Auto-format | Black, Ruff | `ruff format .` |
+| Check style | Ruff, Flake8 | `ruff check .` |
+
+</CheatSheet>

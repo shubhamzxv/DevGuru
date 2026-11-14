@@ -1,0 +1,240 @@
+---
+id: python-numbers-and-operators
+title: Numbers and operators
+summary: Operators are symbols such as +, -, *, / and == that let Python do maths and compare values.
+updated: "2026-11-14"
+---
+
+<Analogy>
+
+Think of a shop bill. The shopkeeper multiplies price by quantity, adds the items, and subtracts the discount.
+
+Now split 100 rupees between 3 friends. Each friend gets 33 rupees, and 1 rupee is left over. Python has one operator for "each gets" and another for "left over".
+
+</Analogy>
+
+## Simple explanation
+
+An **operator** is a symbol that does some work on values. In `2 + 3`, the `+` is the operator.
+
+**Arithmetic operators** do maths:
+
+- `+` add, `-` subtract, `*` multiply
+- `/` divide. The answer is always a float
+- `//` **floor division**: divide and drop the decimal part
+- `%` **modulo**: the remainder after division
+- `**` power
+
+**Comparison operators** compare two values and give `True` or `False`: `==`, `!=`, `<`, `>`, `<=`, `>=`.
+
+**Logical operators** join conditions: `and` (both true), `or` (at least one true), `not` (the opposite).
+
+**Assignment operators** update a variable in a short way. `total += 30` means `total = total + 30`.
+
+Python follows **operator precedence**, like BODMAS in school. Brackets run first, then `**`, then `*` `/` `//` `%`, then `+` `-`.
+
+## Code example
+
+```python
+price = 40
+quantity = 3
+total = price * quantity              # multiply
+print(total)
+
+print(100 / 3)                        # division always gives a float
+print(100 // 3)                       # floor division: each friend gets 33
+print(100 % 3)                        # modulo: 1 rupee is left over
+print(2 ** 10)                        # power: 2 to the 10th
+
+print(total > 100, total == 120)      # comparisons give True or False
+print(total > 100 and quantity < 5)   # and: both sides must be True
+
+total += 30                           # same as total = total + 30
+print(total)
+
+print(2 + 3 * 4, (2 + 3) * 4)         # * runs before +, brackets run first
+print(round(0.1 + 0.2, 2))            # floats are not exact, so round them
+```
+
+```output
+120
+33.333333333333336
+33
+1
+1024
+True True
+True
+150
+14 20
+0.3
+```
+
+<Playground kind="python">
+
+```python
+bill = 1250
+friends = 4
+
+each = bill // friends
+left = bill % friends
+
+print("Each friend pays:", each)
+print("Left over:", left)
+print("Is the bill above 1000?", bill > 1000)
+
+# Try it: change the bill to 999 and the friends to 5.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Comparing floats with ==">
+
+<Wrong>
+
+```python
+print(0.1 + 0.2 == 0.3)   # False
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import math
+
+print(math.isclose(0.1 + 0.2, 0.3))   # True
+```
+
+</Right>
+
+Computers store floats in binary, so `0.1 + 0.2` is `0.30000000000000004`. Compare floats with `math.isclose()` or round them first.
+
+</Mistake>
+
+<Mistake title="Using / when you need a whole number">
+
+<Wrong>
+
+```python
+pages = 45 / 10
+print(pages)   # 4.5
+```
+
+</Wrong>
+
+<Right>
+
+```python
+pages = 45 // 10
+print(pages)   # 4
+```
+
+</Right>
+
+`/` always gives a float. Use `//` when you want a whole number.
+
+</Mistake>
+
+<Mistake title="Using ^ for power">
+
+<Wrong>
+
+```python
+print(2 ^ 3)   # 1, not 8
+```
+
+</Wrong>
+
+<Right>
+
+```python
+print(2 ** 3)   # 8
+```
+
+</Right>
+
+In Python, `^` is the bitwise XOR operator. Power is `**`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between / and //?">
+
+`/` is true division and always returns a float: `7 / 2` is `3.5`. `//` is floor division and rounds down to the nearest whole number: `7 // 2` is `3`. With negative numbers it still rounds down, so `-7 // 2` is `-4`.
+
+</QA>
+
+<QA q="What does the % operator return for negative numbers?">
+
+In Python, the result of `%` takes the sign of the right side. So `-7 % 3` is `2`, because `-7 = 3 * (-3) + 2`. This is different from C and Java, where the answer is `-1`.
+
+</QA>
+
+<QA q="Why is 0.1 + 0.2 not equal to 0.3?">
+
+Floats are stored in binary, and `0.1` cannot be stored exactly, just like 1/3 cannot be written exactly in decimal. The tiny errors add up. Use `math.isclose()` to compare, or the `decimal` module for money.
+
+</QA>
+
+<QA q="What do and and or actually return?">
+
+They return one of the values, not always `True` or `False`. `or` returns the first truthy value, and `and` returns the first falsy value (or the last value). They also **short-circuit**: Python stops as soon as the answer is known.
+
+```python
+print(0 or 5)        # 5
+print("hi" and 10)   # 10
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is 17 // 5?',
+      options: ['3.4', '3', '2', '4'],
+      answer: 1,
+      why: 'Floor division drops the decimal part of 3.4, so the answer is 3.',
+    },
+    {
+      q: 'What is 17 % 5?',
+      options: ['2', '3', '3.4', '0'],
+      answer: 0,
+      why: '17 is 5 x 3 + 2, so the remainder is 2.',
+    },
+    {
+      q: 'What does 2 + 3 * 4 give?',
+      options: ['20', '14', '24', '9'],
+      answer: 1,
+      why: 'Multiplication runs before addition: 3 * 4 is 12, then 2 + 12 is 14.',
+    },
+    {
+      q: 'What is the type of 10 / 2?',
+      options: ['int', 'float', 'str', 'bool'],
+      answer: 1,
+      why: 'The / operator always returns a float, so the result is 5.0.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Operator | Meaning | Example | Result |
+| --- | --- | --- | --- |
+| `+` `-` `*` | Add, subtract, multiply | `4 * 3` | `12` |
+| `/` | Divide (float) | `7 / 2` | `3.5` |
+| `//` | Floor division | `7 // 2` | `3` |
+| `%` | Remainder | `7 % 2` | `1` |
+| `**` | Power | `2 ** 3` | `8` |
+| `==` `!=` | Equal, not equal | `3 == 3` | `True` |
+| `<` `>` `<=` `>=` | Compare | `3 > 5` | `False` |
+| `and` `or` `not` | Join conditions | `True and False` | `False` |
+| `+=` `-=` `*=` | Update a variable | `x += 1` | adds 1 to x |
+
+</CheatSheet>
