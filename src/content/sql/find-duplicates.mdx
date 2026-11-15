@@ -1,0 +1,280 @@
+---
+id: sql-find-duplicates
+title: Find and delete duplicates
+summary: Find duplicate rows with GROUP BY and HAVING COUNT(*) > 1, and delete the extra copies while keeping one, usually the row with the lowest id.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Your phone's contact list has "Rahul Sharma" saved three times with the same number. You want to **find** such cases, then **delete the extra copies**, keeping just one.
+
+The careful part: you must not delete all three.
+
+</Analogy>
+
+## Simple explanation
+
+**Step 1: decide what "duplicate" means.** The `id` is always different, so duplicates are rows where the **business columns** match: the same email, or the same name and phone together.
+
+**Step 2: find them.** Group by those columns and keep groups with more than one row:
+
+`SELECT email, COUNT(*) FROM users GROUP BY email HAVING COUNT(*) > 1;`
+
+To see the **full rows**, join this back to the table, or use `COUNT(*) OVER (PARTITION BY email)`.
+
+**Step 3: delete the extras, keep one.** Choose which copy survives, usually the **lowest id** (the oldest). Three common ways:
+
+- `DELETE ... WHERE id NOT IN (SELECT MIN(id) ... GROUP BY email)`: works everywhere
+- `ROW_NUMBER() OVER (PARTITION BY email ORDER BY id)` and delete rows with number > 1: most flexible, lets you choose "keep the newest" instead
+- A **self join**: delete `a` where a matching `b` has a smaller id (MySQL's favourite)
+
+**Step 4: stop it happening again.** Add a `UNIQUE` constraint on those columns.
+
+Always run the `SELECT` version first, and do the `DELETE` inside a transaction.
+
+MySQL note: MySQL does not allow a `DELETE` whose subquery reads the **same** table directly (error 1093). Wrap the subquery in another `SELECT`, or use the self-join form.
+
+## Code example
+
+We make a small `contacts` table with duplicates:
+
+```sql
+CREATE TABLE contacts (id INTEGER PRIMARY KEY, name TEXT, phone TEXT);
+INSERT INTO contacts (name, phone) VALUES
+  ('Rahul', '98100'), ('Priya', '98200'), ('Rahul', '98100'),
+  ('Amit',  '98300'), ('Rahul', '98100'), ('Priya', '98200');
+
+SELECT name, phone, COUNT(*) AS copies          -- step 2: find
+FROM contacts
+GROUP BY name, phone
+HAVING COUNT(*) > 1;
+```
+
+```output
+name  | phone | copies
+------+-------+-------
+Priya | 98200 | 2
+Rahul | 98100 | 3
+```
+
+See every duplicate row with its id:
+
+```sql
+CREATE TABLE contacts (id INTEGER PRIMARY KEY, name TEXT, phone TEXT);
+INSERT INTO contacts (name, phone) VALUES
+  ('Rahul', '98100'), ('Priya', '98200'), ('Rahul', '98100'),
+  ('Amit',  '98300'), ('Rahul', '98100'), ('Priya', '98200');
+
+SELECT id, name, phone,
+       ROW_NUMBER() OVER (PARTITION BY name, phone ORDER BY id) AS copy_number
+FROM contacts
+ORDER BY name, id;
+```
+
+```output
+id | name  | phone | copy_number
+---+-------+-------+------------
+4  | Amit  | 98300 | 1
+2  | Priya | 98200 | 1
+6  | Priya | 98200 | 2
+1  | Rahul | 98100 | 1
+3  | Rahul | 98100 | 2
+5  | Rahul | 98100 | 3
+```
+
+Delete the extras, keeping the lowest id of each group:
+
+```sql
+CREATE TABLE contacts (id INTEGER PRIMARY KEY, name TEXT, phone TEXT);
+INSERT INTO contacts (name, phone) VALUES
+  ('Rahul', '98100'), ('Priya', '98200'), ('Rahul', '98100'),
+  ('Amit',  '98300'), ('Rahul', '98100'), ('Priya', '98200');
+
+DELETE FROM contacts
+WHERE id NOT IN (
+  SELECT MIN(id) FROM contacts GROUP BY name, phone   -- the one to keep in each group
+);
+
+SELECT * FROM contacts;
+```
+
+```output
+id | name  | phone
+---+-------+------
+1  | Rahul | 98100
+2  | Priya | 98200
+4  | Amit  | 98300
+```
+
+The same delete with `ROW_NUMBER` (keep the lowest id; change to `ORDER BY id DESC` to keep the newest):
+
+```sql
+CREATE TABLE contacts (id INTEGER PRIMARY KEY, name TEXT, phone TEXT);
+INSERT INTO contacts (name, phone) VALUES
+  ('Rahul', '98100'), ('Priya', '98200'), ('Rahul', '98100'),
+  ('Amit',  '98300'), ('Rahul', '98100'), ('Priya', '98200');
+
+WITH numbered AS (
+  SELECT id, ROW_NUMBER() OVER (PARTITION BY name, phone ORDER BY id) AS rn
+  FROM contacts
+)
+DELETE FROM contacts WHERE id IN (SELECT id FROM numbered WHERE rn > 1);
+
+SELECT COUNT(*) AS rows_left FROM contacts;
+```
+
+```output
+rows_left
+---------
+3
+```
+
+In MySQL, the self-join form:
+
+```mysql
+DELETE c1
+FROM contacts AS c1
+JOIN contacts AS c2
+  ON c1.name = c2.name AND c1.phone = c2.phone
+ AND c1.id > c2.id;                -- delete every copy that has an older twin
+
+ALTER TABLE contacts ADD UNIQUE KEY uq_name_phone (name, phone);   -- step 4: prevent it
+```
+
+<Playground kind="sql">
+
+```sql
+-- In the sample data: which cities have more than one customer?
+SELECT city, COUNT(*) AS customers, GROUP_CONCAT(name, ', ') AS names
+FROM customers
+GROUP BY city
+HAVING COUNT(*) > 1;
+
+-- Try it: find salaries shared by more than one employee.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Deleting every copy, including the one to keep">
+
+<Wrong>
+
+```sql
+CREATE TABLE contacts (id INTEGER PRIMARY KEY, name TEXT, phone TEXT);
+INSERT INTO contacts (name, phone) VALUES ('Rahul', '98100'), ('Rahul', '98100'), ('Amit', '98300');
+
+DELETE FROM contacts
+WHERE (name, phone) IN (SELECT name, phone FROM contacts GROUP BY name, phone HAVING COUNT(*) > 1);
+
+SELECT COUNT(*) FROM contacts WHERE name = 'Rahul';   -- 0: Rahul is gone completely
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE TABLE contacts (id INTEGER PRIMARY KEY, name TEXT, phone TEXT);
+INSERT INTO contacts (name, phone) VALUES ('Rahul', '98100'), ('Rahul', '98100'), ('Amit', '98300');
+
+DELETE FROM contacts
+WHERE id NOT IN (SELECT MIN(id) FROM contacts GROUP BY name, phone);
+
+SELECT COUNT(*) FROM contacts WHERE name = 'Rahul';   -- 1
+```
+
+</Right>
+
+Select the rows to **keep** (one id per group) and delete everything else.
+
+</Mistake>
+
+<Mistake title="MySQL error 1093 with the same table in the subquery">
+
+<Wrong>
+
+```mysql
+DELETE FROM contacts
+WHERE id NOT IN (SELECT MIN(id) FROM contacts GROUP BY name, phone);
+-- Error 1093: You can't specify target table 'contacts' for update in FROM clause
+```
+
+</Wrong>
+
+<Right>
+
+```mysql
+DELETE FROM contacts
+WHERE id NOT IN (
+  SELECT keep_id FROM (SELECT MIN(id) AS keep_id FROM contacts GROUP BY name, phone) AS k
+);
+```
+
+</Right>
+
+The extra derived table makes MySQL materialise the ids first. Or use the self-join `DELETE`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you find duplicate records in a table?">
+
+Group by the columns that define a duplicate and filter with `HAVING COUNT(*) > 1`. To see the full rows, join that result back to the table, or use `COUNT(*) OVER (PARTITION BY ...)` and keep rows where the count is above 1.
+
+</QA>
+
+<QA q="How do you delete duplicates but keep one copy?">
+
+Keep one id per group and delete the rest: `DELETE FROM t WHERE id NOT IN (SELECT MIN(id) FROM t GROUP BY col1, col2)`. Or number the rows with `ROW_NUMBER() OVER (PARTITION BY col1, col2 ORDER BY id)` and delete where the number is greater than 1. In MySQL, a self join `DELETE a FROM t a JOIN t b ON ... AND a.id > b.id` also works.
+
+</QA>
+
+<QA q="What if the table has no primary key or id at all?">
+
+Copy the distinct rows into a new table and swap: `CREATE TABLE t_clean AS SELECT DISTINCT * FROM t;`, then drop the old table and rename. In PostgreSQL you can also use the hidden `ctid` column, and in SQLite `rowid`, to tell copies apart.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which clause finds groups that appear more than once?',
+      options: ['WHERE COUNT(*) > 1', 'HAVING COUNT(*) > 1', 'ORDER BY COUNT(*)', 'DISTINCT'],
+      answer: 1,
+      why: 'Conditions on aggregates go in HAVING.',
+    },
+    {
+      q: 'To keep the oldest copy of each duplicate, which id do you keep?',
+      options: ['MAX(id)', 'MIN(id)', 'Any id', 'No id'],
+      answer: 1,
+      why: 'With an increasing id, the smallest id is the first inserted row.',
+    },
+    {
+      q: 'How do you stop new duplicates after cleaning up?',
+      options: ['Add an index only', 'Add a UNIQUE constraint on those columns', 'Run the delete daily', 'Use DISTINCT in every query'],
+      answer: 1,
+      why: 'A UNIQUE constraint makes the database reject duplicates.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | Query |
+| --- | --- |
+| Find groups | `SELECT a, b, COUNT(*) FROM t GROUP BY a, b HAVING COUNT(*) > 1;` |
+| See all copies | `COUNT(*) OVER (PARTITION BY a, b)` or `ROW_NUMBER() OVER (PARTITION BY a, b ORDER BY id)` |
+| Delete, keep oldest | `DELETE FROM t WHERE id NOT IN (SELECT MIN(id) FROM t GROUP BY a, b);` |
+| Delete with ROW_NUMBER | `WITH n AS (...) DELETE FROM t WHERE id IN (SELECT id FROM n WHERE rn > 1);` |
+| Delete (MySQL self join) | `DELETE t1 FROM t t1 JOIN t t2 ON t1.a = t2.a AND t1.id > t2.id;` |
+| Prevent | `ALTER TABLE t ADD UNIQUE (a, b);` |
+
+</CheatSheet>

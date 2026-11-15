@@ -136,3 +136,21 @@ export function setLastVisited(lastVisited: LastVisited): void {
   if (getData().lastVisited?.path === lastVisited.path) return;
   updateData((data) => ({ ...data, lastVisited }));
 }
+
+export function toggleBookmark(topicKey: string): void {
+  updateData((data) => ({
+    ...data,
+    bookmarks: data.bookmarks.includes(topicKey)
+      ? data.bookmarks.filter((key) => key !== topicKey)
+      : [...data.bookmarks, topicKey],
+  }));
+}
+
+/** Replaces everything, for "Restore from backup". Pass data through migrate() first. */
+export function replaceData(data: AppData): void {
+  updateData(() => ({ ...data, version: DATA_VERSION }));
+}
+
+export function resetData(): void {
+  updateData(() => EMPTY_DATA);
+}

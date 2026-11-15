@@ -1,0 +1,247 @@
+---
+id: sql-correlated-subqueries
+title: Correlated subqueries
+summary: A correlated subquery uses a value from the outer query, so it is evaluated again for every row of the outer query.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a teacher checking each student's marks against the average of **that student's own section**. For a student in section A she looks at section A's average. For the next student, in section B, she looks up section B's average.
+
+The inner question changes with each student. That is a **correlated subquery**.
+
+</Analogy>
+
+## Simple explanation
+
+A normal subquery stands alone. You could run it by itself, and it runs once.
+
+A **correlated subquery** refers to a column of the **outer** query. It cannot run by itself, because it needs the current outer row.
+
+Think of it as a loop:
+
+1. The outer query takes one row
+2. The subquery runs, using values from that row
+3. The outer query uses the answer to keep or reject the row, or to show a value
+4. Repeat for the next row
+
+You recognise it by an outer alias used inside the brackets, such as `WHERE e2.department_id = e.department_id`.
+
+Typical uses:
+
+- Compare each row with a value from **its own group**, such as "earns more than the average of their department"
+- Get a count or total for each row
+- `EXISTS` checks
+
+The cost: it may run once per outer row. On large tables this can be slow. The same result can often be written with a JOIN to a grouped subquery, or with a window function, which reads the table only once.
+
+## Code example
+
+```sql
+SELECT e.name, e.department_id, e.salary
+FROM employees AS e
+WHERE e.salary > (
+  SELECT AVG(e2.salary)
+  FROM employees AS e2
+  WHERE e2.department_id = e.department_id   -- uses the OUTER row's department
+)
+ORDER BY e.department_id, e.salary DESC;
+```
+
+```output
+name           | department_id | salary
+---------------+---------------+-------
+Anita Rao      | 1             | 185000
+Rohit Verma    | 1             | 140000
+Asha Kulkarni  | 1             | 140000
+Vikram Shah    | 2             | 150000
+Meera Nair     | 3             | 120000
+Farah Sheikh   | 4             | 130000
+Lakshmi Pillai | 5             | 64000
+```
+
+```sql
+SELECT
+  c.name,
+  (SELECT COUNT(*) FROM orders AS o WHERE o.customer_id = c.id) AS orders   -- one count per customer
+FROM customers AS c
+ORDER BY orders DESC, c.name
+LIMIT 5;
+```
+
+```output
+name           | orders
+---------------+-------
+Aarav Sharma   | 3
+Isha Patel     | 3
+Karan Malhotra | 2
+Rahul Reddy    | 2
+Sneha Kapoor   | 2
+```
+
+The first query again, written with a JOIN, which reads the table once:
+
+```sql
+SELECT e.name, e.department_id, e.salary
+FROM employees AS e
+JOIN (
+  SELECT department_id, AVG(salary) AS avg_salary
+  FROM employees
+  GROUP BY department_id
+) AS d ON d.department_id = e.department_id
+WHERE e.salary > d.avg_salary
+ORDER BY e.department_id, e.salary DESC;
+```
+
+```output
+name           | department_id | salary
+---------------+---------------+-------
+Anita Rao      | 1             | 185000
+Rohit Verma    | 1             | 140000
+Asha Kulkarni  | 1             | 140000
+Vikram Shah    | 2             | 150000
+Meera Nair     | 3             | 120000
+Farah Sheikh   | 4             | 130000
+Lakshmi Pillai | 5             | 64000
+```
+
+<Playground kind="sql">
+
+```sql
+-- The most expensive product in each category
+SELECT p.category, p.name, p.price
+FROM products AS p
+WHERE p.price = (
+  SELECT MAX(p2.price)
+  FROM products AS p2
+  WHERE p2.category = p.category
+)
+ORDER BY p.category;
+
+-- Try it: change MAX to MIN to get the cheapest product in each category.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting the link to the outer query">
+
+<Wrong>
+
+```sql
+SELECT e.name, e.salary FROM employees AS e
+WHERE e.salary > (SELECT AVG(salary) FROM employees)
+ORDER BY e.salary DESC LIMIT 3;   -- compares with the company average, not the department's
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT e.name, e.salary FROM employees AS e
+WHERE e.salary > (SELECT AVG(e2.salary) FROM employees AS e2 WHERE e2.department_id = e.department_id)
+ORDER BY e.salary DESC LIMIT 3;
+```
+
+</Right>
+
+Without the condition that links inner to outer, it is an ordinary subquery and answers a different question.
+
+</Mistake>
+
+<Mistake title="Using the same alias inside and outside">
+
+<Wrong>
+
+```sql
+SELECT name FROM employees
+WHERE salary > (SELECT AVG(salary) FROM employees WHERE department_id = department_id)
+LIMIT 3;   -- department_id = department_id is always true for non-NULL rows
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT e.name FROM employees AS e
+WHERE e.salary > (SELECT AVG(e2.salary) FROM employees AS e2 WHERE e2.department_id = e.department_id)
+LIMIT 3;
+```
+
+</Right>
+
+Without aliases, both names refer to the inner table. Give the two copies different aliases.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a correlated subquery?">
+
+A subquery that references one or more columns from the outer query. It is logically re-evaluated for each row processed by the outer query, and it cannot be executed on its own.
+
+</QA>
+
+<QA q="What is the difference between a correlated and a non-correlated subquery?">
+
+A non-correlated subquery is independent: it runs once and its result is reused. A correlated subquery depends on the outer row and runs per row. Correlated subqueries are more flexible but can be slower.
+
+</QA>
+
+<QA q="Find employees who earn more than the average salary of their department.">
+
+```sql
+SELECT e.name, e.salary
+FROM employees AS e
+WHERE e.salary > (
+  SELECT AVG(e2.salary) FROM employees AS e2
+  WHERE e2.department_id = e.department_id
+);
+```
+
+An alternative is `AVG(salary) OVER (PARTITION BY department_id)` in a CTE, then a filter.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'How often does a correlated subquery logically run?',
+      options: ['Once', 'Once per row of the outer query', 'Never', 'Twice'],
+      answer: 1,
+      why: 'It depends on the current outer row, so it is evaluated for each one.',
+    },
+    {
+      q: 'What makes a subquery correlated?',
+      options: ['It uses GROUP BY', 'It refers to a column of the outer query', 'It is in the FROM clause', 'It returns one row'],
+      answer: 1,
+      why: 'The reference to an outer column is what ties it to each outer row.',
+    },
+    {
+      q: 'Can a correlated subquery be run by itself?',
+      options: ['Yes', 'No, it needs values from the outer query', 'Only in MySQL', 'Only with LIMIT'],
+      answer: 1,
+      why: 'Without the outer row, the outer column it refers to does not exist.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Pattern |
+| --- | --- |
+| Above own group's average | `WHERE x > (SELECT AVG(x) FROM t t2 WHERE t2.g = t.g)` |
+| Max per group | `WHERE x = (SELECT MAX(x) FROM t t2 WHERE t2.g = t.g)` |
+| Count per row | `SELECT (SELECT COUNT(*) FROM b WHERE b.a_id = a.id)` |
+| Has related rows | `WHERE EXISTS (SELECT 1 FROM b WHERE b.a_id = a.id)` |
+| Faster alternative | JOIN to a grouped subquery, or a window function |
+
+</CheatSheet>

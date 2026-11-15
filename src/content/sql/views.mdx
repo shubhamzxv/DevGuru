@@ -1,0 +1,234 @@
+---
+id: sql-views
+title: Views
+summary: A view is a saved query with a name, which you can then query like a table.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a **saved filter** in your email: "Unread mails from my manager". You set it up once. Every time you click it, it shows the **current** matching emails. The emails are not copied anywhere; the filter just runs again.
+
+A **view** is a saved filter for your database.
+
+</Analogy>
+
+## Simple explanation
+
+A **view** is a named `SELECT` stored in the database. You create it once:
+
+`CREATE VIEW name AS SELECT ...;`
+
+After that, you use it like a table: `SELECT * FROM name WHERE ...`.
+
+Important: a normal view **stores no data**. Every time you query it, the database runs the saved query against the current tables. So the result is always up to date.
+
+Why use views:
+
+- **Simplicity**: hide a long join or calculation behind a simple name
+- **Security**: give users access to the view, not to the base tables. The view can hide sensitive columns (salary) or rows (other departments)
+- **One definition**: "active customer" or "order total" is defined once, and every report uses the same logic
+- **Stable interface**: you can change the tables underneath and keep the view's columns the same for old code
+
+Can you `INSERT` or `UPDATE` through a view? Only a **simple** view (one table, no `GROUP BY`, `DISTINCT`, aggregates or `UNION`) is updatable in MySQL and PostgreSQL. Add `WITH CHECK OPTION` to stop inserts that would not appear in the view.
+
+A **materialized view** (PostgreSQL, Oracle) is different: it **stores** the result, like a cached table. Reads are fast, but the data is only as fresh as the last `REFRESH MATERIALIZED VIEW`. MySQL has no materialized views; people use a summary table refreshed by a scheduled job instead.
+
+## Code example
+
+```sql
+CREATE VIEW order_totals AS                      -- the logic is written once
+SELECT o.id AS order_id, c.name AS customer, o.status,
+       SUM(oi.quantity * oi.unit_price) AS total
+FROM orders AS o
+JOIN customers   AS c  ON c.id = o.customer_id
+JOIN order_items AS oi ON oi.order_id = o.id
+GROUP BY o.id, c.name, o.status;
+
+SELECT customer, total                            -- used like a table
+FROM order_totals
+WHERE status = 'delivered'
+ORDER BY total DESC
+LIMIT 3;
+```
+
+```output
+customer     | total
+-------------+-------
+Aarav Sharma | 3597.0
+Varun Saxena | 2746.0
+Isha Patel   | 2499.0
+```
+
+```sql
+CREATE VIEW employee_directory AS                -- no salary column: safe to share
+SELECT e.name, d.name AS department, e.city
+FROM employees AS e
+LEFT JOIN departments AS d ON d.id = e.department_id;
+
+SELECT * FROM employee_directory WHERE city = 'Pune';
+```
+
+```output
+name           | department  | city
+---------------+-------------+-----
+Asha Kulkarni  | Engineering | Pune
+Arjun Mehta    | Engineering | Pune
+Tanvi Joshi    | Marketing   | Pune
+Lakshmi Pillai | Support     | Pune
+Manoj Yadav    | Support     | Pune
+```
+
+```sql
+CREATE VIEW cheap_products AS SELECT id, name, price FROM products WHERE price < 500;
+
+UPDATE products SET price = 450 WHERE name = 'Cotton T-Shirt';    -- change the base table...
+
+SELECT name, price FROM cheap_products ORDER BY price;            -- ...the view sees it at once
+```
+
+```output
+name           | price
+---------------+------
+Notebook A5    | 80.0
+Gel Pen Pack   | 120.0
+USB-C Cable    | 299.0
+Desk Organizer | 450.0
+Cotton T-Shirt | 450.0
+```
+
+A materialized view in PostgreSQL:
+
+```postgresql
+CREATE MATERIALIZED VIEW daily_sales AS
+SELECT order_date, SUM(total) AS revenue FROM order_totals GROUP BY order_date;
+
+REFRESH MATERIALIZED VIEW daily_sales;            -- re-run and store the result again
+```
+
+<Playground kind="sql">
+
+```sql
+CREATE VIEW IF NOT EXISTS dept_summary AS
+SELECT d.name AS department, COUNT(e.id) AS people, ROUND(AVG(e.salary)) AS avg_salary
+FROM departments AS d
+LEFT JOIN employees AS e ON e.department_id = d.id
+GROUP BY d.id, d.name;
+
+SELECT * FROM dept_summary ORDER BY people DESC;
+
+-- Try it: list all views with  SELECT name, sql FROM sqlite_master WHERE type = 'view';
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Expecting a view to make a query faster">
+
+<Wrong>
+
+```sql
+CREATE VIEW v AS SELECT * FROM orders WHERE status = 'placed';
+SELECT * FROM v;   -- "the result is stored, so this is fast" -- no, the query runs again
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE INDEX idx_orders_status ON orders (status);   -- speed comes from indexes, not the view
+SELECT * FROM orders WHERE status = 'placed';
+```
+
+</Right>
+
+A normal view is just saved SQL. For stored, precomputed results use a materialized view or a summary table.
+
+</Mistake>
+
+<Mistake title="Using SELECT * in a view">
+
+<Wrong>
+
+```sql
+CREATE VIEW all_customers AS SELECT * FROM customers;
+-- in MySQL, the column list is fixed when the view is created; later added columns do not appear
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE VIEW all_customers AS SELECT id, name, city FROM customers;
+```
+
+</Right>
+
+List the columns explicitly. It documents what the view promises and avoids surprises when the table changes.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a view and why would you use one?">
+
+A virtual table defined by a stored query. It holds no data of its own; querying it runs the underlying `SELECT`. Used to simplify complex queries, to restrict access to certain rows or columns, to keep business logic in one place, and to give applications a stable interface while base tables change.
+
+</QA>
+
+<QA q="What is the difference between a view and a materialized view?">
+
+A view stores only the query and is computed on every read, so it is always current. A materialized view stores the result physically, so reads are fast and it can be indexed, but it becomes stale until it is refreshed.
+
+</QA>
+
+<QA q="Can you update data through a view?">
+
+Yes, if the view is simple: based on one table, with no aggregates, `GROUP BY`, `DISTINCT`, `UNION` or calculated columns being updated. The change is applied to the base table. `WITH CHECK OPTION` rejects changes that would make the row fall outside the view's `WHERE` condition.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Does a normal view store its rows?',
+      options: ['Yes', 'No, it runs its query each time', 'Only the first time', 'Only in MySQL'],
+      answer: 1,
+      why: 'A view stores the query, not the data.',
+    },
+    {
+      q: 'Which is a good reason to create a view?',
+      options: ['To back up a table', 'To hide sensitive columns from some users', 'To replace an index', 'To speed up every query'],
+      answer: 1,
+      why: 'Users can be given access to the view only, not the base table.',
+    },
+    {
+      q: 'Which object stores a precomputed query result?',
+      options: ['View', 'Materialized view', 'Index', 'CTE'],
+      answer: 1,
+      why: 'A materialized view keeps the result until it is refreshed.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Create | `CREATE VIEW v AS SELECT ...;` |
+| Replace | `CREATE OR REPLACE VIEW v AS SELECT ...;` (MySQL, PostgreSQL) |
+| Use | `SELECT * FROM v WHERE ...;` |
+| Remove | `DROP VIEW IF EXISTS v;` |
+| Block out-of-view writes | `... WITH CHECK OPTION` |
+| Stored result (PostgreSQL) | `CREATE MATERIALIZED VIEW mv AS SELECT ...;` |
+| Refresh it | `REFRESH MATERIALIZED VIEW mv;` |
+| See the definition (MySQL) | `SHOW CREATE VIEW v;` |
+
+</CheatSheet>

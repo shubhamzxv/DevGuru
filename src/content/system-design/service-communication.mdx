@@ -1,0 +1,259 @@
+---
+id: system-design-service-communication
+title: How microservices communicate (REST, gRPC, queues)
+summary: Services talk either synchronously, waiting for an answer over REST or gRPC, or asynchronously, by putting messages on a queue that another service reads later.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+There are two ways to ask a colleague for something.
+
+You can **phone** them: you wait on the line until they answer. If they are busy, you are stuck. That is **synchronous** communication (REST, gRPC).
+
+Or you can **leave a note in their inbox** and carry on with your work. They handle it when they are free, and nothing is lost if they are on a break. That is **asynchronous** communication (a message queue).
+
+</Analogy>
+
+## Simple explanation
+
+**Synchronous**: the caller sends a request and **waits** for the response.
+
+- **REST over HTTP + JSON**: simple, human-readable, works everywhere, easy to debug with curl. The most common choice, especially for public APIs
+- **gRPC**: uses HTTP/2 and **Protocol Buffers** (a compact binary format described in a `.proto` file). Faster and smaller than JSON, with strict typed contracts and generated client code, plus streaming. Common for internal service-to-service calls. Harder to debug by hand and not directly usable from browsers
+
+Use synchronous calls when the caller **needs the answer right now**: "is this payment approved?", "what is this user's address?".
+
+**Asynchronous**: the sender puts a **message** on a broker and moves on. A consumer processes it later.
+
+- **Queue** (Amazon SQS, RabbitMQ): each message is processed by **one** consumer. Good for jobs: send this email, resize this image
+- **Pub/sub or event stream** (Kafka, SNS, RabbitMQ topics): an **event** such as `order.placed` is delivered to **every** subscriber; billing, shipping and analytics all react
+
+Use asynchronous messages when the work can happen later, when many services must react, or to absorb traffic spikes: the queue holds the messages while consumers catch up.
+
+| Point | REST | gRPC | Message queue |
+| --- | --- | --- | --- |
+| Style | request and wait | request and wait | send and move on |
+| Format | JSON text | Protobuf binary | any (usually JSON) |
+| Speed | good | faster | not instant by design |
+| Coupling | caller needs callee up | caller needs callee up | services can be down for a while |
+| Best for | public APIs, simple calls | internal high-traffic calls | background jobs, events, spikes |
+
+Whatever you choose, plan for failure: **timeouts** on every call, **retries with backoff** for temporary errors, a **circuit breaker** so a dead service is not hammered, and **idempotent** consumers, because queues usually deliver a message **at least once** and it may arrive twice.
+
+## Code example
+
+Synchronous REST call with a timeout and a simple retry:
+
+```python
+import time
+import httpx
+
+def get_user(user_id: int) -> dict:
+    for attempt in range(3):
+        try:
+            resp = httpx.get(f"http://user-service/users/{user_id}", timeout=2.0)
+            resp.raise_for_status()
+            return resp.json()
+        except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+            print(f"attempt {attempt + 1} failed: {type(exc).__name__}")
+            time.sleep(0.2 * 2 ** attempt)        # wait 0.2s, 0.4s, 0.8s (backoff)
+    raise RuntimeError("user-service unavailable")
+```
+
+The same contract in gRPC is written once in a `.proto` file; client and server code is generated from it:
+
+```text
+syntax = "proto3";
+
+service UserService {
+  rpc GetUser (GetUserRequest) returns (User);
+}
+message GetUserRequest { int64 id = 1; }
+message User { int64 id = 1; string name = 2; string email = 3; }
+```
+
+Asynchronous: the Order service publishes, the Email service consumes when it can:
+
+```python
+import json
+
+# Order service: publish and return to the user immediately
+def on_order_paid(order_id: int, email: str):
+    queue.send_message(json.dumps({"type": "order.paid", "order_id": order_id, "email": email}))
+
+# Email service: a separate process that keeps reading the queue
+processed = set()
+
+def handle(message: str):
+    event = json.loads(message)
+    if event["order_id"] in processed:          # idempotent: a duplicate does nothing
+        print("duplicate, skipped")
+        return
+    send_email(event["email"], f"Order {event['order_id']} confirmed")
+    processed.add(event["order_id"])
+```
+
+```output
+email sent for order 1042
+duplicate, skipped
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "checkout", "label": "Checkout service", "icon": "🛒", "col": 0, "row": 1, "info": "Handles the user's checkout request.", "example": "Receives POST /checkout from the app." },
+    { "id": "stock", "label": "Inventory service", "icon": "📦", "col": 1, "row": 0, "info": "Checkout calls it with gRPC and WAITS: it must know right now if the item is in stock.", "example": "gRPC: ReserveItems(items) -> ok / out of stock." },
+    { "id": "payment", "label": "Payment service", "icon": "💳", "col": 1, "row": 2, "info": "Checkout calls it with REST and WAITS: the answer decides if the order goes ahead.", "example": "POST /charges with a 3-second timeout." },
+    { "id": "broker", "label": "Event broker", "icon": "📬", "col": 2, "row": 1, "info": "Checkout publishes order.placed here and returns to the user without waiting for anything below.", "example": "Kafka topic or Amazon SNS topic." },
+    { "id": "email", "label": "Email service", "icon": "✉️", "col": 3, "row": 0, "info": "Subscribes to order.placed and sends the confirmation. If it is down, messages wait in its queue.", "example": "Consumer reading an SQS queue." },
+    { "id": "shipping", "label": "Shipping service", "icon": "🚚", "col": 3, "row": 1, "info": "Also gets order.placed and books a courier.", "example": "Each subscriber gets its own copy of the event." },
+    { "id": "analytics", "label": "Analytics", "icon": "📊", "col": 3, "row": 2, "info": "Also gets the event, to update sales dashboards. Checkout does not even know it exists.", "example": "Adding a new subscriber needs no change in Checkout." }
+  ],
+  "edges": [
+    ["checkout", "stock", "gRPC (wait)"],
+    ["checkout", "payment", "REST (wait)"],
+    ["checkout", "broker", "publish"],
+    ["broker", "email"],
+    ["broker", "shipping"],
+    ["broker", "analytics"]
+  ],
+  "flows": [
+    {
+      "name": "Checkout",
+      "steps": [
+        ["checkout", "A checkout request arrives."],
+        ["stock", "Synchronous gRPC call: are the items in stock? Checkout waits ~5 ms."],
+        ["payment", "Synchronous REST call: charge the card. Checkout waits for the answer."],
+        ["checkout", "Both said yes. Checkout publishes order.placed and answers the user at once."],
+        ["broker", "The broker keeps the event and delivers a copy to every subscriber."],
+        ["email", "Sends the confirmation email (maybe seconds later)."],
+        ["shipping", "Books the courier."],
+        ["analytics", "Updates today's sales."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Calling another service without a timeout">
+
+<Wrong>
+
+```python
+resp = requests.get("http://user-service/users/7")   # waits forever if the service hangs
+```
+
+</Wrong>
+
+<Right>
+
+```python
+resp = requests.get("http://user-service/users/7", timeout=2)
+```
+
+</Right>
+
+One slow service then blocks every caller's threads, and the failure spreads through the system (a cascading failure).
+
+</Mistake>
+
+<Mistake title="A consumer that is not idempotent">
+
+<Wrong>
+
+```python
+def handle(event):
+    wallet.add_money(event["user_id"], event["amount"])   # a redelivered message pays twice
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def handle(event):
+    if payments.already_processed(event["event_id"]):
+        return
+    wallet.add_money(event["user_id"], event["amount"])
+    payments.mark_processed(event["event_id"])
+```
+
+</Right>
+
+Most queues deliver at least once. Store the event id and skip duplicates.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the ways microservices communicate?">
+
+Synchronously, with request/response over REST (HTTP + JSON) or gRPC (HTTP/2 + Protocol Buffers), when the caller needs an immediate answer. Asynchronously, through a message broker: point-to-point queues (SQS, RabbitMQ) for jobs handled by one consumer, or publish/subscribe events (Kafka, SNS) delivered to many consumers. Most systems use both.
+
+</QA>
+
+<QA q="REST vs gRPC: when would you pick each?">
+
+REST is simple, human-readable and works from browsers and every tool, so it suits public APIs and simple internal calls. gRPC is faster and smaller thanks to binary Protobuf and HTTP/2, gives strict typed contracts with generated clients, and supports streaming, so it suits high-volume internal service-to-service calls. gRPC is harder to debug and needs a proxy (gRPC-Web) for browsers.
+
+</QA>
+
+<QA q="When should you use a message queue instead of a direct call?">
+
+When the work does not need to finish before replying (emails, reports, image processing), when several services must react to the same event, when you want to absorb traffic spikes, or when the receiving service may be temporarily down. The trade-off is eventual consistency and the need for idempotent consumers and monitoring of queue length.
+
+</QA>
+
+<QA q="How do you make service-to-service calls resilient?">
+
+Set timeouts on every call, retry only temporary failures with exponential backoff and jitter, use a circuit breaker to stop calling a failing service, make operations idempotent so retries are safe, and add fallbacks (cached data or a degraded response). Monitor with distributed tracing.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Sending a welcome email after sign-up is best done with:',
+      options: ['A synchronous REST call the user waits for', 'A message on a queue', 'A shared database table', 'gRPC streaming'],
+      answer: 1,
+      why: 'The user does not need to wait for the email; a queue handles it later and survives a slow email service.',
+    },
+    {
+      q: 'What does gRPC use to describe messages?',
+      options: ['JSON Schema', 'Protocol Buffers (.proto)', 'XML', 'YAML'],
+      answer: 1,
+      why: 'Protobuf definitions generate typed client and server code.',
+    },
+    {
+      q: 'Why must queue consumers be idempotent?',
+      options: ['Queues are slow', 'A message can be delivered more than once', 'JSON is unsafe', 'To save memory'],
+      answer: 1,
+      why: 'At-least-once delivery means duplicates happen; handling one twice must do no harm.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Use |
+| --- | --- |
+| Answer right now, public API | REST + JSON |
+| Answer right now, internal, high traffic | gRPC |
+| One worker does a job later | queue (SQS, RabbitMQ) |
+| Many services react to one event | pub/sub (Kafka, SNS) |
+| Every network call | timeout + retry with backoff |
+| Failing service | circuit breaker |
+| Every consumer | idempotent (dedupe by event id) |
+
+</CheatSheet>

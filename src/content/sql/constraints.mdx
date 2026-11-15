@@ -1,0 +1,206 @@
+---
+id: sql-constraints
+title: Constraints
+summary: A constraint is a rule on a column or table that the database checks on every insert and update, so bad data cannot get in.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of an online sign-up form. It will not let you submit without an email. It refuses an age of -5. It says "this username is already taken".
+
+The form has rules. In a database, those rules are **constraints**, and the database enforces them itself.
+
+</Analogy>
+
+## Simple explanation
+
+A **constraint** is a rule attached to a table. Whenever a row is inserted or updated, the database checks the rule. If the row breaks it, the statement **fails**.
+
+This keeps the data correct even if the application has a bug. This correctness is called **data integrity**.
+
+The six constraints:
+
+| Constraint | Rule |
+| --- | --- |
+| `NOT NULL` | The column must have a value |
+| `UNIQUE` | No two rows can have the same value |
+| `PRIMARY KEY` | Identifies the row: `NOT NULL` + `UNIQUE`, one per table |
+| `FOREIGN KEY` | The value must exist in another table |
+| `CHECK` | The value must pass a condition, such as `price >= 0` |
+| `DEFAULT` | The value used when none is given |
+
+A few details:
+
+- A `UNIQUE` column can hold `NULL`. Most databases allow several NULLs, because NULL is not equal to NULL
+- A constraint can cover **several columns**: `UNIQUE (customer_id, product_id)` means the **pair** must be unique
+- You can **name** a constraint, which makes error messages clear and lets you drop it later: `CONSTRAINT chk_price CHECK (price >= 0)`
+- MySQL enforces `CHECK` only from version 8.0.16. Older versions accepted it and ignored it
+
+## Code example
+
+```sql
+CREATE TABLE accounts (
+  id       INTEGER PRIMARY KEY,                          -- unique and not null
+  email    TEXT    NOT NULL UNIQUE,                      -- required, no duplicates
+  balance  INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),   -- never negative
+  status   TEXT    NOT NULL DEFAULT 'active'
+           CHECK (status IN ('active', 'blocked'))       -- only these two values
+);
+
+INSERT INTO accounts (email) VALUES ('asha@example.com');   -- defaults fill the rest
+
+SELECT * FROM accounts;
+```
+
+```output
+id | email            | balance | status
+---+------------------+---------+-------
+1  | asha@example.com | 0       | active
+```
+
+```sql
+SELECT name, salary FROM employees WHERE id = 19;
+
+UPDATE OR IGNORE employees SET salary = -100 WHERE id = 19;   -- CHECK (salary > 0) rejects it
+
+SELECT name, salary FROM employees WHERE id = 19;             -- unchanged
+```
+
+```output
+name        | salary
+------------+-------
+Manoj Yadav | 42000
+```
+
+<Playground kind="sql">
+
+```sql
+-- Each of these breaks one rule. Run them one at a time to read the errors.
+INSERT INTO products (name, category, price) VALUES ('Free Gift', 'Home', 0);
+SELECT name, price, stock FROM products WHERE name = 'Free Gift';
+
+-- INSERT INTO products (name, category, price) VALUES ('Bad', 'Home', -5);      -- CHECK
+-- INSERT INTO departments (name, location) VALUES ('Sales', 'Pune');            -- UNIQUE
+-- INSERT INTO customers (city, joined_on) VALUES ('Pune', '2024-07-01');        -- NOT NULL
+-- INSERT INTO orders (customer_id, order_date, status) VALUES (1, '2024-07-01', 'lost');   -- CHECK
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Checking rules only in the application">
+
+<Wrong>
+
+```sql
+CREATE TABLE users_bad (id INTEGER PRIMARY KEY, email TEXT);
+INSERT INTO users_bad (email) VALUES ('a@example.com'), ('a@example.com'), (NULL);
+SELECT COUNT(*) FROM users_bad;   -- 3 rows: a duplicate and an empty email got in
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE TABLE users_good (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE);
+INSERT INTO users_good (email) VALUES ('a@example.com');
+SELECT COUNT(*) FROM users_good;
+```
+
+</Right>
+
+Application checks can be skipped by a bug, a script, or two requests at the same moment. Only a database constraint is guaranteed.
+
+</Mistake>
+
+<Mistake title="Expecting UNIQUE to block several NULLs">
+
+<Wrong>
+
+```sql
+CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT UNIQUE);
+INSERT INTO t (email) VALUES (NULL), (NULL);
+SELECT COUNT(*) FROM t;   -- 2: both NULLs were accepted
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE);
+INSERT INTO t (email) VALUES ('a@example.com');
+SELECT COUNT(*) FROM t;
+```
+
+</Right>
+
+`UNIQUE` alone allows many NULLs in MySQL, PostgreSQL and SQLite. Add `NOT NULL` if the value is required.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are constraints and why are they used?">
+
+Rules defined on columns or tables that the database enforces on every write: `NOT NULL`, `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `CHECK` and `DEFAULT`. They guarantee data integrity at the lowest level, regardless of which application or script writes the data.
+
+</QA>
+
+<QA q="What is the difference between PRIMARY KEY and UNIQUE?">
+
+A table has only one primary key, and it cannot contain NULL. A table can have many unique constraints, and they allow NULL. The primary key is the row's main identifier and, in MySQL InnoDB, the clustered index.
+
+</QA>
+
+<QA q="What is the difference between a column-level and a table-level constraint?">
+
+A column-level constraint is written next to one column and applies to it alone. A table-level constraint is written after the columns and can involve several of them, such as a composite primary key or `UNIQUE (a, b)`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which constraint makes sure a value exists in another table?',
+      options: ['CHECK', 'UNIQUE', 'FOREIGN KEY', 'DEFAULT'],
+      answer: 2,
+      why: 'A foreign key must match a value in the referenced table.',
+    },
+    {
+      q: 'What happens when an INSERT breaks a CHECK constraint?',
+      options: ['The value is corrected', 'The statement fails', 'The row is saved with NULL', 'Only a warning'],
+      answer: 1,
+      why: 'The database rejects the row.',
+    },
+    {
+      q: 'PRIMARY KEY is a combination of which two rules?',
+      options: ['CHECK and DEFAULT', 'NOT NULL and UNIQUE', 'UNIQUE and FOREIGN KEY', 'DEFAULT and NOT NULL'],
+      answer: 1,
+      why: 'A primary key value must be present and must not repeat.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Rule | Code |
+| --- | --- |
+| Required | `name VARCHAR(50) NOT NULL` |
+| No duplicates | `email VARCHAR(100) UNIQUE` |
+| Row identifier | `id INT PRIMARY KEY` |
+| Link to another table | `FOREIGN KEY (customer_id) REFERENCES customers (id)` |
+| Condition | `CHECK (price >= 0)` |
+| Default value | `status VARCHAR(10) DEFAULT 'active'` |
+| Pair must be unique | `UNIQUE (customer_id, product_id)` |
+| Named constraint | `CONSTRAINT chk_price CHECK (price >= 0)` |
+| Add later | `ALTER TABLE t ADD CONSTRAINT uq_email UNIQUE (email);` |
+
+</CheatSheet>

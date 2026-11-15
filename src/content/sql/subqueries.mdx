@@ -1,0 +1,210 @@
+---
+id: sql-subqueries
+title: Subqueries
+summary: A subquery is a query written inside another query, whose result the outer query uses.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of asking a shopkeeper: "Show me the phones that cost more than the average phone here." He must first work out the average price. Only then can he pick the phones.
+
+The first step is a small question inside the bigger one. In SQL, that inner question is a **subquery**.
+
+</Analogy>
+
+## Simple explanation
+
+A **subquery** is a `SELECT` inside brackets, placed inside another statement. It is also called an **inner query** or **nested query**. The statement around it is the **outer query**.
+
+The database runs the subquery first and hands its result to the outer query.
+
+A subquery can return three shapes, and each fits a different place:
+
+- **One value** (a **scalar subquery**): use it with `=`, `>`, `<`. Example: the average salary
+- **One column of many values**: use it with `IN` or `NOT IN`. Example: ids of customers who ordered
+- **A whole table**: use it in `FROM`, with an alias. This is called a **derived table**
+
+You can put a subquery in `WHERE`, `FROM`, `SELECT` and `HAVING`.
+
+A subquery that does not depend on the outer query runs **once**. It is called a non-correlated subquery. One that refers to the outer row is a correlated subquery, covered in the next topic.
+
+Many subqueries can also be written as a JOIN. Use whichever is easier to read.
+
+## Code example
+
+```sql
+SELECT name, salary
+FROM employees
+WHERE salary > (SELECT AVG(salary) FROM employees)   -- one value: the average
+ORDER BY salary DESC
+LIMIT 4;
+```
+
+```output
+name          | salary
+--------------+-------
+Anita Rao     | 185000
+Vikram Shah   | 150000
+Rohit Verma   | 140000
+Asha Kulkarni | 140000
+```
+
+```sql
+SELECT name, city
+FROM customers
+WHERE id IN (                                         -- a list of values
+  SELECT customer_id FROM orders WHERE status = 'cancelled'
+);
+```
+
+```output
+name           | city
+---------------+----------
+Rahul Reddy    | Hyderabad
+Karan Malhotra | Delhi
+```
+
+```sql
+SELECT ROUND(AVG(order_total)) AS average_order_value
+FROM (                                                -- a table: needs an alias
+  SELECT order_id, SUM(quantity * unit_price) AS order_total
+  FROM order_items
+  GROUP BY order_id
+) AS totals;
+```
+
+```output
+average_order_value
+-------------------
+2210.0
+```
+
+<Playground kind="sql">
+
+```sql
+-- Products that cost more than the average product
+SELECT name, price,
+       (SELECT ROUND(AVG(price)) FROM products) AS average_price
+FROM products
+WHERE price > (SELECT AVG(price) FROM products)
+ORDER BY price DESC;
+
+-- Try it: find the employee with the highest salary using a subquery with MAX.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using = with a subquery that returns many rows">
+
+<Wrong>
+
+```sql
+SELECT name FROM employees
+WHERE department_id = (SELECT id FROM departments WHERE location = 'Mumbai');
+-- MySQL and PostgreSQL reject this: subquery returns more than 1 row (SQLite quietly uses the first row)
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM employees
+WHERE department_id IN (SELECT id FROM departments WHERE location = 'Mumbai');
+```
+
+</Right>
+
+Two departments are in Mumbai. `=` needs exactly one value; `IN` accepts a list.
+
+</Mistake>
+
+<Mistake title="Forgetting the alias of a subquery in FROM">
+
+<Wrong>
+
+```mysql
+SELECT AVG(total) FROM (SELECT SUM(quantity) AS total FROM order_items GROUP BY order_id);
+-- MySQL: Every derived table must have its own alias
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT AVG(total) FROM (SELECT SUM(quantity) AS total FROM order_items GROUP BY order_id) AS t;
+```
+
+</Right>
+
+MySQL and PostgreSQL require a name for every subquery in `FROM`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a subquery, and where can it be used?">
+
+A query nested inside another query. It can appear in `WHERE` and `HAVING` (to compare or filter), in `FROM` (as a derived table), and in `SELECT` (as a scalar value per row). It can also be used inside `INSERT`, `UPDATE` and `DELETE`.
+
+</QA>
+
+<QA q="What is the difference between a subquery and a JOIN?">
+
+A JOIN combines columns from several tables into one result. A subquery computes an intermediate result used by the outer query. Many problems can be solved both ways. JOINs are often faster when you need columns from both tables; subqueries read naturally for "compare with an aggregate" and "exists" questions. Modern optimizers often turn one into the other.
+
+</QA>
+
+<QA q="Find the second highest salary using a subquery.">
+
+Take the highest salary that is below the overall highest.
+
+```sql
+SELECT MAX(salary) AS second_highest
+FROM employees
+WHERE salary < (SELECT MAX(salary) FROM employees);
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which runs first, the subquery or the outer query (for a simple non-correlated subquery)?',
+      options: ['The outer query', 'The subquery', 'Both together', 'It is random'],
+      answer: 1,
+      why: 'The inner query is evaluated first and its result is passed to the outer query.',
+    },
+    {
+      q: 'Which operator fits a subquery that returns many values?',
+      options: ['=', 'IN', '>', 'LIKE'],
+      answer: 1,
+      why: 'IN checks membership in a list of values.',
+    },
+    {
+      q: 'What is a subquery in the FROM clause called?',
+      options: ['A trigger', 'A derived table', 'An index', 'A view'],
+      answer: 1,
+      why: 'It acts as a temporary table for the outer query, so it is called a derived table.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Returns | Use with | Example |
+| --- | --- | --- |
+| One value | `=`, `>`, `<` | `WHERE salary > (SELECT AVG(salary) FROM employees)` |
+| A list | `IN`, `NOT IN` | `WHERE id IN (SELECT customer_id FROM orders)` |
+| A table | `FROM (...) AS t` | `FROM (SELECT ... GROUP BY ...) AS t` |
+| Yes or no | `EXISTS` | `WHERE EXISTS (SELECT 1 FROM ...)` |
+
+</CheatSheet>

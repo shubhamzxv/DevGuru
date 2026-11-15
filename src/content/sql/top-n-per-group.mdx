@@ -1,0 +1,308 @@
+---
+id: sql-top-n-per-group
+title: Top N per group
+summary: To get the top N rows inside each group, number the rows per group with a window function and keep those numbered N or less.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A school wants the **top 3 students of every class**, not the top 3 of the whole school. You go class by class, sort each class by marks, and pick the first three from each.
+
+That "per class" ranking is exactly what `PARTITION BY` does.
+
+</Analogy>
+
+## Simple explanation
+
+"Top N per group" questions look like:
+
+- Top 2 earners in **each department**
+- The **latest** order of **each customer**
+- The 3 best-selling products in **each category**
+
+`GROUP BY` cannot do this, because it collapses each group to one row and loses the details. `LIMIT` cannot do it either, because it applies to the whole result, not per group.
+
+The standard solution has two steps:
+
+1. In a CTE or subquery, number the rows **inside each group**:
+   `ROW_NUMBER() OVER (PARTITION BY group_column ORDER BY sort_column DESC)`
+2. In the outer query, keep rows where that number is **`<= N`**
+
+Which ranking function?
+
+- `ROW_NUMBER`: exactly N rows per group, ties are broken arbitrarily (add a tie-breaker column)
+- `DENSE_RANK`: the top N **values**, so ties are all included and you may get more than N rows
+- `RANK`: ties included, with gaps
+
+Say which one you chose and why; the interviewer usually asks "what about ties?".
+
+Before window functions (MySQL 5.7), people used a **correlated subquery**: keep a row if fewer than N rows in its group are bigger.
+
+## Code example
+
+Top 2 earners in each department, ties included:
+
+```sql
+WITH ranked AS (
+  SELECT d.name AS department, e.name, e.salary,
+         DENSE_RANK() OVER (PARTITION BY e.department_id ORDER BY e.salary DESC) AS rnk
+  FROM employees AS e
+  JOIN departments AS d ON d.id = e.department_id
+)
+SELECT department, name, salary, rnk
+FROM ranked
+WHERE rnk <= 2
+ORDER BY department, rnk, name;
+```
+
+```output
+department  | name           | salary | rnk
+------------+----------------+--------+----
+Engineering | Anita Rao      | 185000 | 1
+Engineering | Asha Kulkarni  | 140000 | 2
+Engineering | Rohit Verma    | 140000 | 2
+Finance     | Farah Sheikh   | 130000 | 1
+Finance     | Gaurav Bose    | 76000  | 2
+Marketing   | Meera Nair     | 120000 | 1
+Marketing   | Suresh Patil   | 68000  | 2
+Sales       | Vikram Shah    | 150000 | 1
+Sales       | Imran Ali      | 86000  | 2
+Support     | Lakshmi Pillai | 64000  | 1
+Support     | Manoj Yadav    | 42000  | 2
+```
+
+Engineering returns 3 people because Rohit and Asha tie for 2nd. With `ROW_NUMBER` it would return exactly 2, picking one of them.
+
+The most recent order of each customer (exactly one row per group):
+
+```sql
+WITH numbered AS (
+  SELECT o.customer_id, o.id AS order_id, o.order_date,
+         ROW_NUMBER() OVER (PARTITION BY o.customer_id ORDER BY o.order_date DESC, o.id DESC) AS rn
+  FROM orders AS o
+)
+SELECT c.name, n.order_id, n.order_date
+FROM numbered AS n
+JOIN customers AS c ON c.id = n.customer_id
+WHERE n.rn = 1
+ORDER BY c.name;
+```
+
+```output
+name           | order_id | order_date
+---------------+----------+-----------
+Aarav Sharma   | 9        | 2024-04-15
+Aditya Ghosh   | 10       | 2024-04-27
+Isha Patel     | 16       | 2024-06-29
+Karan Malhotra | 15       | 2024-06-20
+Nisha Thomas   | 11       | 2024-05-06
+Pooja Desai    | 8        | 2024-04-02
+Rahul Reddy    | 14       | 2024-06-08
+Sneha Kapoor   | 12       | 2024-05-18
+Varun Saxena   | 13       | 2024-05-30
+```
+
+The best-selling product in each category, by units sold:
+
+```sql
+WITH sales AS (
+  SELECT p.category, p.name, SUM(oi.quantity) AS units
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  GROUP BY p.category, p.name
+),
+ranked AS (
+  SELECT *, ROW_NUMBER() OVER (PARTITION BY category ORDER BY units DESC, name) AS rn
+  FROM sales
+)
+SELECT category, name, units FROM ranked WHERE rn = 1 ORDER BY category;
+```
+
+```output
+category    | name               | units
+------------+--------------------+------
+Clothing    | Cotton T-Shirt     | 6
+Electronics | USB-C Cable        | 6
+Home        | Steel Water Bottle | 4
+Stationery  | Notebook A5        | 15
+```
+
+Without window functions (correlated subquery):
+
+```sql
+SELECT e.department_id, e.name, e.salary
+FROM employees AS e
+WHERE e.department_id IS NOT NULL
+  AND (SELECT COUNT(DISTINCT e2.salary)
+       FROM employees AS e2
+       WHERE e2.department_id = e.department_id
+         AND e2.salary > e.salary) < 2              -- fewer than 2 higher salaries in my department
+ORDER BY e.department_id, e.salary DESC, e.name;
+```
+
+```output
+department_id | name           | salary
+--------------+----------------+-------
+1             | Anita Rao      | 185000
+1             | Asha Kulkarni  | 140000
+1             | Rohit Verma    | 140000
+2             | Vikram Shah    | 150000
+2             | Imran Ali      | 86000
+3             | Meera Nair     | 120000
+3             | Suresh Patil   | 68000
+4             | Farah Sheikh   | 130000
+4             | Gaurav Bose    | 76000
+5             | Lakshmi Pillai | 64000
+5             | Manoj Yadav    | 42000
+```
+
+<Playground kind="sql">
+
+```sql
+-- The 2 most expensive products in each category
+WITH ranked AS (
+  SELECT category, name, price,
+         ROW_NUMBER() OVER (PARTITION BY category ORDER BY price DESC) AS rn
+  FROM products
+)
+SELECT category, name, price
+FROM ranked
+WHERE rn <= 2
+ORDER BY category, price DESC;
+
+-- Try it: change it to the CHEAPEST product in each category.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using GROUP BY with MAX and a non-grouped column">
+
+<Wrong>
+
+```sql
+SELECT department_id, name, MAX(salary)
+FROM employees
+GROUP BY department_id;
+-- MySQL (ONLY_FULL_GROUP_BY) and PostgreSQL reject this. SQLite runs it, but other databases may return a random name.
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT department_id, name, salary FROM (
+  SELECT department_id, name, salary,
+         RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS r
+  FROM employees
+) AS t
+WHERE r = 1 AND department_id IS NOT NULL;
+```
+
+</Right>
+
+`name` is not grouped, so the database has no rule for which name to show. Rank inside each group instead.
+
+</Mistake>
+
+<Mistake title="Using LIMIT for a per-group question">
+
+<Wrong>
+
+```sql
+SELECT department_id, name, salary
+FROM employees
+ORDER BY department_id, salary DESC
+LIMIT 2;                   -- 2 rows in total, not 2 per department
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT department_id, name, salary FROM (
+  SELECT department_id, name, salary,
+         ROW_NUMBER() OVER (PARTITION BY department_id ORDER BY salary DESC) AS rn
+  FROM employees
+) AS t
+WHERE rn <= 2;
+```
+
+</Right>
+
+`LIMIT` applies to the whole result. `PARTITION BY` restarts the count for every group.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Find the top 3 highest-paid employees in each department.">
+
+```sql
+WITH r AS (
+  SELECT department_id, name, salary,
+         DENSE_RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS rnk
+  FROM employees
+)
+SELECT * FROM r WHERE rnk <= 3;
+```
+
+Use `ROW_NUMBER` if exactly three rows per department are required; mention how ties are handled.
+
+</QA>
+
+<QA q="Get the latest record for each user.">
+
+Number each user's rows by date descending with `ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at DESC)` and keep `rn = 1`. Add a tie-breaker such as `id DESC` so the result is deterministic. PostgreSQL also offers `SELECT DISTINCT ON (user_id) ... ORDER BY user_id, created_at DESC`.
+
+</QA>
+
+<QA q="How would you do top N per group without window functions?">
+
+With a correlated subquery that counts how many rows in the same group are greater: keep the row when that count is less than N. Or join each row to the rows above it in its group, group, and keep `HAVING COUNT(*) < N`. Both are slower than window functions on large tables.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which clause restarts the numbering for each group?',
+      options: ['GROUP BY', 'PARTITION BY', 'ORDER BY', 'LIMIT'],
+      answer: 1,
+      why: 'PARTITION BY inside OVER divides the rows into independent windows.',
+    },
+    {
+      q: 'You need exactly one row per customer even with ties. Which function?',
+      options: ['RANK', 'DENSE_RANK', 'ROW_NUMBER', 'COUNT'],
+      answer: 2,
+      why: 'ROW_NUMBER never gives two rows the same number.',
+    },
+    {
+      q: 'Why can you not filter rn <= 2 in the same SELECT that computes rn?',
+      options: ['You can', 'WHERE runs before window functions', 'rn is a reserved word', 'Only in MySQL'],
+      answer: 1,
+      why: 'Compute the number in a CTE or subquery, then filter outside.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Question | Pattern |
+| --- | --- |
+| Top N per group | `ROW_NUMBER() OVER (PARTITION BY g ORDER BY x DESC)` → `rn <= N` |
+| Top N values, keep ties | `DENSE_RANK() ...` → `rnk <= N` |
+| Latest row per group | `ROW_NUMBER() ... ORDER BY date DESC, id DESC` → `rn = 1` |
+| PostgreSQL shortcut | `SELECT DISTINCT ON (g) ... ORDER BY g, x DESC` |
+| No window functions | correlated `COUNT` of bigger rows `< N` |
+| Remember | filter in the outer query, never in the same `WHERE` |
+
+</CheatSheet>

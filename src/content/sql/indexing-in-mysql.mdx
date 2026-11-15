@@ -1,0 +1,234 @@
+---
+id: sql-indexing-in-mysql
+title: Indexing in MySQL
+summary: In MySQL's InnoDB engine, the table is stored inside its primary key index, and every other index points back to the primary key.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a dictionary. The words themselves are printed in alphabetical order, so the book **is** its own index. That is a **clustered index**.
+
+Now think of a separate list at the back: "words about animals → see 'cat', 'dog', 'lion'". It does not give a page number; it gives the word, and you look that word up in the main dictionary. That is a **secondary index** in MySQL.
+
+</Analogy>
+
+## Simple explanation
+
+MySQL's default storage engine is **InnoDB**. Its indexes work in a specific way that interviewers love to ask about.
+
+**1. The clustered index (the primary key)**
+
+InnoDB stores the table rows **inside the primary key's B+tree**, sorted by the primary key. The table **is** the primary key index. There is only **one** clustered index per table.
+
+- If you do not define a primary key, InnoDB uses the first `UNIQUE NOT NULL` column, or creates a hidden 6-byte row id
+- Looking up by primary key is the fastest possible lookup
+
+**2. Secondary indexes (every other index)**
+
+A secondary index stores the indexed column(s) **plus the primary key value**, not a pointer to a disk location. Finding a row takes two steps:
+
+1. Search the secondary index, get the primary key
+2. Search the clustered index with that primary key, get the full row (a **bookmark lookup** or "going back to the table")
+
+Two consequences:
+
+- Keep the **primary key small** (an `INT` or `BIGINT`), because a copy of it sits in every secondary index
+- Use an **auto-increment** primary key, so new rows go at the end of the tree. Random keys like UUID v4 cause page splits and fragmentation
+
+**3. Covering indexes**
+
+If the secondary index already contains **every column the query needs**, step 2 is skipped. `EXPLAIN` shows `Using index` in the Extra column. This is one of the best optimizations available.
+
+**4. Other MySQL index types**
+
+- `FULLTEXT`: word search in text, used with `MATCH ... AGAINST`
+- `SPATIAL`: geographic data
+- **Prefix index**: index only the first N characters of a long text column: `INDEX (title(20))`
+- **Invisible index** (8.0): hidden from the optimizer, to test whether you can safely drop it
+- **Descending index** (8.0): `INDEX (created_at DESC)`
+
+## Code example
+
+These run in MySQL, not in the playground:
+
+```mysql
+CREATE TABLE orders (
+  id           BIGINT AUTO_INCREMENT PRIMARY KEY,          -- clustered index: rows live here
+  customer_id  INT NOT NULL,
+  order_date   DATE NOT NULL,
+  status       VARCHAR(20) NOT NULL,
+  INDEX idx_customer_date (customer_id, order_date)         -- secondary index, stores (customer_id, order_date, id)
+) ENGINE = InnoDB;
+
+SHOW INDEX FROM orders;                                     -- list every index
+```
+
+```mysql
+EXPLAIN SELECT id, order_date FROM orders WHERE customer_id = 5;
+-- key: idx_customer_date    Extra: Using index      <- covering: id and order_date are in the index
+
+EXPLAIN SELECT * FROM orders WHERE customer_id = 5;
+-- key: idx_customer_date    Extra: NULL             <- needs status too, so it goes back to the table
+```
+
+```mysql
+ALTER TABLE orders ADD INDEX idx_status (status);           -- add an index later
+ALTER TABLE orders ALTER INDEX idx_status INVISIBLE;        -- test dropping it safely
+ALTER TABLE orders DROP INDEX idx_status;                   -- remove it
+
+CREATE FULLTEXT INDEX ft_title ON articles (title, body);
+SELECT title FROM articles WHERE MATCH (title, body) AGAINST ('database index');
+```
+
+The idea of a covering index also works in SQLite, so you can see it in the playground:
+
+```sql
+CREATE INDEX idx_emp_dept_salary ON employees (department_id, salary);
+
+EXPLAIN QUERY PLAN
+SELECT department_id, salary FROM employees WHERE department_id = 2;   -- both columns are in the index
+```
+
+```output
+id | parent | notused | detail
+---+--------+---------+----------------------------------------------------------------------------
+2  | 0      | 53      | SEARCH employees USING COVERING INDEX idx_emp_dept_salary (department_id=?)
+```
+
+<Playground kind="sql">
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_emp_dept_salary ON employees (department_id, salary);
+
+-- Covering: every column needed is in the index
+EXPLAIN QUERY PLAN SELECT salary FROM employees WHERE department_id = 2;
+
+-- Not covering: name is not in the index, so the table is read too
+EXPLAIN QUERY PLAN SELECT name, salary FROM employees WHERE department_id = 2;
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using a random UUID as the InnoDB primary key">
+
+<Wrong>
+
+```mysql
+CREATE TABLE events (
+  id CHAR(36) PRIMARY KEY DEFAULT (UUID()),   -- random order, 36 bytes, copied into every index
+  payload JSON
+);
+```
+
+</Wrong>
+
+<Right>
+
+```mysql
+CREATE TABLE events (
+  id        BIGINT AUTO_INCREMENT PRIMARY KEY,
+  public_id BINARY(16) NOT NULL UNIQUE,         -- keep a UUID for the outside world if needed
+  payload   JSON
+);
+```
+
+</Right>
+
+Random keys insert rows all over the clustered index and bloat every secondary index. Use a small increasing key; if you need UUIDs, use time-ordered ones (UUID v7) or store them in a separate unique column.
+
+</Mistake>
+
+<Mistake title="Duplicate indexes">
+
+<Wrong>
+
+```mysql
+CREATE INDEX idx_a   ON orders (customer_id);
+CREATE INDEX idx_a_b ON orders (customer_id, order_date);   -- idx_a is now redundant
+```
+
+</Wrong>
+
+<Right>
+
+```mysql
+CREATE INDEX idx_a_b ON orders (customer_id, order_date);   -- also serves WHERE customer_id = ?
+```
+
+</Right>
+
+By the leftmost prefix rule, the composite index already covers the single-column case. The extra index only slows writes.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a clustered and a non-clustered index?">
+
+A clustered index decides the physical order of the rows; the table data is stored in it, so there can be only one. In InnoDB it is the primary key. A non-clustered (secondary) index is a separate structure with the key values and a reference to the row; in InnoDB that reference is the primary key value. A table can have many secondary indexes.
+
+</QA>
+
+<QA q="What is a covering index?">
+
+An index that contains all the columns a query reads, in `SELECT`, `WHERE`, `JOIN` and `ORDER BY`. The database answers from the index alone without touching the table. In MySQL, `EXPLAIN` shows `Using index`.
+
+</QA>
+
+<QA q="Why should an InnoDB primary key be small and increasing?">
+
+Every secondary index stores the primary key, so a large key makes all indexes bigger. An increasing key appends new rows at the end of the clustered B+tree; random keys cause page splits, fragmentation and more disk I/O.
+
+</QA>
+
+<QA q="What is the difference between B-tree and hash indexes?">
+
+A B-tree keeps values sorted, so it supports equality, ranges, prefix `LIKE` and sorting. A hash index supports only exact equality, but in one step. InnoDB uses B+trees; MEMORY tables can use hash indexes, and InnoDB builds an internal adaptive hash index on its own.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In InnoDB, what does a secondary index store along with the indexed columns?',
+      options: ['A disk address', 'The primary key value', 'The whole row', 'Nothing'],
+      answer: 1,
+      why: 'The primary key is used to find the full row in the clustered index.',
+    },
+    {
+      q: 'How many clustered indexes can an InnoDB table have?',
+      options: ['One', 'Two', 'One per column', 'Unlimited'],
+      answer: 0,
+      why: 'The rows can be stored in only one order.',
+    },
+    {
+      q: 'What does "Using index" in EXPLAIN Extra mean?',
+      options: ['A full table scan', 'The index covers the query', 'The index is broken', 'A temporary table'],
+      answer: 1,
+      why: 'All needed columns came from the index; the table was not read.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | MySQL code |
+| --- | --- |
+| List indexes | `SHOW INDEX FROM t;` |
+| Add | `ALTER TABLE t ADD INDEX idx (col);` |
+| Unique | `ALTER TABLE t ADD UNIQUE INDEX uq (email);` |
+| Prefix of long text | `ADD INDEX idx (title(20))` |
+| Full-text | `ADD FULLTEXT INDEX ft (title, body)` |
+| Hide before dropping | `ALTER TABLE t ALTER INDEX idx INVISIBLE;` |
+| Drop | `ALTER TABLE t DROP INDEX idx;` |
+| Covering check | `EXPLAIN` → Extra: `Using index` |
+| Primary key advice | small, `BIGINT AUTO_INCREMENT` |
+
+</CheatSheet>

@@ -1,0 +1,229 @@
+---
+id: sql-query-profiling
+title: Query profiling
+summary: Query profiling means measuring which queries are slow or run too often, and where inside a query the time is spent, before trying to fix anything.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A shop's monthly bill is too high. Before cutting costs, the owner looks at the **list of every expense**: which ones are biggest, which ones happen every day. A ₹50 tea bought 300 times a month costs more than one ₹5,000 repair.
+
+**Query profiling** is that expense list for a database. Measure first, then fix the biggest cost.
+
+</Analogy>
+
+## Simple explanation
+
+**Profiling** answers two questions:
+
+1. **Which queries** cost the most in total?
+2. **Inside one query**, which step takes the time?
+
+For question 1, total cost = **time per run × number of runs**. A 2 ms query that runs 50,000 times an hour (100 seconds) matters more than a 5-second report that runs once a day.
+
+**Tools in MySQL**
+
+- **Slow query log**: writes every query slower than `long_query_time` to a file. Summarise it with `mysqldumpslow` or `pt-query-digest`
+- **Performance Schema**: the table `events_statements_summary_by_digest` groups similar queries and shows count, total time, rows examined and rows sent
+- **sys schema**: ready-made views, such as `sys.statements_with_full_table_scans`
+- `SHOW PROCESSLIST`: what is running right now
+- `SHOW PROFILE`: old per-stage timing, deprecated; use Performance Schema instead
+
+**Tools in PostgreSQL**
+
+- `pg_stat_statements` extension: one row per query shape, with `calls`, `total_exec_time`, `mean_exec_time`, `rows`
+- `log_min_duration_statement`: logs queries slower than a limit
+- `auto_explain`: logs the plan of slow queries automatically
+- `pg_stat_activity`: what is running right now, and what it is waiting for
+
+**For question 2**, use `EXPLAIN ANALYZE` on the expensive query.
+
+A key signal: **rows examined vs rows returned**. A query that reads 1,000,000 rows to return 10 is missing an index or a better filter.
+
+Also look outside the database: an application that runs one query per item in a loop (the **N+1 problem**) shows up as thousands of tiny, identical queries.
+
+## Code example
+
+MySQL: turn on the slow query log.
+
+```mysql
+SET GLOBAL slow_query_log = 'ON';
+SET GLOBAL long_query_time = 0.5;                   -- log anything slower than 0.5 seconds
+SET GLOBAL log_queries_not_using_indexes = 'ON';
+SHOW VARIABLES LIKE 'slow_query_log_file';          -- where the log is written
+```
+
+MySQL: the top 5 queries by total time.
+
+```mysql
+SELECT
+  DIGEST_TEXT                              AS query,
+  COUNT_STAR                               AS runs,
+  ROUND(SUM_TIMER_WAIT / 1e12, 2)          AS total_seconds,
+  ROUND(AVG_TIMER_WAIT / 1e9, 2)           AS avg_ms,
+  SUM_ROWS_EXAMINED                        AS rows_examined,
+  SUM_ROWS_SENT                            AS rows_sent
+FROM performance_schema.events_statements_summary_by_digest
+ORDER BY SUM_TIMER_WAIT DESC
+LIMIT 5;
+```
+
+PostgreSQL: the same with `pg_stat_statements`.
+
+```postgresql
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+SELECT query, calls,
+       ROUND(total_exec_time::numeric, 1) AS total_ms,
+       ROUND(mean_exec_time::numeric, 2)  AS avg_ms,
+       rows
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 5;
+```
+
+The same idea of ranking by total cost, on a made-up log table in the playground:
+
+```sql
+CREATE TABLE query_log (query TEXT, calls INTEGER, avg_ms REAL);
+INSERT INTO query_log VALUES
+  ('SELECT * FROM orders WHERE id = ?',          50000, 2),
+  ('SELECT ... monthly sales report',                1, 5000),
+  ('SELECT * FROM customers WHERE city = ?',      8000, 40);
+
+SELECT query, calls, avg_ms, calls * avg_ms / 1000 AS total_seconds
+FROM query_log
+ORDER BY total_seconds DESC;
+```
+
+```output
+query                                  | calls | avg_ms | total_seconds
+---------------------------------------+-------+--------+--------------
+SELECT * FROM customers WHERE city = ? | 8000  | 40.0   | 320.0
+SELECT * FROM orders WHERE id = ?      | 50000 | 2.0    | 100.0
+SELECT ... monthly sales report        | 1     | 5000.0 | 5.0
+```
+
+The slowest single query (the 5-second report) is the **least** important here. The city search, run 8,000 times at 40 ms, costs the most in total, so fix it first, probably with an index on `city`.
+
+<Playground kind="sql">
+
+```sql
+-- Rows examined vs rows returned: how much does this query read to find its answer?
+EXPLAIN QUERY PLAN
+SELECT name FROM customers WHERE email = 'varun@example.com';
+
+-- SEARCH ... USING INDEX: the UNIQUE constraint on email created an index, so it reads 1 row.
+-- Try it: change email to city. Now it is a SCAN of all 10 customers to find 2.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Optimizing the slowest query instead of the costliest">
+
+<Wrong>
+
+```text
+The 8-second admin report runs once a day. Spend two days tuning it.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Rank by total time (calls x average). A 15 ms query called 200,000 times a day is 50 minutes of database time.
+```
+
+</Right>
+
+Always rank by **total** cost from `pg_stat_statements` or Performance Schema, not by the single slowest run.
+
+</Mistake>
+
+<Mistake title="Missing the N+1 pattern">
+
+<Wrong>
+
+```text
+SELECT * FROM orders WHERE customer_id = 1;
+SELECT * FROM orders WHERE customer_id = 2;
+... 500 more, one per customer on the page
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT * FROM orders WHERE customer_id IN (1, 2, 3, 4, 5);   -- one query for the whole page
+```
+
+</Right>
+
+Each query is fast, but 500 round trips are slow. Look for very high `calls` on identical query shapes, then batch them or use a join (ORMs: `select_related` / `prefetch_related` in Django).
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you find slow queries in a production database?">
+
+Enable the slow query log (MySQL `long_query_time`, PostgreSQL `log_min_duration_statement`), and use aggregated statistics: MySQL Performance Schema `events_statements_summary_by_digest` or PostgreSQL `pg_stat_statements`. Rank by total time and by rows examined, then `EXPLAIN ANALYZE` the top queries. APM tools can also link slow queries to the API endpoints that run them.
+
+</QA>
+
+<QA q="What is the N+1 query problem?">
+
+Code runs one query to fetch a list, then one more query for each item in the list, so N items cause N+1 queries. It is common with ORMs and lazy loading. Fix it by fetching related data in one query with a join or `IN (...)`, for example Django's `select_related` and `prefetch_related`.
+
+</QA>
+
+<QA q="What metrics do you look at when profiling a query?">
+
+Number of calls, total and average execution time, rows examined vs rows returned, whether it uses an index or does a full scan, temporary tables and sorts on disk, lock wait time, and buffer or disk reads.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which query should you fix first?',
+      options: ['5 s, runs once a day', '20 ms, runs 100,000 times a day', '1 ms, runs 10 times a day', 'They are equal'],
+      answer: 1,
+      why: '20 ms x 100,000 = 2,000 seconds a day, far more than the others.',
+    },
+    {
+      q: 'Which PostgreSQL extension collects statistics for every query shape?',
+      options: ['pg_trgm', 'pg_stat_statements', 'postgis', 'pgcrypto'],
+      answer: 1,
+      why: 'pg_stat_statements records calls, total time and rows per normalized query.',
+    },
+    {
+      q: 'A query examines 2,000,000 rows and returns 5. What does that suggest?',
+      options: ['All is fine', 'A missing index or poor filter', 'Too much RAM', 'A network issue'],
+      answer: 1,
+      why: 'Reading far more rows than needed usually means a full scan that an index could avoid.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | MySQL | PostgreSQL |
+| --- | --- | --- |
+| Log slow queries | `slow_query_log`, `long_query_time` | `log_min_duration_statement` |
+| Top queries by total time | `performance_schema.events_statements_summary_by_digest` | `pg_stat_statements` |
+| What is running now | `SHOW PROCESSLIST` | `SELECT * FROM pg_stat_activity` |
+| Plans of slow queries | slow log + `EXPLAIN ANALYZE` | `auto_explain` |
+| Summarise a log file | `pt-query-digest` | `pgBadger` |
+| Rule | rank by calls × average time | |
+
+</CheatSheet>

@@ -1,0 +1,235 @@
+---
+id: sql-ranking-functions
+title: ROW_NUMBER, RANK and DENSE_RANK
+summary: These three window functions number rows in an order, and they differ only in how they treat ties.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a race where two runners finish together in second place.
+
+- One judge still hands out tokens 1, 2, 3, 4. Each runner gets a different token. That is **ROW_NUMBER**
+- An Olympic judge gives 1, 2, 2 and then **4**. Third place is skipped. That is **RANK**
+- A school teacher gives 1, 2, 2 and then **3**. No number is skipped. That is **DENSE_RANK**
+
+</Analogy>
+
+## Simple explanation
+
+All three are window functions. They need `OVER (ORDER BY ...)` to know the order.
+
+| Function | Ties | Gaps | Salaries 100, 90, 90, 80 |
+| --- | --- | --- | --- |
+| `ROW_NUMBER()` | Different numbers | No | 1, 2, 3, 4 |
+| `RANK()` | Same number | Yes | 1, 2, 2, 4 |
+| `DENSE_RANK()` | Same number | No | 1, 2, 2, 3 |
+
+How to choose:
+
+- **ROW_NUMBER**: you want exactly one row per position. Good for pagination, removing duplicates, "the latest row per customer"
+- **RANK**: competition style ranking
+- **DENSE_RANK**: "the Nth highest **value**". The 2nd highest salary is `DENSE_RANK = 2`
+
+Add `PARTITION BY` to restart the numbering for each group, for example a rank inside each department.
+
+With `ROW_NUMBER`, tied rows get numbers in no fixed order. Add a second column to `ORDER BY` (such as `id`) to make the result the same every time.
+
+One more: `NTILE(4)` splits the rows into 4 nearly equal buckets.
+
+## Code example
+
+```sql
+SELECT
+  name,
+  salary,
+  ROW_NUMBER() OVER (ORDER BY salary DESC, id) AS row_num,      -- always unique
+  RANK()       OVER (ORDER BY salary DESC)     AS rnk,          -- ties share, then a gap
+  DENSE_RANK() OVER (ORDER BY salary DESC)     AS dense_rnk     -- ties share, no gap
+FROM employees
+WHERE department_id = 1
+ORDER BY salary DESC, id;
+```
+
+```output
+name          | salary | row_num | rnk | dense_rnk
+--------------+--------+---------+-----+----------
+Anita Rao     | 185000 | 1       | 1   | 1
+Rohit Verma   | 140000 | 2       | 2   | 2
+Asha Kulkarni | 140000 | 3       | 2   | 2
+Kabir Singh   | 95000  | 4       | 4   | 3
+Neha Gupta    | 88000  | 5       | 5   | 4
+Arjun Mehta   | 72000  | 6       | 6   | 5
+Sana Khan     | 72000  | 7       | 6   | 5
+```
+
+```sql
+SELECT department_id, name, salary, rnk
+FROM (
+  SELECT department_id, name, salary,
+         DENSE_RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS rnk
+  FROM employees
+  WHERE department_id IS NOT NULL
+) AS t
+WHERE rnk <= 2                                -- top 2 salaries in each department
+ORDER BY department_id, rnk, name;
+```
+
+```output
+department_id | name           | salary | rnk
+--------------+----------------+--------+----
+1             | Anita Rao      | 185000 | 1
+1             | Asha Kulkarni  | 140000 | 2
+1             | Rohit Verma    | 140000 | 2
+2             | Vikram Shah    | 150000 | 1
+2             | Imran Ali      | 86000  | 2
+3             | Meera Nair     | 120000 | 1
+3             | Suresh Patil   | 68000  | 2
+4             | Farah Sheikh   | 130000 | 1
+4             | Gaurav Bose    | 76000  | 2
+5             | Lakshmi Pillai | 64000  | 1
+5             | Manoj Yadav    | 42000  | 2
+```
+
+<Playground kind="sql">
+
+```sql
+-- The latest order of each customer
+SELECT customer_id, id AS order_id, order_date
+FROM (
+  SELECT o.*,
+         ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY order_date DESC) AS rn
+  FROM orders AS o
+) AS t
+WHERE rn = 1
+ORDER BY customer_id;
+
+-- Try it: change DESC to ASC to get each customer's FIRST order.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using ROW_NUMBER for the Nth highest value">
+
+<Wrong>
+
+```sql
+SELECT name, salary FROM (
+  SELECT name, salary, ROW_NUMBER() OVER (ORDER BY salary DESC) AS rn FROM employees
+) AS t
+WHERE rn = 4;   -- 140000 again: a repeat of the 3rd highest value
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, salary FROM (
+  SELECT name, salary, DENSE_RANK() OVER (ORDER BY salary DESC) AS rnk FROM employees
+) AS t
+WHERE rnk = 4;  -- 130000 (Farah Sheikh): the real 4th highest salary
+```
+
+</Right>
+
+The top salaries are 185000, 150000, 140000, 140000, 130000. `ROW_NUMBER` counts **rows**, so row 4 is the second 140000. `DENSE_RANK` counts **distinct values**, so rank 4 is 130000. It also returns everyone who shares that salary.
+
+</Mistake>
+
+<Mistake title="Forgetting ORDER BY inside OVER">
+
+<Wrong>
+
+```sql
+SELECT name, salary, RANK() OVER () AS rnk
+FROM employees
+LIMIT 3;   -- every row gets rank 1
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, salary, RANK() OVER (ORDER BY salary DESC) AS rnk
+FROM employees
+LIMIT 3;
+```
+
+</Right>
+
+Without an order, all rows are tied. The `ORDER BY` at the end of the query does not count; it must be inside `OVER`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between ROW_NUMBER, RANK and DENSE_RANK?">
+
+All assign numbers by an order. `ROW_NUMBER` gives every row a unique number even for ties. `RANK` gives ties the same number and skips the following numbers (1, 2, 2, 4). `DENSE_RANK` gives ties the same number without skipping (1, 2, 2, 3).
+
+</QA>
+
+<QA q="Which one would you use to find the Nth highest salary, and why?">
+
+`DENSE_RANK`, because it ranks distinct values with no gaps, so rank N is exactly the Nth highest value even when several employees share a salary. `RANK` may have no row with rank N, and `ROW_NUMBER` may point at a repeated value.
+
+</QA>
+
+<QA q="How do you remove duplicate rows using ROW_NUMBER?">
+
+Number the rows inside each duplicate group and delete those numbered above 1.
+
+```postgresql
+WITH numbered AS (
+  SELECT id, ROW_NUMBER() OVER (PARTITION BY email ORDER BY id) AS rn
+  FROM users
+)
+DELETE FROM users WHERE id IN (SELECT id FROM numbered WHERE rn > 1);
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Values are 50, 40, 40, 30. What does RANK() give for 30?',
+      options: ['3', '4', '2', '1'],
+      answer: 1,
+      why: 'RANK gives 1, 2, 2, 4. The number 3 is skipped after the tie.',
+    },
+    {
+      q: 'Values are 50, 40, 40, 30. What does DENSE_RANK() give for 30?',
+      options: ['3', '4', '2', '1'],
+      answer: 0,
+      why: 'DENSE_RANK gives 1, 2, 2, 3 with no gap.',
+    },
+    {
+      q: 'Which function never gives two rows the same number?',
+      options: ['RANK', 'DENSE_RANK', 'ROW_NUMBER', 'NTILE'],
+      answer: 2,
+      why: 'ROW_NUMBER is always unique within its partition.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Unique number per row | `ROW_NUMBER() OVER (ORDER BY x)` |
+| Rank with gaps | `RANK() OVER (ORDER BY x DESC)` |
+| Rank without gaps | `DENSE_RANK() OVER (ORDER BY x DESC)` |
+| Restart per group | `OVER (PARTITION BY g ORDER BY x DESC)` |
+| Top N per group | rank in a subquery, then `WHERE rnk <= N` |
+| Latest row per group | `ROW_NUMBER() ... ORDER BY date DESC`, then `rn = 1` |
+| Four buckets | `NTILE(4) OVER (ORDER BY x)` |
+
+</CheatSheet>

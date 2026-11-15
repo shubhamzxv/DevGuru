@@ -1,0 +1,227 @@
+---
+id: sql-explain-vs-explain-analyze
+title: EXPLAIN vs EXPLAIN ANALYZE
+summary: EXPLAIN shows the planned route with estimates, while EXPLAIN ANALYZE actually runs the query and adds the real row counts and times.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The map app says your trip will take **30 minutes**. That is the estimate: **EXPLAIN**.
+
+You actually drive it, with a stopwatch, and it takes **55 minutes** because of a traffic jam on one road. That is **EXPLAIN ANALYZE**: the real trip, with real times for each part.
+
+</Analogy>
+
+## Simple explanation
+
+| Point | EXPLAIN | EXPLAIN ANALYZE |
+| --- | --- | --- |
+| Runs the query | No | **Yes** |
+| Rows | Estimated | Estimated **and** actual |
+| Time | Estimated cost only | **Actual** time per step |
+| Speed | Instant | As slow as the query |
+| Safe on `DELETE` / `UPDATE` | Yes | **No**, it changes data |
+
+**EXPLAIN** shows the optimizer's guess. The guess is based on **statistics** about the table (row counts, value spread). When statistics are old or the data is skewed, the guess can be badly wrong.
+
+**EXPLAIN ANALYZE** runs the query and reports, for each step, how many rows it **really** produced and how long it **really** took. This is how you find **where** the time goes.
+
+The most useful thing to check: **estimated rows vs actual rows**. If the plan expected 10 rows and got 500,000, the optimizer made a bad choice because of wrong statistics. Run `ANALYZE` (PostgreSQL) or `ANALYZE TABLE` (MySQL) to refresh them.
+
+Availability:
+
+- PostgreSQL: `EXPLAIN ANALYZE`, and `EXPLAIN (ANALYZE, BUFFERS)` to also show memory and disk reads
+- MySQL: `EXPLAIN ANALYZE` from version 8.0.18, printed as a tree
+- SQLite has no `EXPLAIN ANALYZE`, so the examples here are shown, not run in the playground
+
+Because it really runs, use it carefully on data-changing statements. In PostgreSQL, wrap it in a transaction and roll back:
+
+`BEGIN; EXPLAIN ANALYZE DELETE ...; ROLLBACK;`
+
+## Code example
+
+```postgresql
+EXPLAIN
+SELECT * FROM orders WHERE status = 'shipped';
+```
+
+```text
+Seq Scan on orders  (cost=0.00..1834.00 rows=120 width=40)
+  Filter: (status = 'shipped')
+```
+
+Only estimates: about 120 rows, at a cost of 1834 units.
+
+```postgresql
+EXPLAIN ANALYZE
+SELECT * FROM orders WHERE status = 'shipped';
+```
+
+```text
+Seq Scan on orders  (cost=0.00..1834.00 rows=120 width=40)
+                    (actual time=0.015..21.480 rows=48210 loops=1)
+  Filter: (status = 'shipped')
+  Rows Removed by Filter: 51790
+Planning Time: 0.090 ms
+Execution Time: 23.912 ms
+```
+
+How to read it:
+
+- `rows=120` estimated vs `rows=48210` actual: the statistics are **far off**. Run `ANALYZE orders;`
+- `actual time=0.015..21.480`: first row after 0.015 ms, last row after 21.48 ms
+- `Rows Removed by Filter: 51790`: half the table was read and thrown away
+- `loops=1`: this step ran once. Inside a nested loop, multiply the time by `loops`
+
+```mysql
+EXPLAIN ANALYZE
+SELECT c.name, COUNT(*) FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.name;
+```
+
+```text
+-> Table scan on <temporary>  (actual time=4.1..4.2 rows=9 loops=1)
+    -> Aggregate using temporary table  (actual time=4.1..4.1 rows=9 loops=1)
+        -> Nested loop inner join  (cost=7.1 rows=16) (actual time=0.1..0.3 rows=16 loops=1)
+            -> Table scan on c  (cost=1.2 rows=10) (actual time=0.05..0.07 rows=10 loops=1)
+            -> Index lookup on o using idx_customer (customer_id=c.id)  (actual time=0.01..0.02 rows=2 loops=10)
+```
+
+Read the tree from the **deepest** line upward: scan customers, look up their orders by index (10 loops), join, group, return.
+
+The playground has only `EXPLAIN QUERY PLAN`, the estimate side:
+
+```sql
+EXPLAIN QUERY PLAN
+SELECT status, COUNT(*) FROM orders GROUP BY status;
+```
+
+```output
+id | parent | notused | detail
+---+--------+---------+-----------------------------
+6  | 0      | 216     | SCAN orders
+8  | 0      | 0       | USE TEMP B-TREE FOR GROUP BY
+```
+
+<Playground kind="sql">
+
+```sql
+-- SQLite shows the plan only. Read it, then add an index and compare.
+EXPLAIN QUERY PLAN
+SELECT * FROM order_items WHERE product_id = 3;
+
+-- Try it:  CREATE INDEX idx_oi_product ON order_items (product_id);  then run the EXPLAIN again.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Running EXPLAIN ANALYZE on a DELETE in production">
+
+<Wrong>
+
+```postgresql
+EXPLAIN ANALYZE DELETE FROM orders WHERE order_date < '2020-01-01';
+-- the rows are really deleted
+```
+
+</Wrong>
+
+<Right>
+
+```postgresql
+BEGIN;
+EXPLAIN ANALYZE DELETE FROM orders WHERE order_date < '2020-01-01';
+ROLLBACK;   -- you get the timings, and the data is untouched
+```
+
+</Right>
+
+`EXPLAIN ANALYZE` executes the statement. Wrap changes in a transaction and roll back. (In MySQL it only supports `SELECT` and some table statements.)
+
+</Mistake>
+
+<Mistake title="Ignoring the loops count">
+
+<Wrong>
+
+```text
+-> Index lookup on o  (actual time=0.5..0.6 rows=2 loops=20000)
+"Only 0.6 ms, this step is fine."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+0.6 ms x 20000 loops = 12 seconds. This is the slow step.
+```
+
+</Right>
+
+The time shown is per loop. A cheap step repeated thousands of times inside a nested loop can be the real bottleneck.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between EXPLAIN and EXPLAIN ANALYZE?">
+
+`EXPLAIN` shows the execution plan the optimizer chose, with estimated costs and row counts, without running the query. `EXPLAIN ANALYZE` executes the query and adds actual row counts, actual time per node and loop counts, so you can compare estimates with reality and find the real bottleneck.
+
+</QA>
+
+<QA q="The estimated rows and actual rows are very different. What does it mean and what do you do?">
+
+The optimizer's statistics are stale or cannot model the data (skewed values, correlated columns), so it may have picked a bad join order or skipped an index. Refresh statistics with `ANALYZE` / `ANALYZE TABLE`; in PostgreSQL you can raise the statistics target for the column or create extended statistics for correlated columns.
+
+</QA>
+
+<QA q="Is EXPLAIN ANALYZE safe to run on production?">
+
+For `SELECT`, it costs as much as running the query. For `INSERT`, `UPDATE` and `DELETE`, it changes data, so run it inside a transaction and roll back, or use a copy of the database.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which one actually executes the query?',
+      options: ['EXPLAIN', 'EXPLAIN ANALYZE', 'Both', 'Neither'],
+      answer: 1,
+      why: 'EXPLAIN ANALYZE runs it to measure real rows and time.',
+    },
+    {
+      q: 'Estimated rows = 10, actual rows = 200000. What is the likely cause?',
+      options: ['A bug in SQL', 'Outdated table statistics', 'Too many indexes', 'The network'],
+      answer: 1,
+      why: 'The optimizer estimates from statistics; refresh them with ANALYZE.',
+    },
+    {
+      q: 'A step shows actual time 0.5 ms with loops=10000. About how long did it take in total?',
+      options: ['0.5 ms', '5 ms', '5 seconds', '50 seconds'],
+      answer: 2,
+      why: 'Time is per loop: 0.5 ms x 10000 = 5000 ms.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Plan only (PostgreSQL, MySQL) | `EXPLAIN SELECT ...` |
+| Plan + real numbers | `EXPLAIN ANALYZE SELECT ...` |
+| Plus memory and disk reads (PostgreSQL) | `EXPLAIN (ANALYZE, BUFFERS) SELECT ...` |
+| Tree format (MySQL) | `EXPLAIN FORMAT=TREE SELECT ...` |
+| Safe on writes (PostgreSQL) | `BEGIN; EXPLAIN ANALYZE ...; ROLLBACK;` |
+| Refresh statistics | `ANALYZE t;` (PostgreSQL), `ANALYZE TABLE t;` (MySQL) |
+| SQLite | `EXPLAIN QUERY PLAN` only |
+
+</CheatSheet>

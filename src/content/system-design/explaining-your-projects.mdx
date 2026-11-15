@@ -1,0 +1,264 @@
+---
+id: system-design-explaining-your-projects
+title: How to explain your own microservices
+summary: A simple structure for explaining a project you built in an interview, from the problem it solves to the architecture, your own part, the numbers and the trade-offs.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+When a friend asks how to reach your house, you do not start with the colour of your front door. You start with the area, then the main road, then the landmark, then the lane, and only then the door.
+
+Explaining a project works the same way: **big picture first**, then zoom in to the part you built, then the details the listener asks for.
+
+</Analogy>
+
+## Simple explanation
+
+"Tell me about a project you worked on" or "explain the architecture of your microservices" is asked in almost every backend interview. Interviewers want to see that you understand **why** the system is built this way, not only **which** tools it uses.
+
+Use this order, about 2 to 3 minutes in total, and then let them ask questions:
+
+1. **Problem (1 or 2 sentences)**: who uses it and what it does for them
+2. **Big picture**: the main services and how a request flows through them. Draw it if you can
+3. **Your part**: what YOU designed or built. Say "I", not only "we"
+4. **One hard problem**: what went wrong or was difficult, and how you solved it
+5. **Numbers**: users, requests per second, data size, latency, cost, before and after
+6. **Trade-offs**: what you chose, what you did not choose, and why
+7. **What you would improve** with more time
+
+Prepare for the follow-up questions every interviewer asks:
+
+| They ask | Be ready with |
+| --- | --- |
+| Why microservices here? | the real reason: separate scaling, separate teams or deployments |
+| How do services talk? | REST, gRPC or a queue for each link, and why |
+| Where is the data? | which service owns which database |
+| What if a service is down? | timeouts, retries, queue buffering, fallbacks |
+| How do you deploy? | containers, CI/CD, how you roll back |
+| How do you monitor? | logs, metrics, alerts, tracing |
+| How does auth work? | tokens at the gateway, service-to-service trust |
+
+Tips:
+
+- **Be honest** about what you did and did not build. "The billing service was another team's; I integrated with its API" is a good answer
+- **Use real numbers** you can defend. Rough is fine: "about 2 lakh devices, around 300 messages per second at peak"
+- **Name trade-offs**: there is no perfect design, and saying "we accepted X to get Y" shows maturity
+- If you are not allowed to share details, describe the **shape** of the system without names or secrets
+
+## Code example
+
+A worked example for an IoT platform that monitors smart air conditioners. Read it aloud and time yourself:
+
+```text
+1. PROBLEM
+   "We built a platform that lets a manufacturer monitor and control its
+    smart air conditioners. Customers use a mobile app; the service team uses
+    a dashboard to see faults before customers complain."
+
+2. BIG PICTURE
+   "Devices send telemetry over MQTT to an IoT gateway. An ingestion service
+    validates each message and puts it on a queue. A processing service reads
+    the queue, stores readings in a time-series database and raises alerts.
+    The mobile app and dashboard call a FastAPI backend through an API gateway.
+    A device-command service sends ON/OFF and temperature changes back to devices."
+
+3. MY PART
+   "I owned the ingestion and alerting services in Python, and the AWS setup
+    for them: SQS queues, Lambda consumers and CloudWatch alarms."
+
+4. HARD PROBLEM
+   "At peak, devices reconnect together after a power cut and send a burst of
+    messages. Our API was writing straight to the database and timed out.
+    I put SQS between ingestion and processing, so bursts wait in the queue,
+    and made consumers idempotent using the message id, because SQS can deliver twice."
+
+5. NUMBERS
+   "About 2 lakh devices, normally 300 messages per second, bursts of 5,000.
+    After the change, no lost messages and p95 processing time under 2 seconds."
+
+6. TRADE-OFFS
+   "Alerts became eventually consistent, a few seconds late, which the service
+    team accepted. We kept the user and device APIs as one service instead of
+    splitting further, because one small team owned both."
+
+7. NEXT
+   "I would add distributed tracing; today we join logs by device id by hand."
+```
+
+The architecture you would draw on the whiteboard is in the playground below: tap each box and play the flow while you practise saying it.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "device", "label": "Smart AC", "icon": "❄️", "col": 0, "row": 0, "info": "Sends temperature, power and error codes every 30 seconds over MQTT.", "example": "Say how many devices and how often they send." },
+    { "id": "app", "label": "Mobile app", "icon": "📱", "col": 0, "row": 2, "info": "Customers see their AC and change settings.", "example": "Calls the backend through the API gateway." },
+    { "id": "iot", "label": "IoT gateway", "icon": "📡", "col": 1, "row": 0, "info": "Keeps the device connections and receives MQTT messages.", "example": "AWS IoT Core or an MQTT broker." },
+    { "id": "ingest", "label": "Ingestion service", "icon": "📥", "col": 2, "row": 0, "info": "Validates each message and puts it on the queue. Kept tiny so it never slows down.", "example": "MY PART: Python, runs as a Lambda." },
+    { "id": "queue", "label": "Queue", "icon": "📬", "col": 3, "row": 0, "info": "Absorbs bursts after power cuts. Messages wait here instead of overloading the database.", "example": "Amazon SQS with a dead-letter queue for bad messages." },
+    { "id": "process", "label": "Processing + alerts", "icon": "🚨", "col": 3, "row": 1, "info": "Reads the queue, stores readings, raises alerts. Idempotent by message id.", "example": "MY PART: alert rules such as 'compressor error 3 times in 10 minutes'." },
+    { "id": "tsdb", "label": "Time-series DB", "icon": "📈", "col": 4, "row": 1, "info": "Stores readings by device and time for charts.", "example": "Amazon Timestream or TimescaleDB." },
+    { "id": "gateway", "label": "API gateway", "icon": "🚪", "col": 1, "row": 2, "info": "Checks login tokens and routes requests to the backend.", "example": "Amazon API Gateway." },
+    { "id": "backend", "label": "Device API", "icon": "⚙️", "col": 2, "row": 2, "info": "FastAPI service for users, devices and commands. Reads latest status from the DB.", "example": "Runs in containers on ECS." },
+    { "id": "maindb", "label": "Main DB", "icon": "🗄️", "col": 3, "row": 2, "info": "Users, devices, ownership, alert history.", "example": "PostgreSQL on RDS." }
+  ],
+  "edges": [
+    ["device", "iot", "MQTT"],
+    ["iot", "ingest"],
+    ["ingest", "queue", "SQS"],
+    ["queue", "process"],
+    ["process", "tsdb"],
+    ["process", "maindb", "alerts"],
+    ["app", "gateway", "HTTPS"],
+    ["gateway", "backend"],
+    ["backend", "maindb"],
+    ["backend", "iot", "commands"]
+  ],
+  "flows": [
+    {
+      "name": "A fault becomes an alert",
+      "steps": [
+        ["device", "The AC reports error code E4 (compressor) in its telemetry."],
+        ["iot", "Receives the MQTT message on the device's topic."],
+        ["ingest", "Checks the format and device id, then queues it. Takes a few milliseconds."],
+        ["queue", "Holds the message. During a burst, thousands wait here safely."],
+        ["process", "Third E4 in 10 minutes: raise an alert. A duplicate message would be ignored."],
+        ["tsdb", "The reading is stored for the charts."],
+        ["maindb", "The alert is saved, and the service team's dashboard shows it."]
+      ]
+    },
+    {
+      "name": "User turns the AC on",
+      "steps": [
+        ["app", "The user taps ON."],
+        ["gateway", "Verifies the token and forwards POST /devices/42/commands."],
+        ["backend", "Checks the user owns device 42 and records the command."],
+        ["iot", "Publishes the command to the device's MQTT topic."],
+        ["device", "Turns on and reports its new state in the next message."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Listing tools instead of explaining the system">
+
+<Wrong>
+
+```text
+"We used Python, FastAPI, Docker, Kubernetes, Kafka, Redis, PostgreSQL, AWS,
+ Jenkins and Grafana."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Devices send data to an ingestion service, which queues it so bursts after a
+ power cut do not overload the database. I built that service in Python..."
+```
+
+</Right>
+
+A list of tools says nothing about your thinking. Explain the flow and the reason for each piece; tools come up naturally.
+
+</Mistake>
+
+<Mistake title="Saying only 'we'">
+
+<Wrong>
+
+```text
+"We designed the architecture, we built the services, we handled scaling."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"The team designed the overall flow. I built the ingestion and alerting services
+ and moved our writes behind SQS, which fixed the timeouts during bursts."
+```
+
+</Right>
+
+The interviewer is hiring you. Make your own contribution clear, while staying honest about the team's work.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain the architecture of the last project you worked on.">
+
+Use the structure: the problem in one or two sentences, the main components and how one request flows through them, your own part, one hard problem and how you solved it, real numbers, and the trade-offs. Keep it to 2 to 3 minutes and draw the diagram, then invite questions.
+
+</QA>
+
+<QA q="Why did your team choose microservices for that project?">
+
+Give the real reason, for example: the ingestion side had to absorb bursts and scale separately from the user-facing API, and different teams released them on different schedules. If parts stayed together, say why: one small team owned them, so splitting would add cost without benefit.
+
+</QA>
+
+<QA q="What would you improve in that system?">
+
+Pick one or two concrete, honest items with a reason, such as adding distributed tracing to debug requests across services, adding contract tests between services, or moving a synchronous call to an event to remove a dependency. This shows you understand its weaknesses.
+
+</QA>
+
+<QA q="What was the hardest bug or incident, and what did you learn?">
+
+Describe the situation, how you found the cause (logs, metrics, reproducing it), the fix, and what you changed so it would not happen again, such as an alert, a test or a design change. Interviewers value the method and the follow-up more than the bug itself.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What should you explain first?',
+      options: ['The database schema', 'The problem and the big picture', 'The CI/CD pipeline', 'Your code style'],
+      answer: 1,
+      why: 'Start wide (what and why), then zoom into your part.',
+    },
+    {
+      q: 'Which answer best shows your contribution?',
+      options: ['"We built everything."', '"I built the ingestion service and moved writes behind a queue."', '"We used Kafka and Redis."', '"It was a big project."'],
+      answer: 1,
+      why: 'It names your own work and the problem it solved.',
+    },
+    {
+      q: 'Why mention trade-offs?',
+      options: ['To fill time', 'It shows you understand there is no perfect design', 'Interviewers do not care', 'To hide mistakes'],
+      answer: 1,
+      why: 'Explaining what you gave up and why shows engineering judgement.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | Say |
+| --- | --- |
+| 1. Problem | who uses it, what it does |
+| 2. Big picture | main services and one request's path |
+| 3. My part | what I built, with "I" |
+| 4. Hard problem | the issue, the cause, the fix |
+| 5. Numbers | users, requests per second, latency, before and after |
+| 6. Trade-offs | what we chose, what we gave up |
+| 7. Next | one or two honest improvements |
+
+Keep it to 2 to 3 minutes, draw it, then let them ask.
+
+</CheatSheet>

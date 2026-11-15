@@ -1,5 +1,7 @@
 import { Suspense, useCallback, useState } from 'react';
 import { Outlet } from 'react-router-dom';
+import { useSearchShortcut } from '../../hooks/useSearchShortcut';
+import UpdatePrompt from '../pwa/UpdatePrompt';
 import BottomNav from './BottomNav';
 import Header from './Header';
 import MobileDrawer from './MobileDrawer';
@@ -14,6 +16,7 @@ export default function Layout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  useSearchShortcut();
 
   return (
     <div className="min-h-dvh">
@@ -27,7 +30,7 @@ export default function Layout() {
       <Header onMenuClick={openDrawer} drawerOpen={drawerOpen} />
 
       <div className="mx-auto flex w-full max-w-7xl">
-        <aside className="sticky top-14 hidden h-[calc(100dvh-3.5rem)] w-64 shrink-0 overflow-y-auto border-r border-slate-200 lg:block dark:border-slate-800">
+        <aside className="sticky top-14 hidden print:hidden h-[calc(100dvh-3.5rem)] w-64 shrink-0 overflow-y-auto border-r border-slate-200 lg:block dark:border-slate-800">
           <Sidebar />
         </aside>
 
@@ -47,6 +50,7 @@ export default function Layout() {
 
       <MobileDrawer open={drawerOpen} onClose={closeDrawer} />
       <BottomNav onTracksClick={openDrawer} />
+      <UpdatePrompt />
     </div>
   );
 }

@@ -1,0 +1,264 @@
+---
+id: sql-stored-procedures-triggers
+title: Stored procedures and triggers (overview)
+summary: A stored procedure is a named program saved in the database that you call yourself, and a trigger is code that runs automatically when a row is inserted, updated or deleted.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **stored procedure** is like a speed-dial button on your phone: one press runs a whole set of steps you saved earlier. **You** decide when to press it.
+
+A **trigger** is like a burglar alarm: nobody presses it. It goes off **automatically** when a door opens.
+
+</Analogy>
+
+## Simple explanation
+
+**Stored procedure**
+
+A procedure is a block of SQL (with variables, `IF`, loops) saved in the database under a name. You run it with `CALL name(arguments);`.
+
+- Can take **input** (`IN`) and **output** (`OUT`) parameters
+- Can run several statements, often inside a transaction
+- A **function** (`CREATE FUNCTION`) is similar but **returns a value** and can be used inside a `SELECT`
+
+Pros: fewer network round trips, logic shared by every application, permission to run the procedure without access to the tables.
+Cons: harder to version-control, test and debug than application code; each database has its own syntax (MySQL SQL/PSM, PostgreSQL PL/pgSQL, SQL Server T-SQL), which ties you to that database.
+
+**Trigger**
+
+A trigger is attached to a **table** and an **event**. It fires on its own.
+
+- **Event**: `INSERT`, `UPDATE` or `DELETE`
+- **Timing**: `BEFORE` (check or change the new values before saving) or `AFTER` (react once saved)
+- **Level**: usually **for each row**. Inside, `NEW` is the new row and `OLD` is the old row
+
+Typical uses: an **audit log** of changes, keeping `updated_at` current, keeping a summary column in sync, extra validation.
+
+Be careful: triggers are **invisible** to someone reading the application code, they add work to every write, and triggers that fire other triggers are hard to debug. Keep them small.
+
+SQLite (the playground) has **triggers** but no stored procedures.
+
+## Code example
+
+An audit log with an `AFTER UPDATE` trigger (runs in the playground):
+
+```sql
+CREATE TABLE salary_audit (
+  employee_id INTEGER, old_salary INTEGER, new_salary INTEGER, changed_on TEXT
+);
+
+CREATE TRIGGER trg_salary_audit
+AFTER UPDATE OF salary ON employees          -- fires only when salary changes
+FOR EACH ROW
+BEGIN
+  INSERT INTO salary_audit VALUES (OLD.id, OLD.salary, NEW.salary, DATE('now'));
+END;
+
+UPDATE employees SET salary = salary + 5000 WHERE department_id = 3;   -- 3 rows change
+
+SELECT employee_id, old_salary, new_salary FROM salary_audit;          -- 3 audit rows, written automatically
+```
+
+```output
+employee_id | old_salary | new_salary
+------------+------------+-----------
+3           | 120000     | 125000
+14          | 68000      | 73000
+15          | 61000      | 66000
+```
+
+A `BEFORE INSERT` trigger that blocks bad data:
+
+```sql
+CREATE TRIGGER trg_no_future_orders
+BEFORE INSERT ON orders
+FOR EACH ROW
+WHEN NEW.order_date > '2030-01-01'
+BEGIN
+  SELECT RAISE(ABORT, 'order date is too far in the future');
+END;
+
+INSERT INTO orders (customer_id, order_date, status) VALUES (1, '2024-07-01', 'placed');   -- allowed
+
+SELECT COUNT(*) AS orders FROM orders;
+```
+
+```output
+orders
+------
+17
+```
+
+A stored procedure in MySQL:
+
+```mysql
+DELIMITER //
+CREATE PROCEDURE give_raise(IN dept INT, IN percent DECIMAL(5,2), OUT changed INT)
+BEGIN
+  START TRANSACTION;
+  UPDATE employees SET salary = salary * (1 + percent / 100) WHERE department_id = dept;
+  SET changed = ROW_COUNT();
+  COMMIT;
+END //
+DELIMITER ;
+
+CALL give_raise(2, 10, @n);
+SELECT @n AS employees_updated;
+```
+
+The same idea in PostgreSQL (a function in PL/pgSQL):
+
+```postgresql
+CREATE FUNCTION give_raise(dept INT, percent NUMERIC) RETURNS INT AS $$
+DECLARE changed INT;
+BEGIN
+  UPDATE employees SET salary = salary * (1 + percent / 100) WHERE department_id = dept;
+  GET DIAGNOSTICS changed = ROW_COUNT;
+  RETURN changed;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT give_raise(2, 10);
+```
+
+<Playground kind="sql">
+
+```sql
+-- Keep stock in sync automatically when an order item is added
+CREATE TRIGGER IF NOT EXISTS trg_reduce_stock
+AFTER INSERT ON order_items
+FOR EACH ROW
+BEGIN
+  UPDATE products SET stock = stock - NEW.quantity WHERE id = NEW.product_id;
+END;
+
+SELECT name, stock FROM products WHERE id = 1;
+INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (16, 1, 4, 599);
+SELECT name, stock FROM products WHERE id = 1;
+
+-- Try it: list triggers with  SELECT name, tbl_name FROM sqlite_master WHERE type = 'trigger';
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Updating the same table from its own row trigger">
+
+<Wrong>
+
+```mysql
+CREATE TRIGGER trg_bad AFTER UPDATE ON employees FOR EACH ROW
+  UPDATE employees SET updated_at = NOW() WHERE id = NEW.id;
+-- MySQL error 1442: Can't update table 'employees' in stored function/trigger
+```
+
+</Wrong>
+
+<Right>
+
+```mysql
+CREATE TRIGGER trg_good BEFORE UPDATE ON employees FOR EACH ROW
+  SET NEW.updated_at = NOW();       -- change the row being saved, before it is saved
+```
+
+</Right>
+
+To change the row that fired the trigger, use a `BEFORE` trigger and set `NEW.column`. (MySQL can also do this with `ON UPDATE CURRENT_TIMESTAMP` on the column.)
+
+</Mistake>
+
+<Mistake title="Hiding business logic in triggers">
+
+<Wrong>
+
+```text
+A trigger on orders sends the order to the warehouse table, which fires another trigger
+that updates stock, which fires another that writes to the reorder table...
+Nobody reading the Python code knows any of this happens.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Keep triggers for small, data-level jobs (audit, updated_at, simple sync).
+Put business workflows in application code or one clearly named procedure.
+```
+
+</Right>
+
+Triggers run silently on every write. Chains of them are slow and very hard to debug.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a stored procedure and a function?">
+
+A function returns a single value (or a table) and can be used inside a `SELECT`; it generally should not change data or control transactions. A stored procedure is executed with `CALL`, can return results through `OUT` parameters or result sets, can modify data and, in most databases, manage transactions.
+
+</QA>
+
+<QA q="What is a trigger and what are its types?">
+
+A block of code that the database runs automatically in response to `INSERT`, `UPDATE` or `DELETE` on a table. It can fire `BEFORE` or `AFTER` the event (SQL Server also has `INSTEAD OF`), usually once per affected row, with access to `OLD` and `NEW` row values.
+
+</QA>
+
+<QA q="What are the advantages and disadvantages of stored procedures?">
+
+Advantages: fewer network round trips, logic reused by all clients, finer security (grant execute only), and plans that can be cached. Disadvantages: vendor-specific languages, harder testing, debugging, versioning and deployment, and business logic split between the app and the database, which makes scaling and refactoring harder.
+
+</QA>
+
+<QA q="What is the difference between a trigger and a stored procedure?">
+
+A procedure is invoked explicitly with `CALL` and can take parameters. A trigger is invoked implicitly by a data change on its table, takes no parameters, and cannot be called directly.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'How is a trigger run?',
+      options: ['With CALL', 'Automatically on INSERT, UPDATE or DELETE', 'With EXECUTE TRIGGER', 'Once a day'],
+      answer: 1,
+      why: 'A trigger fires on its own when its event happens on its table.',
+    },
+    {
+      q: 'Inside an UPDATE trigger, what is OLD?',
+      options: ['The previous version of the row', 'The new version', 'The table definition', 'The last trigger'],
+      answer: 0,
+      why: 'OLD holds the values before the change, NEW the values after.',
+    },
+    {
+      q: 'Which one can be used inside a SELECT?',
+      options: ['A stored procedure', 'A function', 'A trigger', 'None'],
+      answer: 1,
+      why: 'A function returns a value, so it can appear in an expression.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Procedure (MySQL) | `CREATE PROCEDURE p(IN x INT) BEGIN ... END` |
+| Run it | `CALL p(5);` |
+| Function (PostgreSQL) | `CREATE FUNCTION f(x INT) RETURNS INT AS $$ ... $$ LANGUAGE plpgsql;` |
+| Row trigger | `CREATE TRIGGER t AFTER INSERT ON tbl FOR EACH ROW BEGIN ... END;` |
+| Change the row being saved | `BEFORE` trigger + `SET NEW.col = ...` |
+| Old and new values | `OLD.col`, `NEW.col` |
+| Remove | `DROP PROCEDURE p;` / `DROP TRIGGER t;` |
+| MySQL client | wrap bodies in `DELIMITER // ... // DELIMITER ;` |
+
+</CheatSheet>

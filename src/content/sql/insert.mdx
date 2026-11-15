@@ -1,0 +1,210 @@
+---
+id: sql-insert
+title: INSERT
+summary: INSERT adds new rows to a table.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a school admission register. When a new student joins, the clerk writes **one new line**: name, class, date of joining. The old lines are not touched.
+
+`INSERT` writes a new line into a table.
+
+</Analogy>
+
+## Simple explanation
+
+`INSERT` adds one or more **new rows**. The basic form is:
+
+`INSERT INTO table (column1, column2) VALUES (value1, value2);`
+
+Points to know:
+
+- **Name the columns.** The values must be in the same order as the column list
+- Text and dates go in **single quotes**. Numbers do not
+- A column you leave out gets its **default value**, or `NULL` if it has no default
+- The `id` column is usually filled automatically (`AUTO_INCREMENT` in MySQL, `SERIAL` or identity in PostgreSQL, `INTEGER PRIMARY KEY` in SQLite)
+- You can insert **many rows** in one statement by separating value groups with commas. This is much faster than one statement per row
+- `INSERT INTO ... SELECT ...` copies rows from a query into a table
+
+The database checks every rule before saving. If a value breaks a constraint (a duplicate in a `UNIQUE` column, `NULL` in a `NOT NULL` column, a foreign key that points to nothing), the insert **fails** and nothing is added.
+
+In the playground, your changes stay until you press **Reset database** or reload the page.
+
+## Code example
+
+```sql
+INSERT INTO customers (name, city, email, joined_on)        -- id is filled automatically
+VALUES ('Meenal Jain', 'Indore', 'meenal@example.com', '2024-07-01');
+
+SELECT id, name, city FROM customers WHERE name = 'Meenal Jain';
+```
+
+```output
+id | name        | city
+---+-------------+-------
+11 | Meenal Jain | Indore
+```
+
+```sql
+INSERT INTO products (name, category, price)                 -- stock is left out: default 0
+VALUES
+  ('Sticky Notes', 'Stationery', 60),                        -- many rows in one statement
+  ('Phone Stand',  'Electronics', 349);
+
+SELECT name, category, price, stock FROM products WHERE id > 12;
+```
+
+```output
+name         | category    | price | stock
+-------------+-------------+-------+------
+Sticky Notes | Stationery  | 60.0  | 0
+Phone Stand  | Electronics | 349.0 | 0
+```
+
+```sql
+CREATE TABLE mumbai_customers (id INTEGER PRIMARY KEY, name TEXT, email TEXT);
+
+INSERT INTO mumbai_customers (id, name, email)               -- copy rows from a query
+SELECT id, name, email FROM customers WHERE city = 'Mumbai';
+
+SELECT * FROM mumbai_customers;
+```
+
+```output
+id | name         | email
+---+--------------+------------------
+4  | Sneha Kapoor | sneha@example.com
+9  | Varun Saxena | varun@example.com
+```
+
+<Playground kind="sql">
+
+```sql
+INSERT INTO departments (name, location)
+VALUES ('Design', 'Pune');
+
+SELECT * FROM departments;
+
+-- Try it: run it a second time. The UNIQUE rule on name rejects the duplicate.
+-- Press "Reset database" to get the original data back.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Leaving out the column list">
+
+<Wrong>
+
+```sql
+INSERT INTO customers
+VALUES ('Meenal Jain', 'Indore');   -- Error: table customers has 5 columns but 2 values were supplied
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+INSERT INTO customers (name, city, joined_on)
+VALUES ('Meenal Jain', 'Indore', '2024-07-01');
+```
+
+</Right>
+
+Without a column list you must give every column in table order. It also breaks when someone adds a column later. Always name the columns.
+
+</Mistake>
+
+<Mistake title="Breaking a constraint">
+
+<Wrong>
+
+```sql
+INSERT INTO orders (customer_id, order_date, status)
+VALUES (99, '2024-07-01', 'placed');   -- Error: FOREIGN KEY constraint failed
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+INSERT INTO orders (customer_id, order_date, status)
+VALUES (10, '2024-07-01', 'placed');
+```
+
+</Right>
+
+There is no customer with id 99. A foreign key value must exist in the parent table.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you insert multiple rows in one query?">
+
+List several value groups after `VALUES`, separated by commas: `INSERT INTO t (a, b) VALUES (1, 'x'), (2, 'y'), (3, 'z');`. It is faster than separate statements because it is one round trip and one transaction.
+
+</QA>
+
+<QA q="How do you copy data from one table into another?">
+
+`INSERT INTO target (col1, col2) SELECT col1, col2 FROM source WHERE ...;`. To create a new table from a query, use `CREATE TABLE new_table AS SELECT ...`.
+
+</QA>
+
+<QA q="What is an upsert?">
+
+Insert a row, or update it if it already exists. MySQL: `INSERT ... ON DUPLICATE KEY UPDATE`. PostgreSQL and SQLite: `INSERT ... ON CONFLICT (column) DO UPDATE SET ...`.
+
+```sql
+INSERT INTO departments (name, location) VALUES ('Sales', 'Thane')
+ON CONFLICT (name) DO UPDATE SET location = excluded.location;
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What value does a column get if you leave it out of an INSERT?',
+      options: ['0', 'An empty string', 'Its default, or NULL', 'An error always'],
+      answer: 2,
+      why: 'The default is used if one is defined; otherwise NULL (which fails if the column is NOT NULL).',
+    },
+    {
+      q: 'Which statement copies rows from another table?',
+      options: ['INSERT INTO t COPY s', 'INSERT INTO t SELECT ... FROM s', 'UPDATE t FROM s', 'SELECT INTO VALUES'],
+      answer: 1,
+      why: 'INSERT ... SELECT inserts the rows returned by the query.',
+    },
+    {
+      q: 'What happens if an INSERT breaks a UNIQUE constraint?',
+      options: ['The old row is replaced', 'The statement fails and nothing is added', 'The value becomes NULL', 'A warning only'],
+      answer: 1,
+      why: 'Constraints are enforced; the insert is rejected.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| One row | `INSERT INTO t (a, b) VALUES (1, 'x');` |
+| Many rows | `INSERT INTO t (a, b) VALUES (1, 'x'), (2, 'y');` |
+| From a query | `INSERT INTO t (a, b) SELECT a, b FROM s;` |
+| Upsert (MySQL) | `INSERT ... ON DUPLICATE KEY UPDATE b = VALUES(b)` |
+| Upsert (PostgreSQL, SQLite) | `INSERT ... ON CONFLICT (a) DO UPDATE SET b = excluded.b` |
+| Skip duplicates | `INSERT IGNORE` (MySQL), `ON CONFLICT DO NOTHING` |
+| Get the new id | `LAST_INSERT_ID()` (MySQL), `RETURNING id` (PostgreSQL) |
+
+</CheatSheet>

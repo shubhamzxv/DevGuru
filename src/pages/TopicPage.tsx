@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import TopicNav from '../components/content/TopicNav';
 import { TopicContext } from '../components/content/topicContext';
 import ComingSoon from '../components/layout/ComingSoon';
+import { BookmarkIcon } from '../components/layout/icons';
 import { useProgress } from '../hooks/useProgress';
 import { useTopic } from '../hooks/useTopic';
 import { mdxComponents } from '../registry/mdxComponents';
@@ -14,7 +15,7 @@ import {
   type TopicPosition,
 } from '../registry/topics';
 import { getTrack, type Track } from '../registry/tracks';
-import { setLastVisited, toggleComplete } from '../utils/storage';
+import { setLastVisited, toggleBookmark, toggleComplete } from '../utils/storage';
 import NotFound from './NotFound';
 
 function formatDate(isoDate: string): string {
@@ -103,6 +104,7 @@ function TopicView({ track, position, loader }: TopicViewProps) {
   }
 
   const { default: Content, frontmatter } = state.module;
+  const bookmarked = progress.bookmarks.includes(key);
 
   return (
     <article className="mx-auto max-w-3xl">
@@ -118,10 +120,24 @@ function TopicView({ track, position, loader }: TopicViewProps) {
       <header className="mt-2">
         <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">{frontmatter.title}</h1>
         <p className="mt-2 text-lg text-slate-700 dark:text-slate-300">{frontmatter.summary}</p>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Last updated:{' '}
-          <time dateTime={frontmatter.updated}>{formatDate(frontmatter.updated)}</time>
-        </p>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Last updated:{' '}
+            <time dateTime={frontmatter.updated}>{formatDate(frontmatter.updated)}</time>
+          </p>
+          <button
+            type="button"
+            onClick={() => toggleBookmark(key)}
+            aria-pressed={bookmarked}
+            className="tap gap-2 rounded-lg border border-slate-300 px-3 text-sm font-medium hover:bg-slate-100 print:hidden dark:border-slate-600 dark:hover:bg-slate-800"
+          >
+            <BookmarkIcon
+              filled={bookmarked}
+              className={bookmarked ? 'text-brand-600 dark:text-brand-400' : undefined}
+            />
+            {bookmarked ? 'Bookmarked' : 'Bookmark'}
+          </button>
+        </div>
       </header>
 
       {/* Template blocks 2 to 10 come from the MDX file */}

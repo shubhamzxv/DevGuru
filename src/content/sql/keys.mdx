@@ -1,0 +1,221 @@
+---
+id: sql-keys
+title: Primary and foreign keys
+summary: A primary key uniquely identifies each row of a table, and a foreign key is a column that points to the primary key of another table.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Every student in a college has a **roll number**. No two students share one, and no student is without one. That is a **primary key**.
+
+The library card has a box: "Roll number of the student". It must be a real roll number from the college list. That box is a **foreign key**: it points to a student.
+
+</Analogy>
+
+## Simple explanation
+
+A **primary key** (PK) is the column (or columns) that **uniquely identifies each row**.
+
+- It must be **unique**: no two rows share it
+- It can **never be NULL**
+- A table has **only one** primary key
+- It should never change
+
+Most tables use a plain `id` number that the database generates. This is a **surrogate key**: it has no business meaning. A **natural key** is real-world data used as the key, such as an email or a PAN number. Surrogate keys are safer, because real-world data can change.
+
+A **foreign key** (FK) is a column whose value must match a primary key in another table (the **parent**). In `orders`, the column `customer_id` is a foreign key to `customers.id`.
+
+The foreign key gives **referential integrity**:
+
+- You cannot insert an order for a customer that does not exist
+- You cannot delete a customer who still has orders
+
+What happens to child rows when the parent is deleted is set with `ON DELETE`: `RESTRICT` (block, the default), `CASCADE` (delete the children too), or `SET NULL`.
+
+Other key terms asked in interviews:
+
+- **Composite key**: a primary key made of two or more columns, such as `(order_id, product_id)`
+- **Candidate key**: any column set that could be the primary key
+- **Unique key**: a `UNIQUE` column; unlike a PK, it can be NULL and a table can have many
+
+## Code example
+
+```sql
+CREATE TABLE authors (
+  id    INTEGER PRIMARY KEY,                 -- primary key
+  name  TEXT NOT NULL
+);
+
+CREATE TABLE books (
+  id         INTEGER PRIMARY KEY,
+  title      TEXT NOT NULL,
+  author_id  INTEGER NOT NULL,
+  FOREIGN KEY (author_id) REFERENCES authors (id) ON DELETE CASCADE   -- foreign key
+);
+
+INSERT INTO authors (id, name) VALUES (1, 'R. K. Narayan'), (2, 'Ruskin Bond');
+INSERT INTO books (title, author_id) VALUES ('Malgudi Days', 1), ('The Guide', 1), ('The Blue Umbrella', 2);
+
+DELETE FROM authors WHERE id = 1;            -- CASCADE removes his two books as well
+
+SELECT b.title, a.name FROM books AS b JOIN authors AS a ON a.id = b.author_id;
+```
+
+```output
+title             | name
+------------------+------------
+The Blue Umbrella | Ruskin Bond
+```
+
+```sql
+CREATE TABLE enrollments (
+  student_id   INTEGER NOT NULL,
+  course_id    INTEGER NOT NULL,
+  enrolled_on  TEXT NOT NULL,
+  PRIMARY KEY (student_id, course_id)        -- composite key: the PAIR is unique
+);
+
+INSERT INTO enrollments VALUES (1, 101, '2024-06-01'), (1, 102, '2024-06-01'), (2, 101, '2024-06-03');
+
+SELECT student_id, COUNT(*) AS courses FROM enrollments GROUP BY student_id;
+```
+
+```output
+student_id | courses
+-----------+--------
+1          | 2
+2          | 1
+```
+
+<Playground kind="sql">
+
+```sql
+-- orders.customer_id is a foreign key to customers.id
+SELECT o.id AS order_id, o.customer_id, c.name
+FROM orders AS o
+JOIN customers AS c ON c.id = o.customer_id
+LIMIT 5;
+
+-- Try it: this breaks the foreign key, because customer 99 does not exist
+-- INSERT INTO orders (customer_id, order_date, status) VALUES (99, '2024-07-01', 'placed');
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Inserting a child row before its parent exists">
+
+<Wrong>
+
+```sql
+INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+VALUES (500, 1, 1, 599);   -- Error: FOREIGN KEY constraint failed
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+INSERT INTO orders (id, customer_id, order_date, status) VALUES (500, 1, '2024-07-01', 'placed');
+INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (500, 1, 1, 599);
+```
+
+</Right>
+
+Order 500 does not exist yet. Insert the parent row first, then the child.
+
+</Mistake>
+
+<Mistake title="Using real-world data as the primary key">
+
+<Wrong>
+
+```sql
+CREATE TABLE members_bad (
+  email TEXT PRIMARY KEY,     -- runs, but what if the person changes email?
+  name  TEXT
+);
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE TABLE members_good (
+  id    INTEGER PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  name  TEXT
+);
+```
+
+</Right>
+
+A primary key should never change, because other tables point to it. Use a generated `id` and put `UNIQUE` on the natural value.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a primary key and a foreign key?">
+
+A primary key uniquely identifies a row in its own table; it is unique and not null, and there is one per table. A foreign key is a column in a child table that references the primary key (or a unique key) of a parent table; it can repeat, can be NULL, and a table can have many. The primary key enforces entity integrity, the foreign key enforces referential integrity.
+
+</QA>
+
+<QA q="What is the difference between a primary key and a unique key?">
+
+Both prevent duplicates. A primary key does not allow NULL and there is only one per table. A unique key allows NULL and a table can have several.
+
+</QA>
+
+<QA q="What are candidate, composite and surrogate keys?">
+
+A **candidate key** is any minimal set of columns that uniquely identifies a row; one is chosen as the primary key and the others are alternate keys. A **composite key** is a key made of more than one column. A **surrogate key** is an artificial identifier, like an auto-increment id or UUID, with no business meaning.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'How many primary keys can a table have?',
+      options: ['One', 'Two', 'One per column', 'Unlimited'],
+      answer: 0,
+      why: 'Only one, though it may be made of several columns (a composite key).',
+    },
+    {
+      q: 'Can a foreign key column contain repeated values?',
+      options: ['No', 'Yes', 'Only NULL', 'Only in MySQL'],
+      answer: 1,
+      why: 'Many orders can point to the same customer.',
+    },
+    {
+      q: 'What does ON DELETE CASCADE do?',
+      options: ['Blocks the delete', 'Deletes the child rows when the parent is deleted', 'Sets the key to 0', 'Deletes the table'],
+      answer: 1,
+      why: 'The delete flows down to the rows that reference the parent.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Primary key | `id INT PRIMARY KEY` |
+| Auto id (MySQL) | `id INT AUTO_INCREMENT PRIMARY KEY` |
+| Auto id (PostgreSQL) | `id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY` |
+| Composite key | `PRIMARY KEY (order_id, product_id)` |
+| Foreign key | `FOREIGN KEY (customer_id) REFERENCES customers (id)` |
+| Delete children too | `... ON DELETE CASCADE` |
+| Keep children, clear link | `... ON DELETE SET NULL` |
+| Block the delete | `... ON DELETE RESTRICT` (default behaviour) |
+
+</CheatSheet>

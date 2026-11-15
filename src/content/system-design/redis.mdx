@@ -1,0 +1,273 @@
+---
+id: system-design-redis
+title: Redis cache
+summary: Redis is an in-memory key-value store, used most often as a cache in front of a database so frequent reads are answered in under a millisecond.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A shopkeeper keeps the 20 things people ask for most (milk, bread, Maggi) on the counter, right in front of him. Everything else is in the godown at the back.
+
+When you ask for milk, he hands it over at once. For something rare, he walks to the godown, brings it, and if many people start asking for it, he keeps a few on the counter too. The counter is **Redis**: small, very fast, close at hand. The godown is the **database**.
+
+</Analogy>
+
+## Simple explanation
+
+**Redis** is a database that keeps all its data **in memory (RAM)**, so reads and writes take well under a millisecond. Data is stored as **key → value**: `user:42 → {"name": "Asha"}`.
+
+Besides plain strings, Redis has useful data types:
+
+| Type | Example use |
+| --- | --- |
+| String | cached JSON, counters (`INCR`) |
+| Hash | an object's fields: `HSET user:42 name Asha` |
+| List | a simple queue (`LPUSH` / `RPOP`) |
+| Set | unique visitors today |
+| Sorted set | leaderboards, top 10 by score |
+
+Common uses: **caching**, **sessions**, **rate limiting**, **leaderboards**, **distributed locks**, simple **queues** and **pub/sub**.
+
+**Cache-aside** (lazy loading) is the most common caching pattern:
+
+1. The app looks for the key in Redis
+2. **Hit**: return it. Done, no database work
+3. **Miss**: read from the database, store the result in Redis **with an expiry (TTL)**, return it
+
+**TTL** (time to live) makes a key delete itself after some seconds, so stale data does not live forever. When the data changes, the app should also **delete or update** the cached key (**invalidation**).
+
+Things to know:
+
+- RAM is limited. When full, Redis **evicts** keys using a policy such as `allkeys-lru` (remove the least recently used)
+- Redis can save to disk (RDB snapshots, AOF log), but as a cache you should treat it as **losable**: the database is the source of truth
+- **Cache stampede**: a popular key expires and thousands of requests hit the database at once. Fixes: add random jitter to TTLs, let one request rebuild the value (a lock), or refresh before expiry
+- Do not cache everything: cache data that is **read often and changes rarely**
+
+On AWS, the managed version is **Amazon ElastiCache** (Redis or Valkey).
+
+## Code example
+
+Cache-aside with `redis-py`:
+
+```python
+import json
+import redis
+
+r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+
+def get_product(product_id: int) -> dict:
+    key = f"product:{product_id}"
+    cached = r.get(key)                                  # 1. look in Redis
+    if cached:
+        print("cache HIT")
+        return json.loads(cached)
+    print("cache MISS -> database")
+    product = db.fetch_product(product_id)               # 2. slow path
+    r.set(key, json.dumps(product), ex=300)              # 3. keep for 5 minutes
+    return product
+
+def update_price(product_id: int, price: float) -> None:
+    db.update_price(product_id, price)
+    r.delete(f"product:{product_id}")                    # invalidate: next read reloads
+
+get_product(7)
+get_product(7)
+update_price(7, 499)
+get_product(7)
+```
+
+```output
+cache MISS -> database
+cache HIT
+cache MISS -> database
+```
+
+A rate limiter: at most 100 requests per user per minute:
+
+```python
+def allow(user_id: int) -> bool:
+    key = f"rate:{user_id}"
+    count = r.incr(key)              # atomic +1, creates the key at 1
+    if count == 1:
+        r.expire(key, 60)            # the window lasts 60 seconds
+    return count <= 100
+```
+
+The same commands in `redis-cli`:
+
+```text
+SET product:7 '{"name":"Yoga Mat","price":899}' EX 300
+GET product:7
+TTL product:7          -> (integer) 297
+INCR page:views        -> (integer) 1
+ZADD leaderboard 980 asha 870 ravi
+ZREVRANGE leaderboard 0 1 WITHSCORES
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "client", "label": "User", "icon": "👤", "col": 0, "row": 1, "info": "Opens a product page.", "example": "GET /products/7" },
+    { "id": "api", "label": "API server", "icon": "⚙️", "col": 1, "row": 1, "info": "Runs the cache-aside logic: Redis first, database only on a miss.", "example": "A FastAPI or Django app." },
+    { "id": "redis", "label": "Redis", "icon": "⚡", "col": 2, "row": 0, "info": "In-memory key-value store. Answers in well under 1 ms. Keys expire after their TTL.", "example": "Amazon ElastiCache for Redis." },
+    { "id": "db", "label": "Database", "icon": "🗄️", "col": 2, "row": 2, "info": "The source of truth. Slower (often 5 to 50 ms per query) and more expensive to scale.", "example": "PostgreSQL on Amazon RDS." }
+  ],
+  "edges": [
+    ["client", "api", "HTTPS"],
+    ["api", "redis", "GET / SET"],
+    ["api", "db", "SQL (on miss)"]
+  ],
+  "flows": [
+    {
+      "name": "Cache miss (first visit)",
+      "steps": [
+        ["client", "Requests product 7."],
+        ["api", "Asks Redis for product:7."],
+        ["redis", "Not found: a cache MISS."],
+        ["api", "Falls back to the database."],
+        ["db", "Runs the query (about 20 ms)."],
+        ["api", "Stores the result in Redis with SET ... EX 300, then replies."],
+        ["redis", "product:7 is cached for 5 minutes."],
+        ["client", "Gets the page."]
+      ]
+    },
+    {
+      "name": "Cache hit (next visits)",
+      "steps": [
+        ["client", "Another user requests product 7."],
+        ["api", "Asks Redis for product:7."],
+        ["redis", "Found: a cache HIT in about 0.3 ms."],
+        ["client", "Gets the page. The database did no work at all."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Caching without an expiry">
+
+<Wrong>
+
+```python
+r.set(f"product:{product_id}", json.dumps(product))   # stays forever, even after the price changes
+```
+
+</Wrong>
+
+<Right>
+
+```python
+r.set(f"product:{product_id}", json.dumps(product), ex=300)
+```
+
+</Right>
+
+Without a TTL, a missed invalidation leaves wrong data in the cache forever, and memory fills up.
+
+</Mistake>
+
+<Mistake title="Updating the database but not the cache">
+
+<Wrong>
+
+```python
+def update_price(product_id, price):
+    db.update_price(product_id, price)    # users keep seeing the old price until the TTL ends
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def update_price(product_id, price):
+    db.update_price(product_id, price)
+    r.delete(f"product:{product_id}")     # next read loads the new price
+```
+
+</Right>
+
+Write to the database first, then delete the cached key. Deleting is safer than setting the new value, because two updates racing cannot leave an older value in the cache.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Redis and why is it fast?">
+
+Redis is an in-memory data store holding keys and values in RAM, with rich types (strings, hashes, lists, sets, sorted sets, streams). It is fast because memory access avoids disk reads, its data structures are simple and efficient, and commands run on a single thread (with I/O threads in newer versions) without lock contention, typically giving sub-millisecond latency.
+
+</QA>
+
+<QA q="Explain the cache-aside pattern.">
+
+The application checks the cache first. On a hit it returns the cached value. On a miss it reads from the database, stores the result in the cache with a TTL, and returns it. On writes it updates the database and invalidates (deletes) the cache key. The cache only holds data that was actually requested.
+
+</QA>
+
+<QA q="What is cache invalidation and why is it hard?">
+
+Removing or updating cached data when the source changes. It is hard because the cache and database are separate systems: a write can fail halfway, two writers can race, and many keys can depend on one row. Common answers are short TTLs as a safety net, deleting keys after writing to the database, and event-based invalidation.
+
+</QA>
+
+<QA q="What happens when Redis runs out of memory?">
+
+It follows the maxmemory-policy. With noeviction, writes fail with an error. With an eviction policy such as allkeys-lru or volatile-ttl, Redis removes keys to make room. For a cache, allkeys-lru is a common choice.
+
+</QA>
+
+<QA q="What is a cache stampede and how do you prevent it?">
+
+When a popular key expires, many requests miss at the same moment and all hit the database. Prevent it with a lock so only one request rebuilds the value, by adding random jitter to TTLs so keys do not expire together, or by refreshing hot keys before they expire.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where does Redis keep its data while running?',
+      options: ['On disk only', 'In memory (RAM)', 'In the browser', 'In the database'],
+      answer: 1,
+      why: 'RAM access is why reads take well under a millisecond.',
+    },
+    {
+      q: 'In cache-aside, what happens on a cache miss?',
+      options: ['Return an error', 'Read the database, store the result in the cache, return it', 'Wait for the cache', 'Delete the database row'],
+      answer: 1,
+      why: 'The app loads the data and fills the cache for next time.',
+    },
+    {
+      q: 'Which Redis type suits a "top 10 players" leaderboard?',
+      options: ['List', 'Set', 'Sorted set', 'String'],
+      answer: 2,
+      why: 'A sorted set keeps members ordered by score, so ZREVRANGE gives the top N fast.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Cache a value 5 minutes | `SET key value EX 300` |
+| Read | `GET key` |
+| Time left | `TTL key` |
+| Delete (invalidate) | `DEL key` |
+| Counter / rate limit | `INCR key` + `EXPIRE key 60` |
+| Object fields | `HSET user:42 name Asha` / `HGETALL user:42` |
+| Leaderboard | `ZADD board 980 asha` / `ZREVRANGE board 0 9 WITHSCORES` |
+| Pattern | cache-aside: Redis first, DB on miss, set with TTL, delete on write |
+
+</CheatSheet>

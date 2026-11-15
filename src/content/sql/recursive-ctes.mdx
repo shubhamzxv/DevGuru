@@ -1,0 +1,250 @@
+---
+id: sql-recursive-ctes
+title: Recursive CTEs
+summary: A recursive CTE is a CTE that refers to itself, so it can walk through a hierarchy or build a series step by step.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of finding everyone under a CEO. First you list the people who report to the CEO. Then the people who report to **those** people. Then the next level, and so on, until nobody is left.
+
+You repeat the same step on the result of the previous step. A **recursive CTE** does exactly this.
+
+</Analogy>
+
+## Simple explanation
+
+A **recursive CTE** has two parts joined by `UNION ALL`:
+
+1. The **anchor**: a normal query that gives the starting rows. It runs once
+2. The **recursive part**: a query that reads from the CTE itself and produces the next rows
+
+The database runs the recursive part again and again. Each round uses only the rows made in the previous round. It **stops when a round produces no new rows**.
+
+You write it with `WITH RECURSIVE` (SQL Server uses plain `WITH`).
+
+Two common uses:
+
+- **Hierarchies**: employee and manager trees, category trees, folder paths
+- **Series**: numbers 1 to 10, or every date in a month
+
+Always make sure the recursion can end. A `WHERE` condition such as `n < 10`, or a tree that has a bottom, stops it. Without a stop, it loops until the database gives an error.
+
+Recursive CTEs work in PostgreSQL, SQLite, SQL Server, Oracle, and MySQL from 8.0.
+
+## Code example
+
+```sql
+WITH RECURSIVE numbers(n) AS (
+  SELECT 1                                  -- anchor: start at 1
+  UNION ALL
+  SELECT n + 1 FROM numbers WHERE n < 5     -- recursive part: stops at 5
+)
+SELECT n FROM numbers;
+```
+
+```output
+n
+-
+1
+2
+3
+4
+5
+```
+
+```sql
+WITH RECURSIVE team AS (
+  SELECT id, name, manager_id, 1 AS level    -- anchor: the head of Engineering
+  FROM employees
+  WHERE id = 1
+  UNION ALL
+  SELECT e.id, e.name, e.manager_id, t.level + 1
+  FROM employees AS e
+  JOIN team AS t ON e.manager_id = t.id      -- people who report to the previous level
+)
+SELECT level, name
+FROM team
+ORDER BY level, name;
+```
+
+```output
+level | name
+------+--------------
+1     | Anita Rao
+2     | Asha Kulkarni
+2     | Nikhil Das
+2     | Rohit Verma
+3     | Arjun Mehta
+3     | Kabir Singh
+3     | Neha Gupta
+3     | Sana Khan
+```
+
+```sql
+WITH RECURSIVE chain AS (
+  SELECT id, name, manager_id, name AS path  -- start from one employee
+  FROM employees
+  WHERE name = 'Kabir Singh'
+  UNION ALL
+  SELECT m.id, m.name, m.manager_id, c.path || ' -> ' || m.name
+  FROM employees AS m
+  JOIN chain AS c ON m.id = c.manager_id     -- go UP to the manager
+)
+SELECT path FROM chain ORDER BY LENGTH(path) DESC LIMIT 1;
+```
+
+```output
+path
+---------------------------------------
+Kabir Singh -> Rohit Verma -> Anita Rao
+```
+
+<Playground kind="sql">
+
+```sql
+-- Every day of one week, built without a table
+WITH RECURSIVE days(d) AS (
+  SELECT DATE('2024-06-01')
+  UNION ALL
+  SELECT DATE(d, '+1 day') FROM days WHERE d < '2024-06-07'
+)
+SELECT d AS day, COUNT(o.id) AS orders
+FROM days
+LEFT JOIN orders AS o ON o.order_date = days.d
+GROUP BY d;
+
+-- Try it: change the anchor in the team example to id = 2 to see the Sales tree.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="No stop condition">
+
+<Wrong>
+
+```mysql
+WITH RECURSIVE numbers(n) AS (
+  SELECT 1
+  UNION ALL
+  SELECT n + 1 FROM numbers          -- never stops
+)
+SELECT n FROM numbers;
+-- MySQL: Recursive query aborted after 1001 iterations
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+WITH RECURSIVE numbers(n) AS (
+  SELECT 1
+  UNION ALL
+  SELECT n + 1 FROM numbers WHERE n < 10
+)
+SELECT COUNT(*) FROM numbers;
+```
+
+</Right>
+
+The recursive part must reach a point where it returns no rows.
+
+</Mistake>
+
+<Mistake title="Joining in the wrong direction">
+
+<Wrong>
+
+```sql
+WITH RECURSIVE team AS (
+  SELECT id, name, manager_id FROM employees WHERE id = 4
+  UNION ALL
+  SELECT e.id, e.name, e.manager_id FROM employees AS e
+  JOIN team AS t ON e.id = t.manager_id      -- this walks UP to the bosses
+)
+SELECT name FROM team;
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+WITH RECURSIVE team AS (
+  SELECT id, name, manager_id FROM employees WHERE id = 4
+  UNION ALL
+  SELECT e.id, e.name, e.manager_id FROM employees AS e
+  JOIN team AS t ON e.manager_id = t.id      -- this walks DOWN to the reports
+)
+SELECT name FROM team;
+```
+
+</Right>
+
+`e.manager_id = t.id` finds people below. `e.id = t.manager_id` finds people above. Pick the direction you need.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a recursive CTE and what are its parts?">
+
+A CTE that references itself. It has an **anchor member** that returns the starting rows, a **recursive member** that joins back to the CTE, and they are combined with `UNION ALL`. It ends when the recursive member returns no rows.
+
+</QA>
+
+<QA q="When would you use one?">
+
+For hierarchical or graph data stored with a parent reference: organisation charts, category trees, bill of materials, comment threads. Also for generating number or date series to fill gaps in reports.
+
+</QA>
+
+<QA q="How do you prevent an infinite loop?">
+
+Add a termination condition (a depth counter with `WHERE level < 20`), and guard against cycles in the data. Databases also have safety limits: MySQL `cte_max_recursion_depth` (default 1000) and SQL Server `MAXRECURSION` (default 100).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which part of a recursive CTE runs only once?',
+      options: ['The recursive part', 'The anchor', 'The final SELECT runs zero times', 'Both run once'],
+      answer: 1,
+      why: 'The anchor provides the starting rows and is evaluated a single time.',
+    },
+    {
+      q: 'When does the recursion stop?',
+      options: ['After 10 rounds', 'When the recursive part returns no new rows', 'When the table is empty', 'It never stops'],
+      answer: 1,
+      why: 'An empty round ends the loop.',
+    },
+    {
+      q: 'Which is a typical use of a recursive CTE?',
+      options: ['Sorting rows', 'Walking an employee-manager tree', 'Creating an index', 'Renaming a column'],
+      answer: 1,
+      why: 'Hierarchies of unknown depth are the classic case.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Shape | `WITH RECURSIVE t AS (anchor UNION ALL recursive) SELECT ...` |
+| Numbers 1 to N | `SELECT 1 UNION ALL SELECT n + 1 FROM t WHERE n < N` |
+| Walk down a tree | `JOIN t ON child.parent_id = t.id` |
+| Walk up a tree | `JOIN t ON parent.id = t.parent_id` |
+| Track depth | add `level + 1` in the recursive part |
+| Safety | `WHERE level < 20` |
+
+</CheatSheet>

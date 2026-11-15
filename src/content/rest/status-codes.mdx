@@ -1,0 +1,225 @@
+---
+id: rest-status-codes
+title: Status codes
+summary: Every HTTP response starts with a three-digit status code that says at a glance whether the request worked, and if not, whose fault it was.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+When you send a parcel through a courier, you get short status updates: "Delivered", "Address not found", "Refused by receiver", "Our van broke down". You know what happened without reading a long letter.
+
+An HTTP **status code** is that short update for every request. The first digit already tells you the story.
+
+</Analogy>
+
+## Simple explanation
+
+The first digit groups the codes into five families:
+
+| Family | Meaning | Whose problem? |
+| --- | --- | --- |
+| **1xx** | information, keep going | (rare in daily work) |
+| **2xx** | success | nobody's |
+| **3xx** | go somewhere else | look at the Location header |
+| **4xx** | client error: the request is wrong | the caller should fix the request |
+| **5xx** | server error: the server failed | the server team must fix it |
+
+The codes you must know:
+
+- **200 OK**: worked, here is the result
+- **201 Created**: a new resource was made (after POST); the `Location` header has its URL
+- **204 No Content**: worked, nothing to send back (often after DELETE)
+- **301 Moved Permanently** / **302 Found**: the resource is at another URL
+- **304 Not Modified**: your cached copy is still good, no body sent
+- **400 Bad Request**: the request cannot be read (broken JSON, wrong format)
+- **401 Unauthorized**: we do not know **who** you are: log in or send a valid token
+- **403 Forbidden**: we know who you are, but you are **not allowed**
+- **404 Not Found**: nothing at this URL
+- **405 Method Not Allowed**: the URL exists, but not for this method
+- **409 Conflict**: clashes with the current state (for example the email is already registered)
+- **422 Unprocessable Entity**: readable JSON, but invalid data (a missing or wrong field). FastAPI uses it for validation errors
+- **429 Too Many Requests**: slow down; the `Retry-After` header says how long
+- **500 Internal Server Error**: the server crashed
+- **502 Bad Gateway** / **503 Service Unavailable** / **504 Gateway Timeout**: a server or proxy in the middle could not get a good answer in time
+
+Returning the right code matters: clients, monitoring, caches and retries all depend on it. Never return **200 with an error message** inside the body.
+
+## Code example
+
+Choosing codes in a FastAPI endpoint:
+
+```python
+from fastapi import FastAPI, HTTPException, status
+
+app = FastAPI()
+BOOKS = {1: {"id": 1, "title": "Malgudi Days"}}
+
+@app.get("/books/{book_id}")
+def get_book(book_id: int):
+    if book_id not in BOOKS:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return BOOKS[book_id]                                  # 200 by default
+
+@app.post("/books", status_code=status.HTTP_201_CREATED)   # 201 for "created"
+def create_book(book: dict):
+    new_id = max(BOOKS) + 1
+    BOOKS[new_id] = {"id": new_id, **book}
+    return BOOKS[new_id]
+
+@app.delete("/books/{book_id}", status_code=204)           # 204: nothing to return
+def delete_book(book_id: int):
+    BOOKS.pop(book_id, None)
+```
+
+```output
+GET    /books/1   -> 200 {"id": 1, "title": "Malgudi Days"}
+GET    /books/99  -> 404 {"detail": "Book not found"}
+POST   /books     -> 201 {"id": 2, "title": "The Guide"}
+DELETE /books/2   -> 204 (empty body)
+```
+
+<Playground kind="http">
+
+```http
+GET /books/99
+Accept: application/json
+```
+
+</Playground>
+
+Try these in the playground and watch the code change:
+
+- `GET /books/1` gives 200; then send it again with the header `If-None-Match` set to the ETag you got, and you get 304
+- `POST /books` with the header `Content-Type: application/json` and the body `{"title": "Gitanjali"}` gives 422 (author missing). Add `"author": "Tagore"` and get 201
+- `GET /me` gives 401. `POST /login` with `{"username": "guru", "password": "secret"}`, then send the token as `Authorization: Bearer <token>` to `/me` (200) and `/admin` (403)
+- `GET /limited` four times gives 429 on the fourth call
+- `DELETE /books` gives 405, and `GET /bug` gives 500
+
+<Mistakes>
+
+<Mistake title="Returning 200 for an error">
+
+<Wrong>
+
+```python
+@app.get("/books/{book_id}")
+def get_book(book_id: int):
+    if book_id not in BOOKS:
+        return {"error": "not found"}     # status 200: clients and monitoring think it worked
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.get("/books/{book_id}")
+def get_book(book_id: int):
+    if book_id not in BOOKS:
+        raise HTTPException(status_code=404, detail="Book not found")
+```
+
+</Right>
+
+The status code is the first thing every client, cache and dashboard reads. It must tell the truth.
+
+</Mistake>
+
+<Mistake title="Mixing up 401 and 403">
+
+<Wrong>
+
+```text
+Logged-in user tries to open /admin  ->  401 Unauthorized
+```
+
+</Wrong>
+
+<Right>
+
+```text
+No token / bad token                 ->  401  (who are you?)
+Valid token, but not an admin        ->  403  (I know you, and no)
+```
+
+</Right>
+
+401 means "authenticate first". 403 means "authenticated, but not permitted". Logging in again will not fix a 403.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between 401 and 403?">
+
+401 Unauthorized means the request has no valid credentials: the server does not know who you are, so log in or send a valid token. 403 Forbidden means the server knows who you are, but you do not have permission for this resource; new credentials for the same user will not help.
+
+</QA>
+
+<QA q="What is the difference between 400 and 422?">
+
+400 Bad Request means the server could not understand the request at all, such as malformed JSON or a wrong format. 422 Unprocessable Entity means the request was understood but the data fails validation, such as a missing required field or a wrong type. FastAPI returns 422 for Pydantic validation errors.
+
+</QA>
+
+<QA q="Which status code would you return after creating a resource?">
+
+201 Created, with a `Location` header pointing to the new resource and usually the created object in the body. For an action accepted but processed later (a queued job), 202 Accepted.
+
+</QA>
+
+<QA q="What do 502, 503 and 504 mean?">
+
+502 Bad Gateway: a proxy or load balancer got an invalid response from the server behind it. 503 Service Unavailable: the server is overloaded or down for maintenance, often with Retry-After. 504 Gateway Timeout: the proxy waited too long for the server behind it.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A POST created a new user. Best status code?',
+      options: ['200', '201', '204', '302'],
+      answer: 1,
+      why: '201 Created, with a Location header for the new user.',
+    },
+    {
+      q: 'Which family means the client should change the request?',
+      options: ['2xx', '3xx', '4xx', '5xx'],
+      answer: 2,
+      why: '4xx = client error. 5xx = the server failed.',
+    },
+    {
+      q: 'The JSON is valid but the email field is missing. FastAPI returns:',
+      options: ['400', '404', '422', '500'],
+      answer: 2,
+      why: 'Readable but invalid data gives 422 Unprocessable Entity.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Code | Meaning | Typical case |
+| --- | --- | --- |
+| 200 | OK | GET worked |
+| 201 | Created | POST made a resource |
+| 204 | No Content | DELETE worked |
+| 301 / 302 | Moved | URL changed |
+| 304 | Not Modified | cached copy still good |
+| 400 | Bad Request | broken JSON |
+| 401 | Unauthorized | no or bad token |
+| 403 | Forbidden | logged in, not allowed |
+| 404 | Not Found | wrong id or URL |
+| 405 | Method Not Allowed | DELETE on a list URL |
+| 409 | Conflict | email already registered |
+| 422 | Unprocessable Entity | validation failed |
+| 429 | Too Many Requests | rate limit |
+| 500 | Internal Server Error | bug on the server |
+| 502 / 503 / 504 | Gateway / unavailable / timeout | problem behind the proxy |
+
+</CheatSheet>

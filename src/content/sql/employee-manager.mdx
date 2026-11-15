@@ -1,0 +1,262 @@
+---
+id: sql-employee-manager
+title: Employees earning more than their manager
+summary: Join the employees table to itself, once as the employee and once as the manager, and compare the two salaries.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Imagine one big staff list. Next to each person is the **staff number of their manager**. To compare a person with their manager, you need to look at the list **twice**: once to read the person, once to find the manager's line.
+
+In SQL, reading the same table twice is a **self join**.
+
+</Analogy>
+
+## Simple explanation
+
+Our `employees` table has a `manager_id` column. It points to the `id` of another row **in the same table**.
+
+To put each employee next to their manager, join the table to itself with **two aliases**:
+
+- `e` = the employee
+- `m` = the manager
+- join condition: `e.manager_id = m.id`
+
+Then the question is just a `WHERE`: `e.salary > m.salary`.
+
+Things the interviewer checks:
+
+- **Aliases**: without them, the database cannot tell the two copies apart
+- **INNER vs LEFT join**: an `INNER JOIN` drops people with no manager (the department heads). That is correct here, since they have no one to compare with. Use `LEFT JOIN` when the question is "list every employee **with** their manager's name"
+- **The direction of the join**: `e.manager_id = m.id` (find my manager). The reverse, `e.id = m.manager_id`, finds my reports
+
+Related questions solved the same way:
+
+- Employees who are managers (someone's `manager_id` points to them)
+- Employees with no manager
+- Each manager with their number of reports
+- Employees in a **different city** from their manager
+
+In our data, **Imran Ali** (86000) earns more than his manager **Ravi Kumar** (82000).
+
+## Code example
+
+```sql
+SELECT e.name   AS employee,  e.salary AS employee_salary,
+       m.name   AS manager,   m.salary AS manager_salary
+FROM employees AS e
+JOIN employees AS m ON e.manager_id = m.id     -- the same table, twice
+WHERE e.salary > m.salary;
+```
+
+```output
+employee  | employee_salary | manager    | manager_salary
+----------+-----------------+------------+---------------
+Imran Ali | 86000           | Ravi Kumar | 82000
+```
+
+Every employee with their manager's name; `LEFT JOIN` keeps the people who have none:
+
+```sql
+SELECT e.name AS employee, COALESCE(m.name, '(no manager)') AS manager
+FROM employees AS e
+LEFT JOIN employees AS m ON e.manager_id = m.id
+WHERE e.department_id IN (2, 4)
+ORDER BY manager, employee;
+```
+
+```output
+employee     | manager
+-------------+-------------
+Farah Sheikh | (no manager)
+Vikram Shah  | (no manager)
+Gaurav Bose  | Farah Sheikh
+Divya Menon  | Ravi Kumar
+Imran Ali    | Ravi Kumar
+Priya Iyer   | Vikram Shah
+Ravi Kumar   | Vikram Shah
+```
+
+Each manager with the number of people reporting to them:
+
+```sql
+SELECT m.name AS manager, COUNT(e.id) AS reports
+FROM employees AS m
+JOIN employees AS e ON e.manager_id = m.id     -- reversed: people whose manager is m
+GROUP BY m.id, m.name
+ORDER BY reports DESC, manager;
+```
+
+```output
+manager        | reports
+---------------+--------
+Anita Rao      | 3
+Asha Kulkarni  | 2
+Meera Nair     | 2
+Ravi Kumar     | 2
+Rohit Verma    | 2
+Vikram Shah    | 2
+Farah Sheikh   | 1
+Lakshmi Pillai | 1
+```
+
+Employees who work in a different city from their manager:
+
+```sql
+SELECT e.name, e.city, m.name AS manager, m.city AS manager_city
+FROM employees AS e
+JOIN employees AS m ON e.manager_id = m.id
+WHERE e.city <> m.city
+ORDER BY manager, e.name;
+```
+
+```output
+name          | city      | manager       | manager_city
+--------------+-----------+---------------+-------------
+Asha Kulkarni | Pune      | Anita Rao     | Bengaluru
+Sana Khan     | Hyderabad | Asha Kulkarni | Pune
+Gaurav Bose   | Kolkata   | Farah Sheikh  | Mumbai
+Tanvi Joshi   | Pune      | Meera Nair    | Delhi
+Divya Menon   | Kochi     | Ravi Kumar    | Mumbai
+Neha Gupta    | Delhi     | Rohit Verma   | Bengaluru
+Priya Iyer    | Chennai   | Vikram Shah   | Mumbai
+```
+
+<Playground kind="sql">
+
+```sql
+-- Employees and their manager, with the salary gap
+SELECT e.name AS employee, m.name AS manager,
+       m.salary - e.salary AS gap
+FROM employees AS e
+JOIN employees AS m ON e.manager_id = m.id
+ORDER BY gap
+LIMIT 5;
+
+-- Try it: show employees who earn more than the AVERAGE salary of everyone their manager manages.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Joining without aliases">
+
+<Wrong>
+
+```sql
+SELECT name FROM employees
+JOIN employees ON manager_id = id;   -- Error: ambiguous column name: name
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT e.name FROM employees AS e
+JOIN employees AS m ON e.manager_id = m.id
+LIMIT 3;
+```
+
+</Right>
+
+Both copies have the same column names. Each copy needs its own alias, and every column must be prefixed.
+
+</Mistake>
+
+<Mistake title="Joining in the wrong direction">
+
+<Wrong>
+
+```sql
+SELECT e.name, m.name AS manager
+FROM employees AS e
+JOIN employees AS m ON e.id = m.manager_id   -- m is actually e's REPORT, not manager
+WHERE e.name = 'Imran Ali';                  -- no rows: Imran manages nobody
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT e.name, m.name AS manager
+FROM employees AS e
+JOIN employees AS m ON e.manager_id = m.id
+WHERE e.name = 'Imran Ali';
+```
+
+</Right>
+
+Read the condition aloud: "**my** manager_id equals **their** id" means they are my manager.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Find employees who earn more than their managers.">
+
+```sql
+SELECT e.name
+FROM employees e
+JOIN employees m ON e.manager_id = m.id
+WHERE e.salary > m.salary;
+```
+
+A self join with two aliases; the inner join automatically skips employees without a manager.
+
+</QA>
+
+<QA q="What is a self join?">
+
+Joining a table to itself, using two aliases so it is treated as two separate tables. It is used for hierarchical data stored in one table (employee and manager), and for comparing rows within the same table (pairs, duplicates, consecutive records).
+
+</QA>
+
+<QA q="Find all employees in the reporting chain under a given manager, at any depth.">
+
+A self join gives only one level. For all levels, use a recursive CTE: start with the manager, then repeatedly join `employees e ON e.manager_id = previous.id` until no rows are added.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which join condition finds each employee\'s manager?',
+      options: ['e.id = m.manager_id', 'e.manager_id = m.id', 'e.id = m.id', 'e.manager_id = m.manager_id'],
+      answer: 1,
+      why: 'The employee\'s manager_id is the manager\'s id.',
+    },
+    {
+      q: 'Why does an INNER self join skip the department heads?',
+      options: ['They earn too much', 'Their manager_id is NULL, so there is no match', 'A bug', 'They are filtered by WHERE'],
+      answer: 1,
+      why: 'NULL never equals any id, so the row has no partner in an inner join.',
+    },
+    {
+      q: 'What do you need to join a table to itself?',
+      options: ['A view', 'Two different aliases', 'A foreign key', 'UNION'],
+      answer: 1,
+      why: 'Aliases let the database treat the two copies as separate tables.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Question | Join and filter |
+| --- | --- |
+| Earns more than manager | `JOIN employees m ON e.manager_id = m.id WHERE e.salary > m.salary` |
+| Everyone + manager name | `LEFT JOIN employees m ON e.manager_id = m.id` |
+| Employees with no manager | `WHERE e.manager_id IS NULL` |
+| Reports per manager | `JOIN employees e ON e.manager_id = m.id GROUP BY m.id` |
+| Who manages nobody | `NOT EXISTS (SELECT 1 FROM employees x WHERE x.manager_id = e.id)` |
+| All levels below someone | recursive CTE |
+
+</CheatSheet>

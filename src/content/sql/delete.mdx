@@ -1,0 +1,196 @@
+---
+id: sql-delete
+title: DELETE
+summary: DELETE removes rows from a table, and the table itself stays.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a library register. When a member leaves, the librarian strikes out **that member's line**. The register is still there, with all the other members.
+
+`DELETE` removes rows. It does not remove the table.
+
+</Analogy>
+
+## Simple explanation
+
+`DELETE` removes whole rows.
+
+`DELETE FROM table WHERE condition;`
+
+- `WHERE` chooses which rows go
+- **Without WHERE, every row is deleted.** The empty table remains
+- You cannot delete one column's value with `DELETE`. To clear a value, use `UPDATE ... SET column = NULL`
+
+`DELETE` is a normal data change, so:
+
+- It can be undone with `ROLLBACK` if you are inside a transaction
+- It fires `DELETE` triggers
+- It respects **foreign keys**. You cannot delete a customer who still has orders, unless the foreign key was created with `ON DELETE CASCADE` (delete the orders too) or `ON DELETE SET NULL`
+
+The same safe habit as `UPDATE`: run a `SELECT` with the same `WHERE` first.
+
+Many real systems do not delete at all. They do a **soft delete**: a column such as `deleted_at` or `is_active` marks the row as removed, so the data can be recovered and history is kept.
+
+## Code example
+
+```sql
+DELETE FROM customers
+WHERE name = 'Ritu Agarwal';              -- she has no orders, so this is allowed
+
+SELECT COUNT(*) AS customers_left FROM customers;
+```
+
+```output
+customers_left
+--------------
+9
+```
+
+```sql
+DELETE FROM order_items
+WHERE order_id IN (                        -- rows chosen by a subquery
+  SELECT id FROM orders WHERE status = 'cancelled'
+);
+
+DELETE FROM orders WHERE status = 'cancelled';   -- children first, then the parents
+
+SELECT status, COUNT(*) AS orders FROM orders GROUP BY status;
+```
+
+```output
+status    | orders
+----------+-------
+delivered | 9
+placed    | 3
+shipped   | 2
+```
+
+<Playground kind="sql">
+
+```sql
+-- Step 1: look first
+SELECT id, name FROM products WHERE id = 12;
+
+-- Step 2: delete it (nobody has ordered the Yoga Mat, so this is allowed)
+DELETE FROM products WHERE id = 12;
+
+SELECT COUNT(*) AS products_left FROM products;
+
+-- Try it: run  DELETE FROM products WHERE stock = 0;
+-- It fails, because that product is used in order_items (foreign key).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting WHERE">
+
+<Wrong>
+
+```sql
+DELETE FROM order_items;                   -- all 26 rows are gone
+SELECT COUNT(*) FROM order_items;
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+DELETE FROM order_items WHERE order_id = 15;
+SELECT COUNT(*) FROM order_items;
+```
+
+</Right>
+
+`DELETE FROM table;` empties the table. Always check the `WHERE` with a `SELECT` first.
+
+</Mistake>
+
+<Mistake title="Deleting a parent row that still has children">
+
+<Wrong>
+
+```sql
+DELETE FROM customers WHERE id = 1;        -- Error: FOREIGN KEY constraint failed
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE customer_id = 1);
+DELETE FROM orders WHERE customer_id = 1;
+DELETE FROM customers WHERE id = 1;
+```
+
+</Right>
+
+Orders point to this customer. Delete the child rows first, or define the foreign key with `ON DELETE CASCADE`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Can a DELETE be rolled back?">
+
+Yes, if it runs inside a transaction that has not been committed. `DELETE` is a DML statement and is logged row by row. After `COMMIT`, it can only be recovered from a backup.
+
+</QA>
+
+<QA q="What is the difference between a hard delete and a soft delete?">
+
+A hard delete physically removes the row with `DELETE`. A soft delete keeps the row and marks it, for example `UPDATE users SET deleted_at = NOW()`. Soft deletes allow recovery and auditing, but every query must filter out the marked rows, and unique constraints need care.
+
+</QA>
+
+<QA q="What does ON DELETE CASCADE do?">
+
+It is a foreign key option. When a parent row is deleted, the database automatically deletes the child rows that reference it. Other options are `SET NULL`, `RESTRICT` / `NO ACTION` (block the delete, the default) and `SET DEFAULT`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does  DELETE FROM orders;  do?',
+      options: ['Deletes the table', 'Deletes all rows but keeps the table', 'Deletes one row', 'Nothing'],
+      answer: 1,
+      why: 'DELETE removes rows. Removing the table itself is DROP TABLE.',
+    },
+    {
+      q: 'Why might deleting a customer fail?',
+      options: ['Customers cannot be deleted', 'Orders still reference that customer', 'DELETE needs LIMIT', 'The table is too small'],
+      answer: 1,
+      why: 'A foreign key blocks deleting a parent row that has child rows.',
+    },
+    {
+      q: 'What is a soft delete?',
+      options: ['DELETE with LIMIT 1', 'Marking a row as deleted without removing it', 'Deleting slowly', 'TRUNCATE'],
+      answer: 1,
+      why: 'A flag or timestamp column marks the row; the data stays in the table.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Delete some rows | `DELETE FROM t WHERE condition;` |
+| Delete all rows | `DELETE FROM t;` |
+| Delete using another table | `DELETE FROM t WHERE id IN (SELECT ...)` |
+| Check first | `SELECT * FROM t WHERE condition;` |
+| Undo | `BEGIN; DELETE ...; ROLLBACK;` |
+| Soft delete | `UPDATE t SET deleted_at = CURRENT_TIMESTAMP WHERE id = 5;` |
+| Auto-delete children | foreign key with `ON DELETE CASCADE` |
+
+</CheatSheet>

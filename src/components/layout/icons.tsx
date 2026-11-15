@@ -105,3 +105,11 @@ export function LogoMark(props: IconProps) {
     </svg>
   );
 }
+
+export function BookmarkIcon({ filled = false, ...props }: IconProps & { filled?: boolean }) {
+  return (
+    <Icon fill={filled ? 'currentColor' : 'none'} {...props}>
+      <path d="M6 3h12v18l-6-4-6 4z" />
+    </Icon>
+  );
+}

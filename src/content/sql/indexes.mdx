@@ -1,0 +1,221 @@
+---
+id: sql-indexes
+title: Indexes
+summary: An index is a sorted lookup structure on one or more columns that lets the database find rows without reading the whole table.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a 900-page textbook. To find "photosynthesis", you could read every page. Or you could open the **index at the back**, find "photosynthesis → page 412", and jump straight there.
+
+A database **index** is that back-of-the-book list. It costs some extra pages, but finding things becomes fast.
+
+</Analogy>
+
+## Simple explanation
+
+Without an index, a query like `WHERE email = 'x'` must check **every row**. This is a **full table scan**. Fine for 100 rows, slow for 10 million.
+
+An **index** keeps the values of chosen columns **in sorted order**, each with a pointer to its row. Most databases store it as a **B-tree**, a balanced tree that finds any value in a few steps, even among millions of rows.
+
+An index helps:
+
+- `WHERE` with `=`, `<`, `>`, `BETWEEN`, and `LIKE 'abc%'` (prefix only)
+- `JOIN ... ON` columns, especially foreign keys
+- `ORDER BY` and `GROUP BY`, because the values are already sorted
+- `MIN` and `MAX`
+
+An index has a **cost**:
+
+- It takes **disk space**
+- Every `INSERT`, `UPDATE` and `DELETE` must also update the index, so **writes get slower**
+
+So do not index every column. Index the columns your **frequent queries filter, join and sort on**.
+
+Kinds of index:
+
+- **Primary key index**: created automatically
+- **Unique index**: also blocks duplicates (`UNIQUE` creates one)
+- **Composite index**: on several columns, such as `(customer_id, order_date)`
+- **Covering index**: contains every column the query needs, so the table itself is not read
+
+A composite index follows the **leftmost prefix rule**. An index on `(a, b, c)` helps queries on `a`, on `a, b`, and on `a, b, c`. It does **not** help a query on `b` alone, just like a phone book sorted by surname then first name cannot find "everyone named Rahul".
+
+An index is **not used** when you wrap the column in a function, such as `WHERE UPPER(email) = 'X'` or `WHERE YEAR(order_date) = 2024`, or when `LIKE` starts with `%`.
+
+## Code example
+
+`EXPLAIN QUERY PLAN` is SQLite's way of showing how it will run a query. Only the **detail** column matters; the other numbers are internal. **SCAN** means it reads every entry. **SEARCH ... USING INDEX** means it jumps straight to the matching rows.
+
+```sql
+EXPLAIN QUERY PLAN
+SELECT * FROM customers WHERE city = 'Mumbai';     -- no index on city yet
+```
+
+```output
+id | parent | notused | detail
+---+--------+---------+---------------
+2  | 0      | 216     | SCAN customers
+```
+
+```sql
+CREATE INDEX idx_customers_city ON customers (city);
+
+EXPLAIN QUERY PLAN
+SELECT * FROM customers WHERE city = 'Mumbai';     -- now it uses the index
+```
+
+```output
+id | parent | notused | detail
+---+--------+---------+---------------------------------------------------------
+3  | 0      | 62      | SEARCH customers USING INDEX idx_customers_city (city=?)
+```
+
+```sql
+CREATE INDEX idx_orders_customer_date ON orders (customer_id, order_date);
+
+EXPLAIN QUERY PLAN
+SELECT id FROM orders WHERE order_date = '2024-03-21';   -- only the 2nd column: leftmost rule
+```
+
+```output
+id | parent | notused | detail
+---+--------+---------+----------------------------------------------------------
+2  | 0      | 213     | SCAN orders USING COVERING INDEX idx_orders_customer_date
+```
+
+It still says **SCAN**: SQLite reads every entry of the index, because the index is sorted by `customer_id` first, so dates are scattered through it. It cannot jump to one date.
+
+<Playground kind="sql">
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_products_category ON products (category);
+
+EXPLAIN QUERY PLAN
+SELECT name, price FROM products WHERE category = 'Home';
+
+-- Try it: change the WHERE to  LOWER(category) = 'home'  and see the plan go back to SCAN.
+-- See all indexes:  SELECT name, tbl_name FROM sqlite_master WHERE type = 'index';
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Wrapping the indexed column in a function">
+
+<Wrong>
+
+```sql
+CREATE INDEX idx_orders_date ON orders (order_date);
+EXPLAIN QUERY PLAN
+SELECT id FROM orders WHERE STRFTIME('%Y', order_date) = '2024';   -- SCAN: every entry is read
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE INDEX idx_orders_date ON orders (order_date);
+EXPLAIN QUERY PLAN
+SELECT id FROM orders WHERE order_date >= '2024-01-01' AND order_date < '2025-01-01';
+```
+
+</Right>
+
+The index stores `order_date`, not the year of it. Rewrite the condition as a range on the raw column. This is called making the query **sargable**.
+
+</Mistake>
+
+<Mistake title="Indexing every column">
+
+<Wrong>
+
+```sql
+CREATE INDEX i1 ON order_items (quantity);
+CREATE INDEX i2 ON order_items (unit_price);
+-- runs, but no query filters on these, and every insert now updates extra indexes
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE INDEX idx_order_items_order ON order_items (order_id);   -- used by every order lookup and join
+```
+
+</Right>
+
+Each index slows down writes and uses space. Add indexes for real, frequent queries; foreign keys are the usual first choice.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is an index and how does it improve performance?">
+
+A separate data structure, usually a B-tree, that keeps column values sorted with pointers to the rows. It lets the database find matching rows in logarithmic time instead of scanning the whole table, and can also satisfy `ORDER BY`, `GROUP BY`, joins and `MIN`/`MAX` without sorting.
+
+</QA>
+
+<QA q="What are the disadvantages of indexes?">
+
+They use storage, and they slow down `INSERT`, `UPDATE` and `DELETE`, because every index on the table must be updated. Too many indexes also give the optimizer more choices to get wrong. Unused indexes should be dropped.
+
+</QA>
+
+<QA q="What is the leftmost prefix rule?">
+
+A composite index on `(a, b, c)` can be used for conditions on `a`, on `a` and `b`, or on all three, but not for `b` or `c` alone, because the index is sorted by `a` first. Put the column used most often, and in equality conditions, first.
+
+</QA>
+
+<QA q="When will the database not use an index?">
+
+When the column is wrapped in a function or expression, when `LIKE` starts with a wildcard, when there is an implicit type conversion, when the condition matches a large part of the table (a scan is cheaper), or when the query does not use the leftmost column of a composite index.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is the main cost of adding an index?',
+      options: ['Slower SELECT', 'Slower writes and extra storage', 'Data loss', 'No cost'],
+      answer: 1,
+      why: 'Every insert, update and delete must also maintain the index.',
+    },
+    {
+      q: 'An index on (customer_id, order_date). Which WHERE can use it?',
+      options: ['order_date = X', 'customer_id = 5', 'status = X', 'None'],
+      answer: 1,
+      why: 'The leftmost column, customer_id, must be in the condition.',
+    },
+    {
+      q: 'Which condition can use an index on name?',
+      options: ["name LIKE '%kumar'", "name LIKE 'Ravi%'", "UPPER(name) = 'RAVI'", 'None of these'],
+      answer: 1,
+      why: 'A prefix match keeps the sorted order usable; a leading % or a function does not.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Create an index | `CREATE INDEX idx_t_col ON t (col);` |
+| Unique index | `CREATE UNIQUE INDEX uq_t_email ON t (email);` |
+| Composite index | `CREATE INDEX idx_o ON orders (customer_id, order_date);` |
+| Remove | `DROP INDEX idx_t_col;` (MySQL: `DROP INDEX idx ON t;`) |
+| Check the plan | `EXPLAIN` (MySQL, PostgreSQL), `EXPLAIN QUERY PLAN` (SQLite) |
+| Good candidates | WHERE, JOIN, ORDER BY columns; foreign keys |
+| Index killers | functions on the column, leading `%`, type mismatch |
+
+</CheatSheet>

@@ -1,0 +1,242 @@
+---
+id: system-design-monolith-vs-microservices
+title: Monolith vs microservices
+summary: A monolith is one application that does everything, while microservices split the system into small services that each own one job and their own data.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a small dhaba where one cook takes orders, cooks every dish, makes the chai and handles the bill. It is simple and fast to start. That is a **monolith**.
+
+Now think of a big restaurant. There is a billing counter, a tandoor section, a chai counter and a delivery team. Each team works on its own and can grow on its own: on a busy Sunday you add more people only at the tandoor. That is **microservices**. It handles more work, but the teams must coordinate.
+
+</Analogy>
+
+## Simple explanation
+
+A **monolith** is one codebase, built and deployed as **one unit**, usually with one database. Users, orders, payments and notifications all live in the same application.
+
+**Microservices** split the system by business capability. Each service:
+
+- does **one job** (orders, payments, notifications)
+- owns **its own database**; other services never read it directly
+- is **deployed on its own**, without redeploying the others
+- talks to other services over the network (REST, gRPC or a message queue)
+
+| Point | Monolith | Microservices |
+| --- | --- | --- |
+| Start a new project | Fast and simple | Slow: many moving parts |
+| Deploy | Everything at once | Each service on its own |
+| Scale | Copy the whole app | Scale only the busy service |
+| A bug crashes... | Possibly the whole app | Usually one service |
+| Calls between parts | Function call (fast) | Network call (slower, can fail) |
+| Data | One database, easy joins and transactions | Separate databases, no cross-service joins |
+| Teams | Hard for many teams in one codebase | Each team owns services |
+| Debugging | One log, one stack trace | Needs tracing across services |
+
+So which is better? **Neither always.** A sensible path is to start with a **modular monolith** (one app, clearly separated modules) and split a part into a service only when there is a real reason: it needs to scale separately, deploys much more often, or is owned by a separate team.
+
+Microservices bring new problems you must solve: network failures and timeouts, keeping data consistent without one transaction, service discovery, monitoring, and more infrastructure (containers, CI/CD per service, an API gateway).
+
+## Code example
+
+In a monolith, placing an order is one function calling another, inside one database transaction:
+
+```python
+def place_order(user_id, items):
+    with db.transaction():                       # all or nothing
+        order = orders.create(user_id, items)
+        payments.charge(user_id, order.total)    # plain function call
+        stock.reserve(items)
+    notifications.send_email(user_id, order.id)
+    return order
+```
+
+With microservices, the same step becomes network calls between services that own separate data:
+
+```python
+import httpx
+
+def place_order(user_id, items):                 # runs inside the Order service
+    order = orders_db.create(user_id, items, status="PENDING")
+    resp = httpx.post("http://payment-service/charges",
+                      json={"user_id": user_id, "amount": order.total},
+                      timeout=3)                 # the network can be slow or fail
+    if resp.status_code != 201:
+        orders_db.update(order.id, status="FAILED")
+        return order
+    orders_db.update(order.id, status="PAID")
+    queue.publish("order.paid", {"order_id": order.id})   # notification service listens
+    return order
+```
+
+```output
+order 1042: PENDING -> PAID, event "order.paid" published
+```
+
+The second version needs a timeout, a status for failures and an event, because there is no single transaction across services any more.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "user", "label": "Mobile app", "icon": "📱", "col": 0, "row": 1, "info": "The client. It talks only to the API gateway, never to services directly.", "example": "A food delivery app on your phone." },
+    { "id": "gateway", "label": "API gateway", "icon": "🚪", "col": 1, "row": 1, "info": "One entry point. It checks the login token, applies rate limits and routes /orders to the Order service.", "example": "AWS API Gateway, Kong or NGINX." },
+    { "id": "orders", "label": "Order service", "icon": "🧾", "col": 2, "row": 0, "info": "Owns everything about orders. Deployed and scaled on its own.", "example": "A Python FastAPI app in its own container." },
+    { "id": "payments", "label": "Payment service", "icon": "💳", "col": 2, "row": 2, "info": "Owns payments and talks to the payment provider. Other services never touch its database.", "example": "Calls Razorpay or Stripe." },
+    { "id": "ordersdb", "label": "Orders DB", "icon": "🗄️", "col": 3, "row": 0, "info": "Database private to the Order service (database per service).", "example": "PostgreSQL on Amazon RDS." },
+    { "id": "paymentsdb", "label": "Payments DB", "icon": "🗄️", "col": 3, "row": 2, "info": "Private to the Payment service.", "example": "A separate PostgreSQL database." },
+    { "id": "queue", "label": "Message queue", "icon": "📬", "col": 3, "row": 1, "info": "Services publish events here. Others react later, so the Order service does not wait for them.", "example": "RabbitMQ, Kafka or Amazon SQS." },
+    { "id": "notify", "label": "Notification service", "icon": "🔔", "col": 4, "row": 1, "info": "Listens for order.paid events and sends the SMS or email.", "example": "Sends an SMS through a provider." }
+  ],
+  "edges": [
+    ["user", "gateway", "HTTPS"],
+    ["gateway", "orders", "REST"],
+    ["orders", "payments", "REST"],
+    ["orders", "ordersdb"],
+    ["payments", "paymentsdb"],
+    ["orders", "queue", "event"],
+    ["queue", "notify"]
+  ],
+  "flows": [
+    {
+      "name": "Place an order",
+      "steps": [
+        ["user", "Taps Place order. The app sends POST /orders with the login token."],
+        ["gateway", "Checks the token and forwards the request to the Order service."],
+        ["orders", "Saves the order as PENDING in its own database."],
+        ["ordersdb", "Order 1042 stored with status PENDING."],
+        ["orders", "Calls the Payment service with a 3-second timeout."],
+        ["payments", "Charges the card and records the payment in its own database."],
+        ["orders", "Marks the order PAID and publishes an order.paid event."],
+        ["queue", "Keeps the event until a listener takes it."],
+        ["notify", "Picks up the event and sends 'Your order is confirmed'. The user already got a response."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Services sharing one database">
+
+<Wrong>
+
+```text
+Order service    ──┐
+Payment service  ──┼──>  one shared database  (everyone reads and writes every table)
+User service     ──┘
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Order service    -->  orders DB
+Payment service  -->  payments DB
+User service     -->  users DB      (others ask through the service's API or events)
+```
+
+</Right>
+
+A shared database ties every service together: one schema change can break all of them, so you get the problems of both styles. Each service should own its data.
+
+</Mistake>
+
+<Mistake title="Splitting too early">
+
+<Wrong>
+
+```text
+A new project with 2 developers starts with 12 microservices, 12 pipelines
+and a service mesh, before anyone knows which parts will grow.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Start with a modular monolith (clear modules: orders/, payments/, users/).
+Extract a service when there is a reason: separate scaling, deploys or team ownership.
+```
+
+</Right>
+
+Microservices cost a lot of infrastructure and coordination. They pay off when the system and the team are big enough.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a monolith and microservices?">
+
+A monolith is a single deployable application, usually with one database; parts call each other in memory. Microservices split the system into small, independently deployable services, each owning one business capability and its own data, communicating over the network. Microservices give independent scaling, deployment and team ownership, at the cost of network calls, distributed data and more operational complexity.
+
+</QA>
+
+<QA q="When would you choose a monolith over microservices?">
+
+For a new product, a small team, or a domain that is not yet well understood: a monolith is faster to build, test, deploy and debug. A modular monolith keeps the code organised so parts can be extracted later when there is a clear need.
+
+</QA>
+
+<QA q="How do you keep data consistent across microservices without one transaction?">
+
+Use the **saga** pattern: a sequence of local transactions, one per service, linked by events or commands; if a step fails, earlier steps are undone with compensating actions (for example, refund the payment). Combine it with idempotent handlers and the outbox pattern so events are not lost. The system becomes eventually consistent.
+
+</QA>
+
+<QA q="What problems do microservices bring?">
+
+Network latency and partial failures (you need timeouts, retries, circuit breakers), distributed data and eventual consistency, harder debugging (centralised logs and distributed tracing), versioning of APIs between services, and more infrastructure: containers, orchestration, per-service CI/CD and monitoring.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In microservices, who may read the Payment service database?',
+      options: ['Every service', 'Only the Payment service', 'Only the API gateway', 'The client app'],
+      answer: 1,
+      why: 'Database per service: others must ask through its API or listen to its events.',
+    },
+    {
+      q: 'Which is a real advantage of a monolith?',
+      options: ['Scaling one part alone', 'Simple transactions and debugging', 'Teams deploy independently', 'Failures are always isolated'],
+      answer: 1,
+      why: 'One process and one database make transactions, testing and debugging simple.',
+    },
+    {
+      q: 'Only the search feature gets heavy traffic. Which style lets you scale just search?',
+      options: ['Monolith', 'Microservices', 'Both equally', 'Neither'],
+      answer: 1,
+      why: 'A separate search service can run more copies without scaling the rest.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Question | Monolith | Microservices |
+| --- | --- | --- |
+| Deploy | one unit | each service alone |
+| Data | one database | one database per service |
+| Communication | function calls | REST, gRPC, queues |
+| Scaling | whole app | per service |
+| Best for | new product, small team | large system, many teams |
+| Must handle | code organisation | timeouts, retries, tracing, sagas |
+
+Rule of thumb: start with a modular monolith; split when you have a real reason.
+
+</CheatSheet>

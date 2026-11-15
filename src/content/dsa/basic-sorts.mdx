@@ -1,0 +1,221 @@
+---
+id: dsa-basic-sorts
+title: Bubble, selection and insertion sort
+summary: Three simple sorting algorithms that compare neighbours or pick the smallest item, each taking O(n²) time, and the reasons insertion sort is still used.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of arranging students in a line by height.
+
+- **Bubble sort**: walk along the line and swap any two neighbours in the wrong order. After one walk, the tallest has "bubbled" to the end. Repeat
+- **Selection sort**: find the shortest student, send them to the front. Then find the shortest of the rest, and so on
+- **Insertion sort**: like sorting playing cards in your hand. Take the next card and slide it left until it sits in the right place
+
+</Analogy>
+
+## Simple explanation
+
+All three sort **in place** (they need no extra list) and all are **O(n²)** in the worst case: for 1,000 items that is about a million comparisons. They are slow on big data, but they are easy to understand, and interviewers use them to test loops and reasoning.
+
+| Algorithm | Idea | Best case | Worst case | Stable? |
+| --- | --- | --- | --- | --- |
+| Bubble | swap wrong neighbours; biggest moves to the end each pass | O(n) with an early stop | O(n²) | yes |
+| Selection | pick the smallest of the rest, put it next | O(n²) | O(n²) | no |
+| Insertion | insert each item into the sorted left part | O(n) when almost sorted | O(n²) | yes |
+
+**Stable** means equal items keep their original order, which matters when you sort records by one field after another.
+
+When are they useful?
+
+- **Insertion sort** is fast for **small** lists and **almost sorted** lists. Python's built-in `sorted()` (Timsort) uses insertion sort for small pieces
+- **Selection sort** does the **fewest swaps** (at most n - 1), useful when writing is very expensive
+- **Bubble sort** is mainly for teaching
+
+In real code, just use `sorted(items)` or `items.sort()`: O(n log n) and stable. Merge sort and quick sort (next topics) explain how that speed is possible.
+
+<Visual caption="Play the sort step by step. Yellow = comparing, red = moved, green = in its final place. Switch algorithms to compare them on the same numbers.">
+
+<SortVisualizer algorithm="bubble" values={[7, 3, 9, 2, 8, 1, 6, 4]} />
+
+</Visual>
+
+## Code example
+
+```python
+def bubble_sort(a):
+    n = len(a)
+    for end in range(n - 1, 0, -1):          # after each pass, a[end] is final
+        swapped = False
+        for i in range(end):
+            if a[i] > a[i + 1]:
+                a[i], a[i + 1] = a[i + 1], a[i]
+                swapped = True
+        if not swapped:                       # no swaps: already sorted, stop early
+            break
+    return a
+
+def selection_sort(a):
+    for i in range(len(a) - 1):
+        smallest = min(range(i, len(a)), key=a.__getitem__)   # index of the smallest
+        a[i], a[smallest] = a[smallest], a[i]
+    return a
+
+def insertion_sort(a):
+    for i in range(1, len(a)):
+        current = a[i]
+        j = i - 1
+        while j >= 0 and a[j] > current:      # shift bigger items right
+            a[j + 1] = a[j]
+            j -= 1
+        a[j + 1] = current                    # drop it into the gap
+    return a
+
+print(bubble_sort([5, 2, 9, 1, 7]))
+print(selection_sort([5, 2, 9, 1, 7]))
+print(insertion_sort([5, 2, 9, 1, 7]))
+```
+
+```output
+[1, 2, 5, 7, 9]
+[1, 2, 5, 7, 9]
+[1, 2, 5, 7, 9]
+```
+
+<Playground kind="python">
+
+```python
+def insertion_sort(a):
+    comparisons = 0
+    for i in range(1, len(a)):
+        current = a[i]
+        j = i - 1
+        while j >= 0:
+            comparisons += 1
+            if a[j] <= current:
+                break
+            a[j + 1] = a[j]
+            j -= 1
+        a[j + 1] = current
+    return a, comparisons
+
+print(insertion_sort([5, 4, 3, 2, 1]))      # reversed: the worst case
+print(insertion_sort([1, 2, 3, 5, 4]))      # almost sorted: very few comparisons
+
+# Try it: press "Step through" to watch the variables change line by line.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Inner loop going one step too far">
+
+<Wrong>
+
+```python
+for i in range(len(a)):
+    if a[i] > a[i + 1]:          # IndexError on the last i
+        a[i], a[i + 1] = a[i + 1], a[i]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+for i in range(len(a) - 1):      # compare pairs: the last pair is (n-2, n-1)
+    if a[i] > a[i + 1]:
+        a[i], a[i + 1] = a[i + 1], a[i]
+```
+
+</Right>
+
+When you look at `a[i + 1]`, the loop must stop one item early.
+
+</Mistake>
+
+<Mistake title="Writing your own sort in production code">
+
+<Wrong>
+
+```python
+orders = bubble_sort(orders)                  # O(n²): slow for 100,000 orders
+```
+
+</Wrong>
+
+<Right>
+
+```python
+orders.sort(key=lambda o: o["created_at"])    # O(n log n), stable, tested
+```
+
+</Right>
+
+Write these by hand to learn and for interviews. In real code use the built-in sort.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the time complexity of bubble, selection and insertion sort?">
+
+All are O(n²) in the worst and average case and use O(1) extra space. Bubble sort with an early-exit check and insertion sort are O(n) on an already sorted list; selection sort is always O(n²) because it scans the rest of the list every time.
+
+</QA>
+
+<QA q="Why is insertion sort good for nearly sorted data?">
+
+Each item moves left only past the items bigger than it. If the list is almost sorted, each item moves only a little, so the total work is close to O(n). That is why hybrid algorithms such as Timsort use insertion sort on small or nearly sorted runs.
+
+</QA>
+
+<QA q="What does stable sorting mean, and which of these are stable?">
+
+A stable sort keeps equal elements in their original relative order. Bubble and insertion sort are stable; the usual selection sort is not, because the long-distance swap can jump an item past an equal one. Stability matters when sorting records by several keys in turn.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which sort makes the fewest swaps?',
+      options: ['Bubble', 'Selection', 'Insertion', 'They are equal'],
+      answer: 1,
+      why: 'Selection sort swaps at most once per position: n - 1 swaps.',
+    },
+    {
+      q: 'Best case of insertion sort on an already sorted list?',
+      options: ['O(1)', 'O(n)', 'O(n log n)', 'O(n²)'],
+      answer: 1,
+      why: 'Each item is compared once with its left neighbour and stays.',
+    },
+    {
+      q: 'After the first pass of bubble sort, which item is surely in place?',
+      options: ['The smallest, at the start', 'The largest, at the end', 'The middle one', 'None'],
+      answer: 1,
+      why: 'The largest value bubbles all the way to the end in each pass.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| | Bubble | Selection | Insertion |
+| --- | --- | --- | --- |
+| Idea | swap wrong neighbours | pick the smallest of the rest | insert into the sorted left part |
+| Worst | O(n²) | O(n²) | O(n²) |
+| Best | O(n) | O(n²) | O(n) |
+| Extra space | O(1) | O(1) | O(1) |
+| Stable | yes | no | yes |
+| Use for | teaching | few writes | small or nearly sorted data |
+
+In real code: `sorted(items)` or `items.sort()` (Timsort, O(n log n), stable).
+
+</CheatSheet>

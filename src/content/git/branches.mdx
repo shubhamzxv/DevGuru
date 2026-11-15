@@ -1,0 +1,200 @@
+---
+id: git-branches
+title: Branches
+summary: A branch is a movable label pointing at a commit, so you can work on a feature separately and join it back later.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a bookmark in a notebook. You can put a second bookmark on the same page, then keep writing new pages from there for a different story. The original story stays safe at its own bookmark.
+
+A Git **branch** is a bookmark on a commit. Each new commit moves the bookmark of the branch you are on forward. Creating a branch is instant, because Git only creates a tiny label.
+
+</Analogy>
+
+## Simple explanation
+
+Every repository starts with one branch, usually called **main**. A branch is just a **name that points at a commit**. Nothing is copied.
+
+**HEAD** is a special pointer that says "you are here": normally it points at the current branch. When you commit, the branch HEAD points to moves forward to the new commit.
+
+Why use branches:
+
+- Work on a feature or a fix **without breaking main**
+- Several people work on **different things at the same time**
+- Throw away an experiment by deleting its branch
+
+The everyday commands:
+
+| Command | What it does |
+| --- | --- |
+| `git branch` | list branches (the `*` is where you are) |
+| `git branch feature` | create a branch here, but stay where you are |
+| `git switch feature` | move to the branch (files change to match it) |
+| `git switch -c feature` | create and move in one step |
+| `git branch -d feature` | delete a branch that is already merged |
+
+`git checkout feature` and `git checkout -b feature` do the same as `switch`; they are the older commands you will still see often.
+
+A typical flow: create a branch from main, commit on it, then **merge** it back into main (the next topic). Until you merge, main does not see the branch's commits.
+
+Before switching branches, **commit or stash** your changes. Git refuses to switch if your uncommitted edits would be overwritten.
+
+## Code example
+
+```bash
+git switch -c login-page          # new branch from the current commit
+echo "login form" > login.html
+git add login.html
+git commit -m "Add login page"    # only login-page moves forward
+git switch main                   # back to main: login.html disappears from the folder
+ls
+git branch
+```
+
+```output
+Switched to a new branch 'login-page'
+[login-page 4f1c2ab] Add login page
+ 1 file changed
+Switched to branch 'main'
+app.txt
+  login-page
+* main
+```
+
+The file is not lost: it lives in the `login-page` branch. Switch back and it returns.
+
+<Playground kind="git">
+
+```bash
+git init
+echo "home page" > index.html
+git add .
+git commit -m "First page"
+git switch -c about
+echo "about us" > about.html
+git add .
+git commit -m "Add about page"
+git switch main
+ls
+git switch about
+ls
+git log --oneline
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Creating a branch and forgetting to switch">
+
+<Wrong>
+
+```bash
+git branch feature
+git commit -am "feature work"      # this commit goes on main, not on feature
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git switch -c feature              # create AND move to it
+git commit -am "feature work"
+```
+
+</Right>
+
+`git branch name` only creates the label. Check the prompt or `git branch` to see where you are.
+
+</Mistake>
+
+<Mistake title="Switching with uncommitted changes">
+
+<Wrong>
+
+```bash
+echo "half done" > app.txt
+git switch other-branch
+# error: Your local changes to the following files would be overwritten by checkout
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git stash                          # or: git commit -am "WIP"
+git switch other-branch
+# later: git switch back && git stash pop
+```
+
+</Right>
+
+Git protects your unsaved work. Commit it or put it on the stash shelf first.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a branch in Git?">
+
+A lightweight movable pointer to a commit. Creating one only writes a small reference, so it is instant. When you commit on a branch, its pointer moves to the new commit. Branches let you develop features, fixes and experiments in isolation and merge them later.
+
+</QA>
+
+<QA q="What is HEAD?">
+
+HEAD is the pointer to what you have checked out, normally the current branch. When you commit, the branch HEAD points to moves forward. If HEAD points directly at a commit instead of a branch, you are in "detached HEAD" state; new commits there belong to no branch unless you create one.
+
+</QA>
+
+<QA q="What is the difference between git switch and git checkout?">
+
+`git switch` (Git 2.23+) only changes branches, which makes it clearer and safer. `git checkout` is older and does two jobs: switching branches and restoring files (`git checkout -- file`), which is now done by `git restore`. Both still work.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does creating a branch copy?',
+      options: ['All files', 'All commits', 'Nothing: it only creates a label', 'The .git folder'],
+      answer: 2,
+      why: 'A branch is just a name that points at a commit.',
+    },
+    {
+      q: 'Which command creates a branch and moves to it?',
+      options: ['git branch x', 'git switch -c x', 'git merge x', 'git commit -b x'],
+      answer: 1,
+      why: 'switch -c (or checkout -b) creates the branch and switches in one step.',
+    },
+    {
+      q: 'You commit while on branch feature. Which label moves?',
+      options: ['main', 'feature', 'both', 'neither'],
+      answer: 1,
+      why: 'Only the branch HEAD points to moves forward.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| List branches | `git branch` |
+| Create, stay here | `git branch name` |
+| Create and move | `git switch -c name` (old: `git checkout -b name`) |
+| Move to a branch | `git switch name` |
+| Rename current | `git branch -m new-name` |
+| Delete merged branch | `git branch -d name` |
+| Delete anyway | `git branch -D name` |
+| See all branches in a graph | `git log --oneline --graph --all` |
+
+</CheatSheet>

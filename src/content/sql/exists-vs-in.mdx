@@ -1,0 +1,225 @@
+---
+id: sql-exists-vs-in
+title: EXISTS vs IN
+summary: IN checks whether a value is in a list, while EXISTS checks whether a subquery returns at least one row.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+You want to know if a friend has **any** unpaid bill.
+
+With `IN`, you first write down the names of everyone who has an unpaid bill, and then look for your friend's name in that list.
+
+With `EXISTS`, you open your friend's file and stop at the **first** unpaid bill you see. You do not need the whole list.
+
+</Analogy>
+
+## Simple explanation
+
+Both are used in `WHERE` with a subquery, and both answer "is there a match?".
+
+`IN` compares a **value** with the **list** that the subquery returns:
+
+`WHERE id IN (SELECT customer_id FROM orders)`
+
+`EXISTS` only asks whether the subquery returns **any row at all**. It is almost always correlated, and what the subquery selects does not matter, so people write `SELECT 1`:
+
+`WHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)`
+
+The differences that matter:
+
+| Point | IN | EXISTS |
+| --- | --- | --- |
+| Compares | A value against a list | Nothing; tests for any row |
+| Subquery | Usually independent | Usually correlated |
+| Stops at first match | Depends on the database | Yes |
+| Several columns | Awkward | Easy: add conditions |
+| NULL in the list | Breaks `NOT IN` | No problem |
+
+The NULL trap is the big one. If the list for `NOT IN` contains even one `NULL`, the condition is never true and you get **no rows**. `NOT EXISTS` does not have this problem.
+
+So a safe habit: use `IN` for short fixed lists, `EXISTS` for "has related rows", and **`NOT EXISTS` in place of `NOT IN`** with subqueries.
+
+## Code example
+
+```sql
+SELECT name FROM customers
+WHERE id IN (SELECT customer_id FROM orders WHERE status = 'placed')   -- value in a list
+ORDER BY name;
+```
+
+```output
+name
+------------
+Isha Patel
+Rahul Reddy
+Sneha Kapoor
+```
+
+```sql
+SELECT c.name FROM customers AS c
+WHERE EXISTS (                              -- is there at least one such row?
+  SELECT 1 FROM orders AS o
+  WHERE o.customer_id = c.id AND o.status = 'placed'
+)
+ORDER BY c.name;
+```
+
+```output
+name
+------------
+Isha Patel
+Rahul Reddy
+Sneha Kapoor
+```
+
+```sql
+SELECT c.name AS never_ordered FROM customers AS c
+WHERE NOT EXISTS (SELECT 1 FROM orders AS o WHERE o.customer_id = c.id);
+```
+
+```output
+never_ordered
+-------------
+Ritu Agarwal
+```
+
+```sql
+SELECT
+  (SELECT COUNT(*) FROM employees WHERE id NOT IN (SELECT manager_id FROM employees)) AS with_not_in,
+  (SELECT COUNT(*) FROM employees AS e
+    WHERE NOT EXISTS (SELECT 1 FROM employees AS x WHERE x.manager_id = e.id))        AS with_not_exists;
+```
+
+```output
+with_not_in | with_not_exists
+------------+----------------
+0           | 13
+```
+
+The last query counts employees who manage nobody. `NOT IN` gives 0 because some `manager_id` values are NULL. `NOT EXISTS` gives the right answer.
+
+<Playground kind="sql">
+
+```sql
+-- Products that have been ordered at least once
+SELECT p.name
+FROM products AS p
+WHERE EXISTS (SELECT 1 FROM order_items AS oi WHERE oi.product_id = p.id)
+ORDER BY p.name;
+
+-- Try it: add NOT before EXISTS to find products that were never ordered.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="NOT IN with a subquery that can return NULL">
+
+<Wrong>
+
+```sql
+SELECT name FROM employees
+WHERE id NOT IN (SELECT manager_id FROM employees);   -- no rows at all
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT e.name FROM employees AS e
+WHERE NOT EXISTS (SELECT 1 FROM employees AS x WHERE x.manager_id = e.id)
+LIMIT 4;
+```
+
+</Right>
+
+`id NOT IN (1, 2, NULL)` is never true, because comparing with NULL is unknown. Use `NOT EXISTS`.
+
+</Mistake>
+
+<Mistake title="Forgetting to link EXISTS to the outer query">
+
+<Wrong>
+
+```sql
+SELECT COUNT(*) FROM customers AS c
+WHERE EXISTS (SELECT 1 FROM orders WHERE status = 'placed');   -- 10: true for every customer
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT COUNT(*) FROM customers AS c
+WHERE EXISTS (SELECT 1 FROM orders AS o WHERE o.customer_id = c.id AND o.status = 'placed');   -- 3
+```
+
+</Right>
+
+Without `o.customer_id = c.id`, the subquery returns the same rows for everyone, so every customer passes.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between EXISTS and IN?">
+
+`IN` checks whether a value matches any value in a list or subquery result. `EXISTS` returns true if the subquery returns at least one row, and can stop at the first match. `EXISTS` is usually written as a correlated subquery, handles multi-column conditions naturally, and is not affected by NULLs.
+
+</QA>
+
+<QA q="Which is faster, EXISTS or IN?">
+
+Modern optimizers often produce the same plan for both. As a rule of thumb, `EXISTS` does well when the subquery table is large and indexed on the join column, because it stops early; `IN` is fine for small lists. Measure with `EXPLAIN` when it matters.
+
+</QA>
+
+<QA q="Why is NOT IN dangerous?">
+
+If the subquery returns any NULL, `x NOT IN (...)` evaluates to unknown for every row, and the query returns nothing. `NOT EXISTS` and `LEFT JOIN ... IS NULL` do not have this issue.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does EXISTS check?',
+      options: ['That two values are equal', 'That the subquery returns at least one row', 'That a column is not NULL', 'That a table exists'],
+      answer: 1,
+      why: 'EXISTS is true as soon as the subquery produces any row.',
+    },
+    {
+      q: 'What does  5 NOT IN (1, 2, NULL)  evaluate to?',
+      options: ['True', 'False', 'Unknown, so the row is not returned', 'An error'],
+      answer: 2,
+      why: 'The comparison with NULL is unknown, so the whole NOT IN is unknown.',
+    },
+    {
+      q: 'Which is the safe way to find rows with no match in another table?',
+      options: ['NOT IN', 'NOT EXISTS', '= NULL', 'CROSS JOIN'],
+      answer: 1,
+      why: 'NOT EXISTS is not affected by NULL values in the subquery.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Use |
+| --- | --- |
+| Value in a short fixed list | `IN ('a', 'b')` |
+| Has at least one related row | `EXISTS (SELECT 1 FROM b WHERE b.a_id = a.id)` |
+| Has no related row | `NOT EXISTS (...)` |
+| Avoid | `NOT IN (subquery)` when NULLs are possible |
+| Same result, another way | `LEFT JOIN b ... WHERE b.id IS NULL` |
+
+</CheatSheet>

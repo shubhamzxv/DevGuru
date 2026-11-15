@@ -1,0 +1,229 @@
+---
+id: sql-explain
+title: Reading a query plan (EXPLAIN)
+summary: EXPLAIN shows the plan the database will use to run a query, such as which indexes it uses, in which order it joins tables and how many rows it expects to read.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Before a long drive, you open the map app and look at the **route**: which roads, which turns, how long it will take. You have not driven yet; you are only looking at the plan.
+
+`EXPLAIN` shows the database's route for your query, before it runs.
+
+</Analogy>
+
+## Simple explanation
+
+When you send a query, the **query optimizer** chooses a **plan**: which table to read first, whether to use an index, how to join. Put `EXPLAIN` in front of the query to see that plan. The query itself is **not run**.
+
+**In MySQL**, `EXPLAIN` returns one row per table. The important columns:
+
+| Column | What it tells you | Good | Bad |
+| --- | --- | --- | --- |
+| `type` | How rows are found | `const`, `eq_ref`, `ref`, `range` | `ALL` (full scan), `index` (full index scan) |
+| `possible_keys` | Indexes it could use | | `NULL` |
+| `key` | Index it chose | an index name | `NULL` |
+| `rows` | Estimated rows to read | small | close to the table size |
+| `filtered` | % of those rows kept | high | low |
+| `Extra` | Extra work | `Using index` | `Using filesort`, `Using temporary` |
+
+The `type` values from best to worst: `system` → `const` (one row by primary key) → `eq_ref` (one row per join, by unique key) → `ref` (several rows by an index) → `range` (an index range, such as `BETWEEN`) → `index` (the whole index) → `ALL` (the whole table).
+
+**In PostgreSQL**, `EXPLAIN` prints a **tree of nodes**. Read it from the **innermost, most indented** line outward. Each node shows `cost=start..total`, the estimated `rows`, and the node type: `Seq Scan` (full scan), `Index Scan`, `Index Only Scan`, `Bitmap Heap Scan`, `Nested Loop`, `Hash Join`, `Merge Join`, `Sort`.
+
+**In SQLite** (the playground), use `EXPLAIN QUERY PLAN`. Look for `SCAN` (full read) and `SEARCH ... USING INDEX` (direct lookup).
+
+What to look for, in any database:
+
+1. A **full scan** on a big table where you expected an index
+2. A big gap between estimated **rows** and the rows actually returned
+3. Extra **sorting** or **temporary tables** that an index could avoid
+
+## Code example
+
+```mysql
+EXPLAIN
+SELECT c.name, o.order_date
+FROM customers AS c
+JOIN orders AS o ON o.customer_id = c.id
+WHERE c.city = 'Mumbai';
+```
+
+```text
++----+-------+------+---------------+-----------------+------+-------------+
+| id | table | type | possible_keys | key             | rows | Extra       |
++----+-------+------+---------------+-----------------+------+-------------+
+|  1 | c     | ALL  | PRIMARY       | NULL            | 10   | Using where |   <- full scan of customers
+|  1 | o     | ref  | idx_customer  | idx_customer    | 2    | NULL        |   <- index lookup per customer
++----+-------+------+---------------+-----------------+------+-------------+
+```
+
+Reading it: customers is scanned fully (no index on `city`), then for each customer the orders are found through `idx_customer`. Fix: `CREATE INDEX idx_city ON customers (city);` turns the first row into `type: ref`.
+
+```postgresql
+EXPLAIN
+SELECT * FROM orders WHERE customer_id = 5;
+
+-- Index Scan using idx_orders_customer on orders  (cost=0.29..8.31 rows=2 width=40)
+--   Index Cond: (customer_id = 5)
+```
+
+In the playground (SQLite):
+
+```sql
+EXPLAIN QUERY PLAN
+SELECT c.name, o.order_date
+FROM customers AS c
+JOIN orders AS o ON o.customer_id = c.id
+WHERE c.city = 'Mumbai';
+```
+
+```output
+id | parent | notused | detail
+---+--------+---------+---------------------------------------------
+3  | 0      | 216     | SCAN o
+5  | 0      | 45      | SEARCH c USING INTEGER PRIMARY KEY (rowid=?)
+```
+
+SQLite scans `orders`, then finds each customer by its primary key. Now add the index the join needs:
+
+```sql
+CREATE INDEX idx_orders_customer ON orders (customer_id);
+CREATE INDEX idx_customers_city  ON customers (city);
+
+EXPLAIN QUERY PLAN
+SELECT c.name, o.order_date
+FROM customers AS c
+JOIN orders AS o ON o.customer_id = c.id
+WHERE c.city = 'Mumbai';
+```
+
+```output
+id | parent | notused | detail
+---+--------+---------+---------------------------------------------------------
+5  | 0      | 62      | SEARCH c USING INDEX idx_customers_city (city=?)
+10 | 0      | 61      | SEARCH o USING INDEX idx_orders_customer (customer_id=?)
+```
+
+Now both tables are reached with **SEARCH**: first the Mumbai customers through the city index, then their orders through the customer index.
+
+<Playground kind="sql">
+
+```sql
+EXPLAIN QUERY PLAN
+SELECT name FROM employees ORDER BY salary DESC LIMIT 3;
+
+-- "USE TEMP B-TREE FOR ORDER BY" means SQLite has to sort.
+-- Try it: run  CREATE INDEX idx_salary ON employees (salary);  first, then the EXPLAIN again.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Thinking EXPLAIN runs the query">
+
+<Wrong>
+
+```mysql
+EXPLAIN DELETE FROM orders WHERE status = 'cancelled';
+-- "I checked it with EXPLAIN, so the rows are deleted" -- no, nothing was deleted
+```
+
+</Wrong>
+
+<Right>
+
+```mysql
+EXPLAIN DELETE FROM orders WHERE status = 'cancelled';   -- look at the plan
+DELETE FROM orders WHERE status = 'cancelled';           -- then run it
+```
+
+</Right>
+
+Plain `EXPLAIN` only shows the plan. `EXPLAIN ANALYZE` does run the query, which matters for `DELETE` and `UPDATE`.
+
+</Mistake>
+
+<Mistake title="Trusting the plan on a tiny test table">
+
+<Wrong>
+
+```mysql
+-- On 10 rows, EXPLAIN shows type: ALL and you decide indexes are useless.
+```
+
+</Wrong>
+
+<Right>
+
+```mysql
+-- Test plans on production-sized data, and refresh statistics after big loads:
+ANALYZE TABLE orders;
+```
+
+</Right>
+
+For a few rows, a full scan really is cheapest, so the optimizer ignores indexes. Plans change with data size and statistics.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you find out why a query is slow?">
+
+Run `EXPLAIN` to see the plan: look for full table scans (`type: ALL` or `Seq Scan`), missing or unused indexes (`key: NULL`), large row estimates, and `Using filesort` or `Using temporary`. Then use `EXPLAIN ANALYZE` to compare estimates with real row counts and times. Check the slow query log to find which queries matter most.
+
+</QA>
+
+<QA q="What do type ALL, ref and const mean in MySQL EXPLAIN?">
+
+`ALL` is a full table scan. `ref` uses a non-unique index to find all rows matching a value. `const` finds at most one row by primary key or unique index, so it is read once and treated as a constant.
+
+</QA>
+
+<QA q="What do Using filesort and Using temporary mean?">
+
+`Using filesort` means MySQL must sort the rows itself because no index provides the `ORDER BY` order. `Using temporary` means it builds a temporary table, often for `GROUP BY`, `DISTINCT` or `UNION`. Both are costly on large results and can often be removed with a suitable index.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Does EXPLAIN (without ANALYZE) run the query?',
+      options: ['Yes', 'No, it only shows the plan', 'Only SELECTs', 'Only in PostgreSQL'],
+      answer: 1,
+      why: 'Plain EXPLAIN prints the chosen plan without executing it.',
+    },
+    {
+      q: 'In MySQL EXPLAIN, which type means a full table scan?',
+      options: ['const', 'ref', 'range', 'ALL'],
+      answer: 3,
+      why: 'ALL reads every row of the table.',
+    },
+    {
+      q: 'In PostgreSQL, which node means a full table scan?',
+      options: ['Index Scan', 'Seq Scan', 'Hash Join', 'Bitmap Index Scan'],
+      answer: 1,
+      why: 'Seq Scan reads the table sequentially from start to end.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Database | Command | Full scan looks like | Index use looks like |
+| --- | --- | --- | --- |
+| MySQL | `EXPLAIN SELECT ...` | `type: ALL` | `type: ref / range / const` |
+| PostgreSQL | `EXPLAIN SELECT ...` | `Seq Scan` | `Index Scan`, `Index Only Scan` |
+| SQLite | `EXPLAIN QUERY PLAN SELECT ...` | `SCAN t` | `SEARCH t USING INDEX` |
+| Warning signs | | `Using filesort`, `Using temporary` | `rows` far above the real count |
+| MySQL tree view | `EXPLAIN FORMAT=TREE SELECT ...` | | |
+
+</CheatSheet>

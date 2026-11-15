@@ -79,7 +79,7 @@ INSERT INTO employees (id, name, department_id, manager_id, salary, hire_date, c
   (9,  'Sana Khan',      1,    5,     72000, '2023-01-16', 'Hyderabad'),   -- same salary as Arjun
   (10, 'Ravi Kumar',     2,    2,     82000, '2019-11-05', 'Mumbai'),
   (11, 'Priya Iyer',     2,    2,     78000, '2020-02-19', 'Chennai'),
-  (12, 'Imran Ali',      2,    10,    56000, '2022-05-30', 'Mumbai'),
+  (12, 'Imran Ali',      2,    10,    86000, '2022-05-30', 'Mumbai'),      -- earns more than his manager, Ravi
   (13, 'Divya Menon',    2,    10,    54000, '2023-06-12', 'Kochi'),
   (14, 'Suresh Patil',   3,    3,     68000, '2020-10-01', 'Delhi'),
   (15, 'Tanvi Joshi',    3,    3,     61000, '2022-01-10', 'Pune'),

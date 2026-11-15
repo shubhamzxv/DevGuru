@@ -20,7 +20,7 @@ export default function BottomNav({ onTracksClick }: BottomNavProps) {
   return (
     <nav
       aria-label="Bottom navigation"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] lg:hidden dark:border-slate-800 dark:bg-slate-950"
+      className="fixed inset-x-0 bottom-0 z-40 print:hidden border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] lg:hidden dark:border-slate-800 dark:bg-slate-950"
     >
       <ul className="grid grid-cols-4">
         <li>

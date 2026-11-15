@@ -1,0 +1,228 @@
+---
+id: sql-create-alter-table
+title: CREATE and ALTER TABLE
+summary: CREATE TABLE defines a new table with its columns and rules, and ALTER TABLE changes a table that already exists.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of designing a paper form. First you decide the boxes: "Name", "Date of birth", "Phone". You also decide rules: name is required, phone must be digits. That is **CREATE TABLE**.
+
+Later you realise you need an "Email" box. You add it to the form. That is **ALTER TABLE**.
+
+</Analogy>
+
+## Simple explanation
+
+These are **DDL** commands (Data Definition Language). They change the **structure**, not the data.
+
+**CREATE TABLE** gives a table its name, its columns, a **data type** for each column, and **constraints** (rules).
+
+Common data types:
+
+| Kind | MySQL | PostgreSQL |
+| --- | --- | --- |
+| Whole number | `INT`, `BIGINT` | `INTEGER`, `BIGINT` |
+| Exact decimal (money) | `DECIMAL(10,2)` | `NUMERIC(10,2)` |
+| Short text | `VARCHAR(100)` | `VARCHAR(100)`, `TEXT` |
+| Long text | `TEXT` | `TEXT` |
+| Date and time | `DATE`, `DATETIME` | `DATE`, `TIMESTAMP` |
+| True or false | `BOOLEAN` (`TINYINT(1)`) | `BOOLEAN` |
+
+Use `DECIMAL` for money, never `FLOAT`, because floats cannot store values like 0.1 exactly.
+
+**ALTER TABLE** changes an existing table. You can:
+
+- `ADD COLUMN`: add a new column
+- `DROP COLUMN`: remove a column and its data
+- `RENAME COLUMN` / `RENAME TO`: rename a column or the table
+- Change a column's type: `MODIFY COLUMN` in MySQL, `ALTER COLUMN ... TYPE` in PostgreSQL
+- Add or drop constraints and indexes
+
+When you add a column to a table that has rows, the old rows get the column's `DEFAULT`, or `NULL`. So a new `NOT NULL` column needs a default.
+
+On very large tables, some `ALTER TABLE` operations rebuild or lock the table. Plan them carefully in production.
+
+## Code example
+
+```sql
+CREATE TABLE reviews (
+  id          INTEGER PRIMARY KEY,                       -- unique id for each row
+  product_id  INTEGER NOT NULL REFERENCES products (id),  -- must be a real product
+  rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment     TEXT,                                       -- optional
+  created_on  TEXT NOT NULL DEFAULT CURRENT_DATE          -- filled in automatically
+);
+
+INSERT INTO reviews (product_id, rating, comment) VALUES (2, 5, 'Great keyboard');
+
+SELECT id, product_id, rating, comment FROM reviews;
+```
+
+```output
+id | product_id | rating | comment
+---+------------+--------+---------------
+1  | 2          | 5      | Great keyboard
+```
+
+```sql
+ALTER TABLE customers ADD COLUMN phone TEXT;                         -- old rows get NULL
+ALTER TABLE customers ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;   -- old rows get 1
+ALTER TABLE customers RENAME COLUMN joined_on TO joined_date;
+
+SELECT name, phone, is_active, joined_date FROM customers LIMIT 3;
+```
+
+```output
+name         | phone | is_active | joined_date
+-------------+-------+-----------+------------
+Aarav Sharma | NULL  | 1         | 2023-01-15
+Isha Patel   | NULL  | 1         | 2023-02-20
+Rahul Reddy  | NULL  | 1         | 2023-03-05
+```
+
+The same table in MySQL looks slightly different:
+
+```mysql
+CREATE TABLE reviews (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  product_id  INT NOT NULL,
+  rating      TINYINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment     VARCHAR(500),
+  created_on  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (product_id) REFERENCES products (id)
+);
+
+ALTER TABLE reviews MODIFY COLUMN comment TEXT;      -- change a column's type
+```
+
+<Playground kind="sql">
+
+```sql
+CREATE TABLE IF NOT EXISTS wishlist (
+  id          INTEGER PRIMARY KEY,
+  customer_id INTEGER NOT NULL REFERENCES customers (id),
+  product_id  INTEGER NOT NULL REFERENCES products (id),
+  added_on    TEXT DEFAULT CURRENT_DATE,
+  UNIQUE (customer_id, product_id)
+);
+
+INSERT INTO wishlist (customer_id, product_id) VALUES (1, 9);
+SELECT * FROM wishlist;
+
+-- Try it: add a column with  ALTER TABLE wishlist ADD COLUMN note TEXT;
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Adding a NOT NULL column without a default">
+
+<Wrong>
+
+```sql
+ALTER TABLE customers ADD COLUMN country TEXT NOT NULL;
+-- Error: Cannot add a NOT NULL column with default value NULL
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+ALTER TABLE customers ADD COLUMN country TEXT NOT NULL DEFAULT 'India';
+```
+
+</Right>
+
+The existing rows need some value for the new column. Give a `DEFAULT`, or add the column as nullable, fill it, then make it `NOT NULL`.
+
+</Mistake>
+
+<Mistake title="Creating a table that already exists">
+
+<Wrong>
+
+```sql
+CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT);
+-- Error: table customers already exists
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, name TEXT);
+```
+
+</Right>
+
+`IF NOT EXISTS` makes the statement safe to run again. The same idea: `DROP TABLE IF EXISTS`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are DDL, DML, DCL and TCL?">
+
+**DDL** (Data Definition Language) defines structure: `CREATE`, `ALTER`, `DROP`, `TRUNCATE`. **DML** (Data Manipulation Language) works with data: `SELECT`, `INSERT`, `UPDATE`, `DELETE`. **DCL** (Data Control Language) manages permissions: `GRANT`, `REVOKE`. **TCL** (Transaction Control Language) manages transactions: `COMMIT`, `ROLLBACK`, `SAVEPOINT`.
+
+</QA>
+
+<QA q="What is the difference between CHAR and VARCHAR?">
+
+`CHAR(n)` is fixed length: shorter values are padded with spaces to n characters. `VARCHAR(n)` is variable length: it stores only the characters used, up to n. Use `CHAR` for values that always have the same length (country codes), `VARCHAR` for everything else.
+
+</QA>
+
+<QA q="How do you change a table in production without downtime?">
+
+Make changes backward compatible and in small steps: add a nullable column, deploy code that writes to both, backfill in batches, then add the constraint and drop the old column. Use online schema change features or tools (MySQL online DDL, `gh-ost`, `pt-online-schema-change`; PostgreSQL `CREATE INDEX CONCURRENTLY`).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command adds a column to an existing table?',
+      options: ['UPDATE TABLE', 'ALTER TABLE ... ADD COLUMN', 'INSERT COLUMN', 'CREATE COLUMN'],
+      answer: 1,
+      why: 'ALTER TABLE changes the structure of an existing table.',
+    },
+    {
+      q: 'Which type should you use for money?',
+      options: ['FLOAT', 'DECIMAL', 'TEXT', 'BOOLEAN'],
+      answer: 1,
+      why: 'DECIMAL stores exact values; FLOAT can introduce rounding errors.',
+    },
+    {
+      q: 'CREATE TABLE belongs to which group of commands?',
+      options: ['DML', 'DDL', 'DCL', 'TCL'],
+      answer: 1,
+      why: 'It defines structure, so it is Data Definition Language.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Create a table | `CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(50) NOT NULL);` |
+| Only if missing | `CREATE TABLE IF NOT EXISTS t (...)` |
+| From a query | `CREATE TABLE t2 AS SELECT ... FROM t;` |
+| Add a column | `ALTER TABLE t ADD COLUMN c TEXT;` |
+| Drop a column | `ALTER TABLE t DROP COLUMN c;` |
+| Rename a column | `ALTER TABLE t RENAME COLUMN a TO b;` |
+| Rename a table | `ALTER TABLE t RENAME TO t_new;` |
+| Change a type | `MODIFY COLUMN c TEXT` (MySQL), `ALTER COLUMN c TYPE TEXT` (PostgreSQL) |
+| Remove a table | `DROP TABLE IF EXISTS t;` |
+
+</CheatSheet>

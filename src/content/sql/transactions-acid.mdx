@@ -1,0 +1,269 @@
+---
+id: sql-transactions-acid
+title: Transactions and ACID
+summary: A transaction groups several statements into one all-or-nothing unit, and ACID names the four guarantees a transaction gives.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+You send ₹500 to a friend by UPI. Two things must happen: ₹500 leaves your account, and ₹500 arrives in theirs.
+
+If the money left your account but the server crashed before it reached your friend, the ₹500 would vanish. A **transaction** makes sure both steps happen, or **neither** does.
+
+</Analogy>
+
+## Simple explanation
+
+A **transaction** is a group of statements that the database treats as **one unit of work**.
+
+- `BEGIN` (or `START TRANSACTION` in MySQL) starts it
+- `COMMIT` saves all the changes permanently
+- `ROLLBACK` cancels all the changes since `BEGIN`
+- `SAVEPOINT name` marks a point you can roll back to without cancelling everything
+
+Outside an explicit transaction, most databases run in **autocommit** mode: each statement is its own small transaction and is saved immediately.
+
+**ACID** is the four promises a transaction makes:
+
+| Letter | Name | Meaning | UPI example |
+| --- | --- | --- | --- |
+| **A** | Atomicity | All or nothing | Debit and credit both happen, or neither |
+| **C** | Consistency | Rules are always respected | Balance never goes below zero (a CHECK) |
+| **I** | Isolation | Transactions running at once do not see each other's half-done work | Two payments from the same account do not both read the old balance |
+| **D** | Durability | Once committed, it survives a crash | After "Payment successful", a power cut cannot undo it |
+
+How databases deliver them, in short:
+
+- **Atomicity**: an undo log, so half-done changes can be reversed
+- **Durability**: a write-ahead log (redo log in MySQL, WAL in PostgreSQL) written to disk before `COMMIT` returns
+- **Isolation**: locks and **MVCC** (multi-version concurrency control: readers see a snapshot while writers create new versions). The next topic covers isolation levels
+- **Consistency**: constraints, foreign keys and triggers, plus the other three
+
+Keep transactions **short**. A long transaction holds locks and blocks other users.
+
+## Code example
+
+```sql
+CREATE TABLE wallets (
+  name     TEXT PRIMARY KEY,
+  balance  INTEGER NOT NULL CHECK (balance >= 0)
+);
+INSERT INTO wallets VALUES ('Shubham', 1000), ('Ravi', 200);
+
+BEGIN;
+UPDATE wallets SET balance = balance - 500 WHERE name = 'Shubham';   -- debit
+UPDATE wallets SET balance = balance + 500 WHERE name = 'Ravi';      -- credit
+COMMIT;                                                              -- both are saved together
+
+SELECT * FROM wallets;
+```
+
+```output
+name    | balance
+--------+--------
+Shubham | 500
+Ravi    | 700
+```
+
+```sql
+CREATE TABLE wallets (name TEXT PRIMARY KEY, balance INTEGER NOT NULL CHECK (balance >= 0));
+INSERT INTO wallets VALUES ('Shubham', 1000), ('Ravi', 200);
+
+BEGIN;
+UPDATE wallets SET balance = balance - 300 WHERE name = 'Shubham';
+UPDATE wallets SET balance = balance + 300 WHERE name = 'Ravi';
+ROLLBACK;                                                            -- changed my mind: undo both
+
+SELECT * FROM wallets;
+```
+
+```output
+name    | balance
+--------+--------
+Shubham | 1000
+Ravi    | 200
+```
+
+```sql
+CREATE TABLE wallets (name TEXT PRIMARY KEY, balance INTEGER NOT NULL CHECK (balance >= 0));
+INSERT INTO wallets VALUES ('Shubham', 1000), ('Ravi', 200);
+
+BEGIN;
+UPDATE wallets SET balance = balance + 50 WHERE name = 'Ravi';
+SAVEPOINT before_bonus;
+UPDATE wallets SET balance = balance + 9999 WHERE name = 'Ravi';     -- a mistake
+ROLLBACK TO before_bonus;                                            -- undo only the mistake
+COMMIT;
+
+SELECT * FROM wallets;
+```
+
+```output
+name    | balance
+--------+--------
+Shubham | 1000
+Ravi    | 250
+```
+
+In application code, the pattern is: begin, do the work, commit, and roll back if anything fails. In Python:
+
+```python
+conn.execute("BEGIN")
+try:
+    conn.execute("UPDATE wallets SET balance = balance - ? WHERE name = ?", (500, "Shubham"))
+    conn.execute("UPDATE wallets SET balance = balance + ? WHERE name = ?", (500, "Ravi"))
+    conn.execute("COMMIT")
+except Exception:
+    conn.execute("ROLLBACK")   # the CHECK failed, or anything else: undo everything
+    raise
+```
+
+<Playground kind="sql">
+
+```sql
+CREATE TABLE IF NOT EXISTS wallets (name TEXT PRIMARY KEY, balance INTEGER NOT NULL CHECK (balance >= 0));
+INSERT OR REPLACE INTO wallets VALUES ('Shubham', 1000), ('Ravi', 200);
+
+BEGIN;
+UPDATE wallets SET balance = balance + 500 WHERE name = 'Ravi';
+ROLLBACK;
+
+SELECT * FROM wallets;
+
+-- Try it: change ROLLBACK to COMMIT and run again.
+-- Then try to send 5000: the CHECK fails, so the debit is refused.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Running related changes without a transaction">
+
+<Wrong>
+
+```sql
+CREATE TABLE wallets (name TEXT PRIMARY KEY, balance INTEGER NOT NULL CHECK (balance >= 0));
+INSERT INTO wallets VALUES ('Shubham', 1000), ('Ravi', 200);
+UPDATE wallets SET balance = balance + 500 WHERE name = 'Ravi';       -- saved at once (autocommit)
+UPDATE OR IGNORE wallets SET balance = balance - 5000 WHERE name = 'Shubham';   -- refused by CHECK
+SELECT SUM(balance) AS total FROM wallets;                             -- 1700: ₹500 was created from nothing
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE TABLE wallets (name TEXT PRIMARY KEY, balance INTEGER NOT NULL CHECK (balance >= 0));
+INSERT INTO wallets VALUES ('Shubham', 1000), ('Ravi', 200);
+BEGIN;
+UPDATE wallets SET balance = balance + 500 WHERE name = 'Ravi';
+-- the debit fails, so the application runs:
+ROLLBACK;
+SELECT SUM(balance) AS total FROM wallets;                             -- 1200: nothing changed
+```
+
+</Right>
+
+In autocommit mode, the first statement is saved even if the second fails. Group dependent changes in one transaction.
+
+</Mistake>
+
+<Mistake title="Keeping a transaction open while waiting for something slow">
+
+<Wrong>
+
+```text
+BEGIN
+UPDATE stock ...          -- the row is now locked
+call payment gateway      -- 10 seconds of waiting, other orders for this product are blocked
+COMMIT
+```
+
+</Wrong>
+
+<Right>
+
+```text
+call payment gateway first (or use a "pending" status)
+BEGIN
+UPDATE stock ...
+INSERT order ...
+COMMIT                    -- locks held for milliseconds
+```
+
+</Right>
+
+Locks last until `COMMIT` or `ROLLBACK`. Never wait for users, network calls or files inside a transaction.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a transaction?">
+
+A sequence of one or more SQL statements executed as a single logical unit of work. Either all its changes are committed together, or, on error or `ROLLBACK`, none of them are applied.
+
+</QA>
+
+<QA q="Explain ACID properties.">
+
+**Atomicity**: all statements succeed or none take effect. **Consistency**: a transaction moves the database from one valid state to another, respecting all constraints. **Isolation**: concurrent transactions do not see each other's uncommitted work; the degree is set by the isolation level. **Durability**: committed changes survive crashes, because they are written to a log on disk before the commit is acknowledged.
+
+</QA>
+
+<QA q="What is a savepoint?">
+
+A named marker inside a transaction. `ROLLBACK TO savepoint` undoes only the work done after it, while the transaction stays open and earlier work is kept until `COMMIT`.
+
+</QA>
+
+<QA q="Which statements cannot be rolled back in MySQL?">
+
+DDL statements such as `CREATE`, `ALTER`, `DROP`, `TRUNCATE` and `RENAME` cause an implicit commit in MySQL, so they end the current transaction and cannot be rolled back. PostgreSQL supports transactional DDL.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which ACID property means "all or nothing"?',
+      options: ['Atomicity', 'Consistency', 'Isolation', 'Durability'],
+      answer: 0,
+      why: 'Atomicity: the transaction is indivisible.',
+    },
+    {
+      q: 'Which property guarantees committed data survives a power cut?',
+      options: ['Atomicity', 'Consistency', 'Isolation', 'Durability'],
+      answer: 3,
+      why: 'Durability, delivered by writing a log to disk before the commit returns.',
+    },
+    {
+      q: 'What does ROLLBACK do?',
+      options: ['Saves all changes', 'Undoes all changes since BEGIN', 'Deletes the table', 'Restarts the server'],
+      answer: 1,
+      why: 'It cancels the uncommitted changes of the current transaction.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Start | `BEGIN;` (MySQL: `START TRANSACTION;`) |
+| Save | `COMMIT;` |
+| Undo all | `ROLLBACK;` |
+| Mark a point | `SAVEPOINT sp1;` |
+| Undo to the mark | `ROLLBACK TO sp1;` (MySQL: `ROLLBACK TO SAVEPOINT sp1;`) |
+| Autocommit off (MySQL) | `SET autocommit = 0;` |
+| ACID | Atomicity, Consistency, Isolation, Durability |
+| Rule | keep transactions short |
+
+</CheatSheet>

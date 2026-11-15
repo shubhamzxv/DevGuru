@@ -1,0 +1,242 @@
+---
+id: sql-lag-lead
+title: LAG, LEAD and running totals
+summary: LAG and LEAD read a value from the previous or next row, and a running total adds up values row by row.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of your bank passbook. Each line shows the amount, and also the **balance so far**. That balance is a running total.
+
+Now think of comparing this month's electricity bill with **last month's**. You look one line up. `LAG` looks up; `LEAD` looks down.
+
+</Analogy>
+
+## Simple explanation
+
+These are window functions, so every row is kept.
+
+**LAG(column)** returns the value from the **previous** row. **LEAD(column)** returns the value from the **next** row. "Previous" and "next" come from the `ORDER BY` inside `OVER`.
+
+`LAG(amount) OVER (ORDER BY order_date)`
+
+Both take two optional extras: `LAG(column, 2, 0)` means "go back 2 rows, and use 0 if there is no such row". Without a default, the first row gets `NULL` because nothing is before it.
+
+Uses: change from the previous day, days between two orders, month-over-month growth.
+
+A **running total** (cumulative sum) is `SUM` with an `ORDER BY` in the window:
+
+`SUM(amount) OVER (ORDER BY order_date)`
+
+For each row it adds everything from the first row up to the current one.
+
+A **moving average** uses a frame to limit the rows: `ROWS BETWEEN 2 PRECEDING AND CURRENT ROW` means this row and the two before it.
+
+Add `PARTITION BY` to do any of these separately for each customer or department.
+
+## Code example
+
+```sql
+WITH order_totals AS (
+  SELECT o.id, o.order_date, SUM(oi.quantity * oi.unit_price) AS amount
+  FROM orders AS o
+  JOIN order_items AS oi ON oi.order_id = o.id
+  GROUP BY o.id, o.order_date
+)
+SELECT
+  order_date,
+  amount,
+  LAG(amount)  OVER (ORDER BY order_date) AS previous_amount,   -- one row back
+  LEAD(amount) OVER (ORDER BY order_date) AS next_amount,       -- one row ahead
+  SUM(amount)  OVER (ORDER BY order_date) AS running_total      -- everything so far
+FROM order_totals
+ORDER BY order_date
+LIMIT 6;
+```
+
+```output
+order_date | amount | previous_amount | next_amount | running_total
+-----------+--------+-----------------+-------------+--------------
+2024-01-05 | 1197.0 | NULL            | 2499.0      | 1197.0
+2024-01-12 | 2499.0 | 1197.0          | 1160.0      | 3696.0
+2024-02-03 | 1160.0 | 2499.0          | 2999.0      | 4856.0
+2024-02-14 | 2999.0 | 1160.0          | 1648.0      | 7855.0
+2024-02-28 | 1648.0 | 2999.0          | 2198.0      | 9503.0
+2024-03-09 | 2198.0 | 1648.0          | 1300.0      | 11701.0
+```
+
+```sql
+SELECT
+  customer_id,
+  order_date,
+  LAG(order_date) OVER (PARTITION BY customer_id ORDER BY order_date) AS previous_order,
+  CAST(JULIANDAY(order_date) - JULIANDAY(
+    LAG(order_date) OVER (PARTITION BY customer_id ORDER BY order_date)
+  ) AS INTEGER) AS days_since_previous
+FROM orders
+WHERE customer_id IN (1, 2)
+ORDER BY customer_id, order_date;
+```
+
+```output
+customer_id | order_date | previous_order | days_since_previous
+------------+------------+----------------+--------------------
+1           | 2024-01-05 | NULL           | NULL
+1           | 2024-02-03 | 2024-01-05     | 29
+1           | 2024-04-15 | 2024-02-03     | 72
+2           | 2024-01-12 | NULL           | NULL
+2           | 2024-03-21 | 2024-01-12     | 69
+2           | 2024-06-29 | 2024-03-21     | 100
+```
+
+<Playground kind="sql">
+
+```sql
+-- Orders per month, the change from the previous month, and a running count
+WITH monthly AS (
+  SELECT STRFTIME('%Y-%m', order_date) AS month, COUNT(*) AS orders
+  FROM orders
+  GROUP BY month
+)
+SELECT
+  month,
+  orders,
+  orders - LAG(orders, 1, orders) OVER (ORDER BY month) AS change,
+  SUM(orders) OVER (ORDER BY month)                     AS running_orders
+FROM monthly
+ORDER BY month;
+
+-- Try it: add  AVG(orders) OVER (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)  for a 3-month moving average.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting that the first row has no previous row">
+
+<Wrong>
+
+```sql
+SELECT id, salary - LAG(salary) OVER (ORDER BY id) AS diff
+FROM employees
+LIMIT 3;   -- first diff is NULL
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT id, salary - LAG(salary, 1, salary) OVER (ORDER BY id) AS diff
+FROM employees
+LIMIT 3;   -- first diff is 0
+```
+
+</Right>
+
+`LAG` returns `NULL` when there is no earlier row, and any arithmetic with `NULL` is `NULL`. Give a default as the third argument, or use `COALESCE`.
+
+</Mistake>
+
+<Mistake title="Running total with ties in the ORDER BY column">
+
+<Wrong>
+
+```sql
+SELECT name, salary, SUM(salary) OVER (ORDER BY salary DESC) AS running
+FROM employees
+WHERE department_id = 1
+LIMIT 3;   -- Rohit and Asha (both 140000) show the same running total
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, salary,
+       SUM(salary) OVER (ORDER BY salary DESC, id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running
+FROM employees
+WHERE department_id = 1
+LIMIT 3;
+```
+
+</Right>
+
+The default frame treats tied rows as one block. Add a tie-breaker column, or use `ROWS`, so the total grows one row at a time.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What do LAG and LEAD do?">
+
+They are window functions that return a column value from a row at a given offset before (`LAG`) or after (`LEAD`) the current row, in the order defined by `OVER (ORDER BY ...)`. They avoid a self join when comparing a row with its neighbour.
+
+</QA>
+
+<QA q="How do you calculate a running total?">
+
+`SUM(amount) OVER (ORDER BY order_date)`. Add `PARTITION BY customer_id` for one running total per customer. To be exact with ties, write the frame `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`.
+
+</QA>
+
+<QA q="How would you calculate month-over-month growth?">
+
+Aggregate per month in a CTE, then compare with `LAG`.
+
+```sql
+WITH monthly AS (
+  SELECT STRFTIME('%Y-%m', order_date) AS month, COUNT(*) AS orders
+  FROM orders GROUP BY month
+)
+SELECT month, orders,
+       ROUND(100.0 * (orders - LAG(orders) OVER (ORDER BY month)) / LAG(orders) OVER (ORDER BY month), 1) AS growth_percent
+FROM monthly;
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does LAG(salary) return for the first row?',
+      options: ['0', 'NULL', 'The same salary', 'An error'],
+      answer: 1,
+      why: 'There is no previous row, so the result is NULL unless you give a default.',
+    },
+    {
+      q: 'Which expression gives a running total?',
+      options: ['SUM(x) GROUP BY d', 'SUM(x) OVER (ORDER BY d)', 'TOTAL(x) RUNNING', 'LAG(SUM(x))'],
+      answer: 1,
+      why: 'SUM with ORDER BY inside OVER adds up rows from the start to the current row.',
+    },
+    {
+      q: 'What does LEAD(x, 2) return?',
+      options: ['The value 2 rows before', 'The value 2 rows after', 'x multiplied by 2', 'The second largest x'],
+      answer: 1,
+      why: 'LEAD looks forward; the second argument is how many rows.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Previous row's value | `LAG(x) OVER (ORDER BY d)` |
+| Next row's value | `LEAD(x) OVER (ORDER BY d)` |
+| With offset and default | `LAG(x, 2, 0) OVER (ORDER BY d)` |
+| Change from previous | `x - LAG(x) OVER (ORDER BY d)` |
+| Running total | `SUM(x) OVER (ORDER BY d)` |
+| Running total per group | `SUM(x) OVER (PARTITION BY g ORDER BY d)` |
+| Moving average (3 rows) | `AVG(x) OVER (ORDER BY d ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` |
+| First value in group | `FIRST_VALUE(x) OVER (PARTITION BY g ORDER BY d)` |
+
+</CheatSheet>

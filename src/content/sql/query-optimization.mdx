@@ -1,0 +1,255 @@
+---
+id: sql-query-optimization
+title: Query optimization
+summary: Query optimization is making a query read less data and do less work, mainly through good indexes, sargable filters, selecting only needed columns and avoiding repeated queries.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+You need one shirt from a messy room. The slow way: empty every drawer onto the floor and search. The fast way: know the shirts are in the second drawer, open only that drawer, take only the one you need.
+
+A fast query does the same: it **reads less** and **carries less**.
+
+</Analogy>
+
+## Simple explanation
+
+Almost every slow query is slow for one reason: **it reads or moves more data than it needs**. Optimization means cutting that down.
+
+Work in this order:
+
+**1. Measure first.** Find the costly query (profiling), then read its plan (`EXPLAIN ANALYZE`). Do not guess.
+
+**2. Add the right index.** Index the columns in `WHERE`, `JOIN` and `ORDER BY`. Use composite indexes in the right column order, and covering indexes for hot queries.
+
+**3. Make filters sargable** (able to use an index). Do not wrap the column in a function:
+
+- `WHERE YEAR(order_date) = 2024` → `WHERE order_date >= '2024-01-01' AND order_date < '2025-01-01'`
+- `WHERE salary * 12 > 1000000` → `WHERE salary > 1000000 / 12`
+- `WHERE name LIKE '%kumar'` cannot use an index; consider full-text search
+- Compare with the same type: a number column with a number, not a string
+
+**4. Select only what you need.** Avoid `SELECT *`. Fewer columns means less data to read and send, and a better chance of a covering index.
+
+**5. Filter early, and with WHERE.** Filter rows in `WHERE`, not in `HAVING`, so fewer rows reach `GROUP BY`. Use `LIMIT` when you only need a few rows.
+
+**6. Write simpler shapes.**
+
+- `EXISTS` instead of `COUNT(*) > 0`; `NOT EXISTS` instead of `NOT IN`
+- `UNION ALL` instead of `UNION` when duplicates are impossible (no sort to remove them)
+- Replace a correlated subquery that runs per row with a join or a window function
+
+**7. Fix the application side.** Batch the N+1 queries, use **keyset pagination** instead of a big `OFFSET`, cache results that rarely change.
+
+**8. Keep statistics fresh.** `ANALYZE` helps the optimizer pick good plans.
+
+## Code example
+
+A non-sargable filter, and the fix:
+
+```sql
+CREATE INDEX idx_orders_date ON orders (order_date);
+
+EXPLAIN QUERY PLAN
+SELECT id FROM orders WHERE SUBSTR(order_date, 1, 7) = '2024-03';      -- function on the column
+```
+
+```output
+id | parent | notused | detail
+---+--------+---------+-------------------------------------------------
+2  | 0      | 213     | SCAN orders USING COVERING INDEX idx_orders_date
+```
+
+```sql
+CREATE INDEX idx_orders_date ON orders (order_date);
+
+EXPLAIN QUERY PLAN
+SELECT id FROM orders WHERE order_date >= '2024-03-01' AND order_date < '2024-04-01';   -- a range
+```
+
+```output
+id | parent | notused | detail
+---+--------+---------+-----------------------------------------------------------------------------------
+2  | 0      | 153     | SEARCH orders USING COVERING INDEX idx_orders_date (order_date>? AND order_date<?)
+```
+
+Keyset pagination: instead of skipping rows, continue from the last row you saw.
+
+```sql
+SELECT id, order_date FROM orders
+WHERE id > 10                -- last id of the previous page
+ORDER BY id
+LIMIT 3;                     -- with OFFSET 1000000 the database would read and throw away a million rows
+```
+
+```output
+id | order_date
+---+-----------
+11 | 2024-05-06
+12 | 2024-05-18
+13 | 2024-05-30
+```
+
+A correlated subquery (one count per customer) rewritten as one grouped join:
+
+```sql
+SELECT c.name, COUNT(o.id) AS orders
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.id
+GROUP BY c.id, c.name
+HAVING COUNT(o.id) >= 2
+ORDER BY orders DESC, c.name;
+```
+
+```output
+name           | orders
+---------------+-------
+Aarav Sharma   | 3
+Isha Patel     | 3
+Karan Malhotra | 2
+Rahul Reddy    | 2
+Sneha Kapoor   | 2
+```
+
+<Playground kind="sql">
+
+```sql
+-- Slow shape: count everything just to ask "is there any?"
+SELECT CASE WHEN (SELECT COUNT(*) FROM orders WHERE status = 'placed') > 0
+            THEN 'yes' ELSE 'no' END AS has_placed_orders;
+
+-- Faster shape: stop at the first match
+SELECT CASE WHEN EXISTS (SELECT 1 FROM orders WHERE status = 'placed')
+            THEN 'yes' ELSE 'no' END AS has_placed_orders;
+
+-- Try it: put EXPLAIN QUERY PLAN in front of each and compare.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Filtering in HAVING what belongs in WHERE">
+
+<Wrong>
+
+```sql
+SELECT department_id, AVG(salary)
+FROM employees
+GROUP BY department_id
+HAVING department_id IN (1, 2);      -- groups every department, then throws most away
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT department_id, AVG(salary)
+FROM employees
+WHERE department_id IN (1, 2)        -- removes rows before grouping, and can use an index
+GROUP BY department_id;
+```
+
+</Right>
+
+`HAVING` is for conditions on aggregates. Plain row conditions go in `WHERE`.
+
+</Mistake>
+
+<Mistake title="Using UNION when UNION ALL is enough">
+
+<Wrong>
+
+```sql
+SELECT name FROM customers WHERE city = 'Delhi'
+UNION
+SELECT name FROM customers WHERE city = 'Mumbai';   -- extra sort to remove duplicates that cannot exist
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name FROM customers WHERE city = 'Delhi'
+UNION ALL
+SELECT name FROM customers WHERE city = 'Mumbai';
+```
+
+</Right>
+
+A row cannot be in both cities, so there are no duplicates to remove. `UNION ALL` skips the sort.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How would you optimize a slow SQL query?">
+
+Measure first: find it in the slow log or `pg_stat_statements`, then run `EXPLAIN ANALYZE`. Common fixes, in order: add or adjust indexes for the `WHERE`, `JOIN` and `ORDER BY` columns; make predicates sargable; select only needed columns; filter in `WHERE` before grouping; rewrite correlated subqueries as joins or window functions; use `EXISTS`, `UNION ALL` and keyset pagination; refresh statistics. Then measure again to confirm.
+
+</QA>
+
+<QA q="What does sargable mean?">
+
+Search ARGument ABLE: a condition the database can answer with an index seek. `order_date >= '2024-01-01'` is sargable; `YEAR(order_date) = 2024` is not, because the function must be computed for every row. Keep the indexed column alone on one side of the comparison.
+
+</QA>
+
+<QA q="Why is OFFSET pagination slow on deep pages and what is the alternative?">
+
+`LIMIT 20 OFFSET 100000` makes the database read and discard 100,000 rows first, so each page gets slower. Keyset (seek) pagination remembers the last key seen and asks `WHERE id > :last_id ORDER BY id LIMIT 20`, which uses the index to jump straight to the next page.
+
+</QA>
+
+<QA q="Why avoid SELECT *?">
+
+It reads and transfers columns you do not use, can stop the database from using a covering index, and breaks code when columns are added or reordered.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which condition can use an index on order_date?',
+      options: ["YEAR(order_date) = 2024", "order_date >= '2024-01-01' AND order_date < '2025-01-01'", "order_date + 0 = 20240101", "CAST(order_date AS TEXT) LIKE '2024%'"],
+      answer: 1,
+      why: 'Only the plain range keeps the column untouched, so it is sargable.',
+    },
+    {
+      q: 'What is the fix for slow deep pages with OFFSET?',
+      options: ['A bigger LIMIT', 'Keyset pagination with WHERE id > last_id', 'SELECT *', 'More RAM only'],
+      answer: 1,
+      why: 'Seeking from the last key avoids reading and discarding all earlier rows.',
+    },
+    {
+      q: 'When is UNION ALL better than UNION?',
+      options: ['Never', 'When duplicates are impossible or allowed', 'Only with ORDER BY', 'Only in MySQL'],
+      answer: 1,
+      why: 'UNION ALL skips the duplicate-removal step.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Instead of | Write |
+| --- | --- |
+| `SELECT *` | only the columns you need |
+| `WHERE YEAR(d) = 2024` | `WHERE d >= '2024-01-01' AND d < '2025-01-01'` |
+| row filter in `HAVING` | the same filter in `WHERE` |
+| `COUNT(*) > 0` | `EXISTS (...)` |
+| `NOT IN (subquery)` | `NOT EXISTS (...)` |
+| `UNION` with no possible duplicates | `UNION ALL` |
+| `LIMIT 20 OFFSET 100000` | `WHERE id > :last_id ORDER BY id LIMIT 20` |
+| correlated subquery per row | join to a grouped subquery, or a window function |
+| one query per item (N+1) | one query with `IN (...)` or a join |
+| guessing | `EXPLAIN ANALYZE`, before and after |
+
+</CheatSheet>

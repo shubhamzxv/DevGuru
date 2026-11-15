@@ -1,0 +1,251 @@
+---
+id: sql-isolation-levels
+title: Isolation levels and locks
+summary: Isolation levels decide how much one running transaction can see of another's changes, trading safety against speed, and locks are how the database enforces it.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Two people are editing the same shared spreadsheet. How much should each one see of the other's typing?
+
+- See every keystroke, even half-typed numbers? Fast, but you might copy a wrong value
+- See only what the other person has **saved**? Safer
+- See the sheet exactly as it was when **you** opened it, no matter what others save? Even safer
+- Make you **take turns**? Safest, but slowest
+
+Those four choices are the four **isolation levels**.
+
+</Analogy>
+
+## Simple explanation
+
+When many transactions run at the same time, three kinds of problems can happen. These are called **read phenomena**:
+
+| Problem | What happens |
+| --- | --- |
+| **Dirty read** | You read data another transaction changed but has **not committed**. It may roll back, so you read something that never existed |
+| **Non-repeatable read** | You read a row twice in your transaction and get **different values**, because someone committed an update in between |
+| **Phantom read** | You run the same query twice and get **new or missing rows**, because someone inserted or deleted matching rows in between |
+
+The SQL standard defines four **isolation levels**. Each one prevents more problems, and costs more:
+
+| Level | Dirty read | Non-repeatable read | Phantom read |
+| --- | --- | --- | --- |
+| `READ UNCOMMITTED` | possible | possible | possible |
+| `READ COMMITTED` | prevented | possible | possible |
+| `REPEATABLE READ` | prevented | prevented | possible (by the standard) |
+| `SERIALIZABLE` | prevented | prevented | prevented |
+
+Defaults to remember:
+
+- **MySQL InnoDB**: `REPEATABLE READ`. It also blocks most phantoms using **next-key locks** (gap locks)
+- **PostgreSQL**, Oracle, SQL Server: `READ COMMITTED`
+
+**Locks**
+
+- A **shared lock** (S, read lock): many transactions can hold it together; it blocks writers
+- An **exclusive lock** (X, write lock): only one holder; it blocks everyone else
+- **Row-level** locks (InnoDB, PostgreSQL) lock only the rows touched; **table-level** locks lock everything
+- `SELECT ... FOR UPDATE` reads a row and locks it, so nobody can change it until you commit. Use it for "read, then update" logic like stock or balances
+
+Modern databases use **MVCC**: plain reads see a snapshot and do **not** take locks, so readers and writers do not block each other. Writers still lock the rows they change.
+
+A **deadlock** happens when transaction A waits for a lock B holds, while B waits for a lock A holds. The database detects it and **kills one** of them with an error. Prevent it by always locking rows in the **same order** and keeping transactions short.
+
+## Code example
+
+These need two sessions, so they run in MySQL or PostgreSQL, not the playground. Read the steps top to bottom in time order.
+
+**Non-repeatable read** under `READ COMMITTED`:
+
+```text
+Session A                                             Session B
+---------                                             ---------
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+BEGIN;
+SELECT balance FROM accounts WHERE id = 1;  -- 1000
+                                                      BEGIN;
+                                                      UPDATE accounts SET balance = 400 WHERE id = 1;
+                                                      COMMIT;
+SELECT balance FROM accounts WHERE id = 1;  -- 400   <- changed inside A's transaction
+COMMIT;
+```
+
+Under `REPEATABLE READ`, A's second `SELECT` would still show **1000**: A keeps reading the snapshot taken at its first read.
+
+**Lost update**, and the fix with `FOR UPDATE`:
+
+```mysql
+-- Both sessions run this at the same time to sell the last unit:
+START TRANSACTION;
+SELECT stock FROM products WHERE id = 4 FOR UPDATE;   -- the second session WAITS here
+-- application sees stock = 1, so it is allowed to sell
+UPDATE products SET stock = stock - 1 WHERE id = 4;
+COMMIT;                                               -- now the second session continues, sees stock = 0, and stops
+```
+
+Without `FOR UPDATE`, both sessions could read `stock = 1` and both sell, leaving `-1`.
+
+**Setting the level**:
+
+```mysql
+SELECT @@transaction_isolation;                                   -- MySQL: see the current level
+SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;           -- for this connection
+```
+
+```postgresql
+SHOW default_transaction_isolation;
+BEGIN ISOLATION LEVEL SERIALIZABLE;                               -- for one transaction
+```
+
+A single statement that checks and changes in one step needs no lock juggling. This works in the playground:
+
+```sql
+UPDATE products SET stock = stock - 1
+WHERE id = 1 AND stock >= 1;          -- the check and the change are one atomic statement
+
+SELECT name, stock FROM products WHERE id = 1;
+```
+
+```output
+name           | stock
+---------------+------
+Wireless Mouse | 119
+```
+
+<Playground kind="sql">
+
+```sql
+-- The playground has only one session, so try the atomic "check and change" pattern.
+-- Product 4 (Bluetooth Speaker) has 0 in stock:
+UPDATE products SET stock = stock - 1 WHERE id = 4 AND stock >= 1;
+
+SELECT changes() AS rows_updated;   -- 0: the sale was refused, stock stays at 0
+
+-- Try it: change id = 4 to id = 9 (Running Shoes, 30 in stock).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Read, then update, without a lock">
+
+<Wrong>
+
+```mysql
+START TRANSACTION;
+SELECT stock FROM products WHERE id = 4;          -- 1 (another session reads 1 too)
+UPDATE products SET stock = 0 WHERE id = 4;       -- both sessions set it to 0 and both sell
+COMMIT;
+```
+
+</Wrong>
+
+<Right>
+
+```mysql
+START TRANSACTION;
+SELECT stock FROM products WHERE id = 4 FOR UPDATE;
+UPDATE products SET stock = stock - 1 WHERE id = 4 AND stock > 0;
+COMMIT;
+```
+
+</Right>
+
+This is a **lost update**. Lock the row with `FOR UPDATE`, or do the check inside the `UPDATE` itself.
+
+</Mistake>
+
+<Mistake title="Locking rows in different orders">
+
+<Wrong>
+
+```text
+Session A: lock account 1, then account 2
+Session B: lock account 2, then account 1
+-> each waits for the other: deadlock, one transaction is killed
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Both sessions: always lock the lower account id first, then the higher one
+```
+
+</Right>
+
+A consistent lock order makes circular waiting impossible. Also retry a transaction that fails with a deadlock error.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the four isolation levels?">
+
+`READ UNCOMMITTED` (allows dirty reads), `READ COMMITTED` (only committed data is visible, but a re-read can change), `REPEATABLE READ` (re-reading a row in the same transaction gives the same result; phantoms possible by the standard), and `SERIALIZABLE` (transactions behave as if run one after another). Higher levels are safer but allow less concurrency.
+
+</QA>
+
+<QA q="What is the difference between a dirty read, a non-repeatable read and a phantom read?">
+
+A dirty read sees another transaction's uncommitted change. A non-repeatable read gets a different value for the same row because another transaction committed an update in between. A phantom read gets a different set of rows for the same query because another transaction inserted or deleted matching rows.
+
+</QA>
+
+<QA q="What are the default isolation levels of MySQL and PostgreSQL?">
+
+MySQL InnoDB defaults to `REPEATABLE READ`, and uses next-key locking to prevent most phantoms. PostgreSQL defaults to `READ COMMITTED`.
+
+</QA>
+
+<QA q="What is a deadlock and how do you handle it?">
+
+Two or more transactions each hold a lock the other needs, so none can continue. The database detects the cycle and rolls back one transaction with an error. Prevent it by accessing rows in a consistent order, keeping transactions short, and using indexes so fewer rows are locked; handle it by retrying the failed transaction.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Reading data another transaction has not committed yet is called:',
+      options: ['A phantom read', 'A dirty read', 'A deadlock', 'A lost update'],
+      answer: 1,
+      why: 'Dirty read: the data may later be rolled back.',
+    },
+    {
+      q: 'What is the default isolation level in MySQL InnoDB?',
+      options: ['READ UNCOMMITTED', 'READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE'],
+      answer: 2,
+      why: 'InnoDB defaults to REPEATABLE READ; PostgreSQL defaults to READ COMMITTED.',
+    },
+    {
+      q: 'What does SELECT ... FOR UPDATE do?',
+      options: ['Updates the row', 'Reads the row and locks it until commit', 'Reads without locking', 'Deletes the row'],
+      answer: 1,
+      why: 'It takes an exclusive row lock so others cannot change the row before you commit.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| See level (MySQL) | `SELECT @@transaction_isolation;` |
+| Set for session (MySQL) | `SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;` |
+| Set per transaction (PostgreSQL) | `BEGIN ISOLATION LEVEL SERIALIZABLE;` |
+| Lock rows to update | `SELECT ... FOR UPDATE;` |
+| Shared read lock | `SELECT ... FOR SHARE;` |
+| Skip locked rows (job queues) | `SELECT ... FOR UPDATE SKIP LOCKED;` |
+| Atomic check and change | `UPDATE t SET stock = stock - 1 WHERE id = ? AND stock > 0;` |
+| Avoid deadlocks | same lock order, short transactions, retry |
+
+</CheatSheet>

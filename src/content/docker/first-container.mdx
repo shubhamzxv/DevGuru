@@ -1,0 +1,200 @@
+---
+id: docker-first-container
+title: Your first container (docker run)
+summary: docker run creates a container from an image and starts it; with -d it runs in the background and -p makes it reachable from your computer.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+An **image** is like a recipe card for biryani. A **container** is the actual plate of biryani cooked from that card. From one recipe you can cook many plates, and eating one plate does not change the recipe.
+
+`docker run` is "cook a plate from this recipe and serve it". If you do not have the recipe card yet, Docker first fetches it from the shop: **Docker Hub**.
+
+</Analogy>
+
+## Simple explanation
+
+`docker run IMAGE` does three things:
+
+1. **Pulls** the image from Docker Hub if it is not on your machine yet
+2. **Creates** a container: the image's files plus a thin writable layer on top
+3. **Starts** the container's main process
+
+A container lives **only as long as its main process**. `hello-world` prints a message and exits, so its container stops at once. `nginx` is a web server that keeps running.
+
+The options you use most:
+
+| Option | Meaning |
+| --- | --- |
+| `-d` | detached: run in the background and give the terminal back |
+| `--name web` | a name you choose, instead of a random one like `brave_turing` |
+| `-p 8080:80` | publish a port: **host port 8080** goes to **container port 80** |
+| `-e KEY=value` | set an environment variable inside |
+| `--rm` | delete the container automatically when it stops |
+| `-it` | interactive terminal, to get a shell inside |
+
+Ports are the key idea: a container has its own network. The web server inside listens on port 80 **inside the container**. Without `-p`, your browser cannot reach it. With `-p 8080:80`, visiting `localhost:8080` on your computer reaches port 80 inside.
+
+Then manage it:
+
+- `docker ps` lists running containers, `docker ps -a` includes stopped ones
+- `docker logs web` shows what it printed
+- `docker stop web` stops it, `docker start web` starts it again
+- `docker rm web` deletes the container (stop it first, or use `-f`)
+
+## Code example
+
+```bash
+docker run hello-world                          # pulls, runs, prints, exits
+docker run -d --name web -p 8080:80 nginx       # web server in the background
+docker ps
+curl localhost:8080
+docker logs web
+docker stop web
+docker rm web
+```
+
+```output
+Hello from Docker!
+This message shows that your installation appears to be working correctly.
+...
+CONTAINER ID   IMAGE          STATUS         PORTS                  NAMES
+3f8a1c9e2b7d   nginx:latest   Up 2 minutes   0.0.0.0:8080->80/tcp   web
+<h1>Welcome to nginx!</h1>
+/docker-entrypoint.sh: Configuration complete; ready for start up
+web
+web
+```
+
+<Playground kind="terminal">
+
+```bash
+docker run hello-world
+docker images
+docker run -d --name web -p 8080:80 nginx
+docker ps
+curl localhost:8080
+docker logs web
+docker run -d --name web2 -p 8080:80 nginx
+docker stop web
+docker ps -a
+docker rm web
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting -p, then the site does not open">
+
+<Wrong>
+
+```bash
+docker run -d --name web nginx
+curl localhost:80
+# curl: (7) Failed to connect to localhost port 80: Connection refused
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker run -d --name web -p 8080:80 nginx
+curl localhost:8080
+```
+
+</Right>
+
+The server listens inside the container. `-p HOST:CONTAINER` opens a door from your machine to it.
+
+</Mistake>
+
+<Mistake title="Expecting a container to keep running with nothing to do">
+
+<Wrong>
+
+```bash
+docker run -d ubuntu
+docker ps            # empty: the container already exited
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker run --rm ubuntu cat /etc/os-release     # run one command and clean up
+docker run -d --name web -p 8080:80 nginx      # or run something long-lived, like a server
+```
+
+</Right>
+
+The container stops when its main process ends. `ubuntu` starts a shell, which ends at once with no terminal attached.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between an image and a container?">
+
+An image is a read-only template: layered files plus settings such as the start command. A container is a running (or stopped) instance of an image with its own writable layer, process and network. Many containers can run from one image, and deleting a container does not change the image.
+
+</QA>
+
+<QA q="What does -p 8080:80 mean?">
+
+Publish a port: traffic to port 8080 on the host is forwarded to port 80 inside the container. The left side is the host, the right side is the container. Two containers cannot use the same host port at once.
+
+</QA>
+
+<QA q="Why did my container exit immediately?">
+
+A container runs only as long as its main process. If that process finishes (like `hello-world`) or crashes (for example, postgres without `POSTGRES_PASSWORD`), the container stops. Check `docker ps -a` for the exit code and `docker logs <name>` for the reason.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does -d do?',
+      options: ['Deletes the container', 'Runs it in the background', 'Downloads only', 'Debug mode'],
+      answer: 1,
+      why: 'Detached: the container keeps running and you get your prompt back.',
+    },
+    {
+      q: 'In -p 3000:8000, which number is the port inside the container?',
+      options: ['3000', '8000', 'Both', 'Neither'],
+      answer: 1,
+      why: 'HOST:CONTAINER, so 8000 is inside and 3000 is on your machine.',
+    },
+    {
+      q: 'Which command also shows stopped containers?',
+      options: ['docker ps', 'docker ps -a', 'docker images', 'docker logs'],
+      answer: 1,
+      why: '-a means all, including exited containers.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Test Docker works | `docker run hello-world` |
+| Server in background | `docker run -d --name web -p 8080:80 nginx` |
+| One command, then clean up | `docker run --rm alpine echo hi` |
+| Set a variable | `docker run -e POSTGRES_PASSWORD=secret -d postgres` |
+| Running containers | `docker ps` |
+| All containers | `docker ps -a` |
+| Output of a container | `docker logs web` |
+| Stop / start | `docker stop web` / `docker start web` |
+| Delete | `docker rm web` (`-f` if running) |
+| Local images | `docker images` |
+
+</CheatSheet>

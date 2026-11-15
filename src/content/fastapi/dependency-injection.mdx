@@ -1,0 +1,253 @@
+---
+id: fastapi-dependency-injection
+title: Dependency injection (Depends)
+summary: Dependency injection means a function says what it needs, and FastAPI creates it and passes it in, using Depends.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a hotel guest who calls room service and says "I need a towel". The guest does not go to the laundry, find a towel and carry it back. The hotel **brings it**.
+
+In FastAPI, your endpoint says "I need the current user" or "I need a database session". FastAPI **brings it**, ready to use. That is **dependency injection**.
+
+</Analogy>
+
+## Simple explanation
+
+A **dependency** is something your endpoint needs before it can work: the logged-in user, a database session, settings, pagination values.
+
+Without dependency injection, every endpoint repeats the same code: read the token, check it, find the user. With it, you write that code **once**, in a normal function, and every endpoint just asks for it:
+
+`def read_orders(user = Depends(get_current_user)):`
+
+When a request arrives, FastAPI:
+
+1. Sees `Depends(get_current_user)` in the endpoint
+2. Calls `get_current_user` first, giving it what **it** needs (headers, query parameters, even other dependencies)
+3. Passes the result into your endpoint
+4. If the dependency raises an `HTTPException`, the endpoint **never runs**, and the client gets that error
+
+Why it is useful:
+
+- **No repeated code**: auth, DB sessions and pagination are written once
+- **Easy testing**: in tests you replace a dependency with a fake using `app.dependency_overrides`
+- **Clean endpoints**: the endpoint shows only business logic
+- **Cached per request**: if two dependencies need `get_db`, FastAPI calls it only once per request
+
+Common uses: the current user, database sessions (with `yield`, covered in the next topic), shared query parameters, permission checks, settings.
+
+You can also write `Annotated[User, Depends(get_current_user)]`, which is the style the FastAPI docs recommend today. It means the same thing.
+
+## Code example
+
+A dependency that reads shared pagination parameters:
+
+```python
+from fastapi import Depends, FastAPI
+
+app = FastAPI()
+
+def pagination(page: int = 1, size: int = 10):      # a normal function
+    return {"skip": (page - 1) * size, "limit": size}
+
+@app.get("/books")
+def list_books(p: dict = Depends(pagination)):      # FastAPI calls pagination() first
+    return {"skip": p["skip"], "limit": p["limit"]}
+
+@app.get("/authors")
+def list_authors(p: dict = Depends(pagination)):    # reused: no copy-paste
+    return p
+```
+
+Request `GET /books?page=3&size=5` returns:
+
+```output
+{"skip": 10, "limit": 5}
+```
+
+A dependency that protects endpoints:
+
+```python
+from typing import Annotated
+from fastapi import Depends, FastAPI, Header, HTTPException
+
+app = FastAPI()
+TOKENS = {"abc123": "guru"}                          # pretend token store
+
+def get_current_user(authorization: str = Header(None)) -> str:
+    token = (authorization or "").removeprefix("Bearer ")
+    user = TOKENS.get(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user                                      # becomes the endpoint's argument
+
+CurrentUser = Annotated[str, Depends(get_current_user)]
+
+@app.get("/me")
+def me(user: CurrentUser):                           # runs only if the token is valid
+    return {"user": user}
+```
+
+```output
+GET /me                                   -> 401 {"detail": "Not authenticated"}
+GET /me  Authorization: Bearer abc123     -> 200 {"user": "guru"}
+```
+
+Replacing a dependency in a test:
+
+```python
+from fastapi.testclient import TestClient
+
+def fake_user() -> str:
+    return "test-user"
+
+app.dependency_overrides[get_current_user] = fake_user    # no real token needed
+client = TestClient(app)
+print(client.get("/me").json())
+```
+
+```output
+{'user': 'test-user'}
+```
+
+<Playground kind="none">
+
+```python
+# Save as main.py, then run:  pip install fastapi uvicorn  and  uvicorn main:app --reload
+# Open http://127.0.0.1:8000/docs and try /items with and without the header.
+from fastapi import Depends, FastAPI, Header, HTTPException
+
+app = FastAPI()
+
+def require_api_key(x_api_key: str = Header(None)):
+    if x_api_key != "secret":
+        raise HTTPException(status_code=403, detail="Wrong or missing X-API-Key")
+
+@app.get("/items", dependencies=[Depends(require_api_key)])   # check only, no value needed
+def items():
+    return ["pen", "notebook"]
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Calling the dependency yourself">
+
+<Wrong>
+
+```python
+@app.get("/me")
+def me(user: str = Depends(get_current_user())):   # the () calls it at import time
+    return user
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.get("/me")
+def me(user: str = Depends(get_current_user)):     # pass the function, FastAPI calls it
+    return user
+```
+
+</Right>
+
+`Depends` needs the function itself. FastAPI calls it on every request, with the right arguments.
+
+</Mistake>
+
+<Mistake title="Returning an error instead of raising it">
+
+<Wrong>
+
+```python
+def get_current_user(authorization: str = Header(None)):
+    if authorization is None:
+        return {"error": "Not authenticated"}   # the endpoint still runs with this dict
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def get_current_user(authorization: str = Header(None)):
+    if authorization is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+```
+
+</Right>
+
+Raising `HTTPException` stops the request before the endpoint runs and sends the right status code.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is dependency injection in FastAPI?">
+
+A way for an endpoint to declare what it needs with `Depends(function)`. FastAPI resolves the dependency for each request, including its own parameters and sub-dependencies, and passes the result into the endpoint. It removes repeated code such as authentication and DB session handling, and makes testing easier.
+
+</QA>
+
+<QA q="How do you test an endpoint that depends on authentication or a database?">
+
+Use `app.dependency_overrides[real_dependency] = fake_dependency`. The test client then calls the fake, for example returning a fixed user or a test database session. Clear it afterwards with `app.dependency_overrides.clear()`.
+
+</QA>
+
+<QA q="If two dependencies both use get_db, how many times is it called per request?">
+
+Once. FastAPI caches a dependency's result within one request, so every place that needs `get_db` gets the same session. Use `Depends(get_db, use_cache=False)` if you really need a fresh call.
+
+</QA>
+
+<QA q="What is the difference between a dependency in the function parameters and in dependencies=[...]?">
+
+A parameter dependency gives its return value to the endpoint (for example the user). The `dependencies=[Depends(...)]` list on the decorator, or on an `APIRouter`, runs checks whose value you do not need, such as an API key check for a whole router.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What do you pass to Depends?',
+      options: ['The result of the function', 'The function itself', 'A string name', 'A class instance only'],
+      answer: 1,
+      why: 'FastAPI calls the function for each request, so you pass get_current_user, not get_current_user().',
+    },
+    {
+      q: 'A dependency raises HTTPException(401). What happens to the endpoint?',
+      options: ['It runs with None', 'It never runs; the client gets 401', 'It runs and returns 200', 'The server crashes'],
+      answer: 1,
+      why: 'Dependencies run first. An exception stops the request there.',
+    },
+    {
+      q: 'How do you swap a dependency for a fake in tests?',
+      options: ['Edit the source code', 'app.dependency_overrides', 'Restart the server', 'Use Header()'],
+      answer: 1,
+      why: 'dependency_overrides maps the real dependency to a replacement during tests.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Use a dependency | `def f(x = Depends(get_x)):` |
+| Modern style | `X = Annotated[str, Depends(get_x)]` then `def f(x: X):` |
+| Check only, no value | `@app.get("/", dependencies=[Depends(check)])` |
+| For a whole router | `APIRouter(dependencies=[Depends(check)])` |
+| Stop the request | `raise HTTPException(status_code=401)` inside the dependency |
+| Fake in tests | `app.dependency_overrides[get_x] = fake_x` |
+| Setup and cleanup | dependency with `yield` (next topic) |
+
+</CheatSheet>

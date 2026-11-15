@@ -1,0 +1,225 @@
+---
+id: sql-relationships
+title: Relationships (one-to-one, one-to-many, many-to-many)
+summary: Relationships describe how rows in one table connect to rows in another, and each kind is built with foreign keys in a different way.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a school.
+
+- Each student has **one** ID card, and each card belongs to **one** student. One-to-one
+- One class teacher looks after **many** students, but each student has **one** class teacher. One-to-many
+- A student takes **many** subjects, and each subject has **many** students. Many-to-many
+
+</Analogy>
+
+## Simple explanation
+
+A **relationship** says how many rows on one side can connect to how many rows on the other side. There are three kinds.
+
+**One-to-many (1:N)**: the most common. One customer has many orders; each order belongs to one customer.
+How to build it: put a **foreign key in the "many" table**. `orders.customer_id` points to `customers.id`.
+
+**One-to-one (1:1)**: each row matches at most one row on the other side. A user and their profile settings.
+How to build it: a foreign key that is also **UNIQUE** (or is the primary key itself). It is often used to split rarely used or sensitive columns into a separate table.
+
+**Many-to-many (M:N)**: both sides can have many. An order contains many products; a product appears in many orders.
+How to build it: a third table, called a **junction table** (also bridge or link table), with **two foreign keys**. In our data, `order_items` is the junction table between `orders` and `products`. It can also hold extra facts about the link, such as `quantity` and `unit_price`.
+
+A relational database cannot store many-to-many directly. It is always two one-to-many relationships through the junction table.
+
+In our sample data:
+
+| Tables | Relationship | Built with |
+| --- | --- | --- |
+| departments → employees | One-to-many | `employees.department_id` |
+| employees → employees | One-to-many (manager) | `employees.manager_id`, a self-reference |
+| customers → orders | One-to-many | `orders.customer_id` |
+| orders ↔ products | Many-to-many | junction table `order_items` |
+
+## Code example
+
+```sql
+SELECT c.name, COUNT(o.id) AS orders           -- one customer, many orders
+FROM customers AS c
+LEFT JOIN orders AS o ON o.customer_id = c.id
+GROUP BY c.id, c.name
+ORDER BY orders DESC, c.name
+LIMIT 4;
+```
+
+```output
+name           | orders
+---------------+-------
+Aarav Sharma   | 3
+Isha Patel     | 3
+Karan Malhotra | 2
+Rahul Reddy    | 2
+```
+
+```sql
+SELECT o.id AS order_id, p.name AS product, oi.quantity   -- many-to-many through order_items
+FROM orders AS o
+JOIN order_items AS oi ON oi.order_id = o.id
+JOIN products    AS p  ON p.id = oi.product_id
+WHERE o.id IN (5, 7)
+ORDER BY o.id, p.name;
+```
+
+```output
+order_id | product            | quantity
+---------+--------------------+---------
+5        | Cotton T-Shirt     | 2
+5        | Steel Water Bottle | 1
+7        | Desk Organizer     | 2
+7        | Notebook A5        | 5
+```
+
+```sql
+CREATE TABLE customer_profiles (
+  customer_id  INTEGER PRIMARY KEY REFERENCES customers (id),   -- PK + FK: at most one profile per customer
+  newsletter   INTEGER NOT NULL DEFAULT 0,
+  language     TEXT NOT NULL DEFAULT 'en'
+);
+
+INSERT INTO customer_profiles (customer_id, language) VALUES (1, 'hi'), (4, 'mr');
+
+SELECT c.name, p.language
+FROM customers AS c
+JOIN customer_profiles AS p ON p.customer_id = c.id;
+```
+
+```output
+name         | language
+-------------+---------
+Aarav Sharma | hi
+Sneha Kapoor | mr
+```
+
+<Playground kind="sql">
+
+```sql
+-- Which orders contain the Wireless Mouse? (many-to-many, read from the product side)
+SELECT p.name, o.id AS order_id, o.order_date
+FROM products AS p
+JOIN order_items AS oi ON oi.product_id = p.id
+JOIN orders      AS o  ON o.id = oi.order_id
+WHERE p.name = 'Wireless Mouse'
+ORDER BY o.order_date;
+
+-- Try it: count how many different products each order has.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Storing many values in one column">
+
+<Wrong>
+
+```sql
+CREATE TABLE orders_bad (id INTEGER PRIMARY KEY, product_ids TEXT);
+INSERT INTO orders_bad VALUES (1, '1,3,5');
+SELECT * FROM orders_bad WHERE product_ids LIKE '%1%';   -- also matches 10, 11, 12...
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT order_id FROM order_items WHERE product_id = 1;
+```
+
+</Right>
+
+A comma-separated list cannot be joined, indexed or checked with a foreign key. Use a junction table with one row per link.
+
+</Mistake>
+
+<Mistake title="Putting the foreign key on the wrong side">
+
+<Wrong>
+
+```sql
+CREATE TABLE customers_bad (id INTEGER PRIMARY KEY, name TEXT, order_id INTEGER);
+-- runs, but a customer can now have only ONE order
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE TABLE orders_good (
+  id INTEGER PRIMARY KEY,
+  customer_id INTEGER NOT NULL REFERENCES customers (id)
+);
+```
+
+</Right>
+
+In one-to-many, the foreign key goes in the **many** table. Each order says who its customer is.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you implement a many-to-many relationship?">
+
+With a junction table that has a foreign key to each side, usually with a composite primary key or a unique constraint on the pair. For example, `student_courses (student_id, course_id)`. The junction table can also store attributes of the relationship, such as enrolment date or quantity.
+
+</QA>
+
+<QA q="Where does the foreign key go in a one-to-many relationship?">
+
+In the table on the "many" side. Each order row stores `customer_id`; the customer table stores nothing about orders.
+
+</QA>
+
+<QA q="When would you use a one-to-one relationship?">
+
+To split a wide table: move rarely used, large, or sensitive columns (such as profile details or payment info) into their own table with stricter access, or to add optional data to an existing table without changing it. Build it with a foreign key that is also unique or the primary key.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What do you need to store a many-to-many relationship?',
+      options: ['A comma-separated column', 'A junction table with two foreign keys', 'Two primary keys in one table', 'A view'],
+      answer: 1,
+      why: 'Many-to-many is broken into two one-to-many relationships through a junction table.',
+    },
+    {
+      q: 'Customers and orders: which table gets the foreign key?',
+      options: ['customers', 'orders', 'both', 'neither'],
+      answer: 1,
+      why: 'Orders is the "many" side, so each order stores its customer_id.',
+    },
+    {
+      q: 'What makes a foreign key relationship one-to-one?',
+      options: ['ON DELETE CASCADE', 'A UNIQUE constraint on the foreign key', 'A CHECK constraint', 'An index'],
+      answer: 1,
+      why: 'If the foreign key value cannot repeat, each parent has at most one child.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Relationship | Example | How to build |
+| --- | --- | --- |
+| One-to-one | user ↔ profile | FK that is `UNIQUE` or the PK |
+| One-to-many | customer → orders | FK in the "many" table |
+| Many-to-many | orders ↔ products | junction table with two FKs |
+| Self-reference | employee → manager | FK to the same table |
+
+</CheatSheet>

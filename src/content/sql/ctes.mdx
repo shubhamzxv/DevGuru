@@ -1,0 +1,219 @@
+---
+id: sql-ctes
+title: CTEs (WITH)
+summary: A CTE is a named temporary result, defined with WITH at the top of a query, that the rest of the query can use like a table.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of solving a long maths problem. You do not write everything in one line. You first work out "Step 1", give the result a name, then use it in "Step 2".
+
+A **CTE** lets you write a query in named steps, in the same way.
+
+</Analogy>
+
+## Simple explanation
+
+**CTE** stands for **Common Table Expression**. You define it with the keyword `WITH`, give it a name, and write a `SELECT` in brackets.
+
+`WITH name AS (SELECT ...) SELECT ... FROM name;`
+
+After that, the main query can use the name as if it were a table. The CTE exists **only for that one statement**. Nothing is saved in the database.
+
+Why use it:
+
+- **Readable**: the query reads top to bottom, step by step, not inside-out like nested subqueries
+- **Reusable**: you can refer to the same CTE more than once in the query
+- **Chainable**: you can define several CTEs, separated by commas, and a later one can use an earlier one
+- **Recursive**: a CTE can refer to itself, which is covered in the next topic
+
+A CTE does the same job as a subquery in `FROM`. Choose a CTE when the logic has more than one step.
+
+CTEs work in PostgreSQL, SQL Server, Oracle, SQLite, and MySQL from version 8.0.
+
+## Code example
+
+```sql
+WITH order_totals AS (                       -- step 1: total of each order
+  SELECT order_id, SUM(quantity * unit_price) AS total
+  FROM order_items
+  GROUP BY order_id
+)
+SELECT o.id, c.name, t.total                 -- step 2: use it like a table
+FROM order_totals AS t
+JOIN orders    AS o ON o.id = t.order_id
+JOIN customers AS c ON c.id = o.customer_id
+ORDER BY t.total DESC
+LIMIT 4;
+```
+
+```output
+id | name         | total
+---+--------------+-------
+14 | Rahul Reddy  | 4998.0
+9  | Aarav Sharma | 3597.0
+11 | Nisha Thomas | 3498.0
+4  | Rahul Reddy  | 2999.0
+```
+
+```sql
+WITH dept_stats AS (                         -- first CTE
+  SELECT department_id, AVG(salary) AS avg_salary
+  FROM employees
+  WHERE department_id IS NOT NULL
+  GROUP BY department_id
+),
+company AS (                                 -- second CTE, after a comma
+  SELECT AVG(salary) AS avg_salary FROM employees
+)
+SELECT
+  d.name,
+  ROUND(s.avg_salary)  AS dept_average,
+  ROUND(c.avg_salary)  AS company_average
+FROM dept_stats AS s
+JOIN departments AS d ON d.id = s.department_id
+CROSS JOIN company AS c
+WHERE s.avg_salary > c.avg_salary;           -- departments above the company average
+```
+
+```output
+name        | dept_average | company_average
+------------+--------------+----------------
+Engineering | 113143.0     | 91000.0
+Finance     | 103000.0     | 91000.0
+```
+
+<Playground kind="sql">
+
+```sql
+WITH customer_spend AS (
+  SELECT o.customer_id, SUM(oi.quantity * oi.unit_price) AS spent
+  FROM orders AS o
+  JOIN order_items AS oi ON oi.order_id = o.id
+  WHERE o.status <> 'cancelled'
+  GROUP BY o.customer_id
+)
+SELECT c.name, s.spent
+FROM customer_spend AS s
+JOIN customers AS c ON c.id = s.customer_id
+ORDER BY s.spent DESC
+LIMIT 5;
+
+-- Try it: add a second CTE that holds the average spend, and show only customers above it.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using a CTE in a later statement">
+
+<Wrong>
+
+```sql
+WITH big AS (SELECT * FROM products WHERE price > 1000)
+SELECT COUNT(*) FROM big;
+SELECT name FROM big;   -- Error: no such table: big
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+WITH big AS (SELECT * FROM products WHERE price > 1000)
+SELECT name FROM big;
+```
+
+</Right>
+
+A CTE lives only inside the single statement that defines it. For something lasting, create a view.
+
+</Mistake>
+
+<Mistake title="Writing WITH again for the second CTE">
+
+<Wrong>
+
+```sql
+WITH a AS (SELECT 1 AS x)
+WITH b AS (SELECT 2 AS y)   -- Error: syntax error
+SELECT x, y FROM a, b;
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+WITH a AS (SELECT 1 AS x),
+     b AS (SELECT 2 AS y)
+SELECT x, y FROM a, b;
+```
+
+</Right>
+
+Write `WITH` once. Separate the CTEs with commas.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a CTE?">
+
+A Common Table Expression: a named, temporary result set defined with `WITH`, which exists for the duration of a single statement. It improves readability, can be referenced several times, and can be recursive.
+
+</QA>
+
+<QA q="What is the difference between a CTE, a subquery, a view and a temporary table?">
+
+A **subquery** is inline and unnamed. A **CTE** is named and scoped to one statement. A **view** is a saved query definition stored in the database and reusable by everyone. A **temporary table** physically stores rows for the session and can be indexed. Use a CTE for readability within one query, and a temp table when a large intermediate result is reused many times.
+
+</QA>
+
+<QA q="Does a CTE improve performance?">
+
+Not by itself; it is mainly for clarity. Some databases **inline** it like a subquery, others **materialize** it (compute once and store). PostgreSQL before version 12 always materialized CTEs, which could block optimizations; newer versions inline them when safe, and you can force either with `MATERIALIZED` or `NOT MATERIALIZED`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which keyword starts a CTE?',
+      options: ['CTE', 'WITH', 'TEMP', 'DEFINE'],
+      answer: 1,
+      why: 'A CTE is written as WITH name AS ( ... ).',
+    },
+    {
+      q: 'How long does a CTE exist?',
+      options: ['Until the server restarts', 'For the session', 'Only for the statement that defines it', 'Forever'],
+      answer: 2,
+      why: 'It is scoped to a single statement and is not stored.',
+    },
+    {
+      q: 'How do you define two CTEs in one query?',
+      options: ['Two WITH keywords', 'One WITH, CTEs separated by commas', 'Use UNION', 'It is not possible'],
+      answer: 1,
+      why: 'WITH appears once; each CTE after the first follows a comma.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| One CTE | `WITH t AS (SELECT ...) SELECT * FROM t;` |
+| Two CTEs | `WITH a AS (...), b AS (...) SELECT ...` |
+| Use an earlier CTE | `b AS (SELECT ... FROM a)` |
+| Name the columns | `WITH t(id, total) AS (...)` |
+| Recursive | `WITH RECURSIVE t AS (...)` |
+| With changes | `WITH t AS (...) UPDATE ...` (PostgreSQL, SQLite) |
+
+</CheatSheet>

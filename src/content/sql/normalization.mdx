@@ -1,0 +1,225 @@
+---
+id: sql-normalization
+title: Normalization
+summary: Normalization organises data into tables so that each fact is stored once, which removes duplication and update mistakes.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Imagine a school writes the class teacher's phone number in **every student's** record. When the teacher changes her number, someone must update 40 records. Miss one, and the school now has two different numbers for the same teacher.
+
+The fix: keep the teacher's number in **one place**, and let each student record point to the teacher. That is **normalization**.
+
+</Analogy>
+
+## Simple explanation
+
+**Normalization** is splitting data into well-designed tables so that **each fact is stored in exactly one place**.
+
+Without it, you get three problems called **anomalies**:
+
+- **Update anomaly**: the same fact is in many rows, and you change only some of them
+- **Insert anomaly**: you cannot store a fact without unrelated data (cannot add a department until it has an employee)
+- **Delete anomaly**: deleting one thing loses another (deleting the last employee loses the department's location)
+
+The rules are applied in steps, called **normal forms**. Each one includes the previous one.
+
+**1NF (First Normal Form)**: every cell holds **one value**. No lists like `'1,3,5'`, no repeating columns like `phone1, phone2, phone3`. Each row is unique.
+
+**2NF**: 1NF, and every non-key column depends on the **whole** primary key. This matters only with composite keys. In `order_items (order_id, product_id, product_name)`, `product_name` depends on `product_id` alone, so it moves to `products`.
+
+**3NF**: 2NF, and no non-key column depends on **another non-key column** (no **transitive dependency**). If `employees` stores `department_id` and also `department_location`, the location depends on the department, not on the employee. Move it to `departments`.
+
+A short way to remember 3NF: every column depends on "**the key, the whole key, and nothing but the key**".
+
+**BCNF** (Boyce-Codd) is a slightly stricter 3NF. Most real designs aim for 3NF.
+
+**Denormalization** is the opposite: adding planned duplication on purpose, such as storing `order_total` on `orders`, to make reads faster. It is common in reporting and analytics, but you must keep the copies in sync.
+
+## Code example
+
+A flat, unnormalized table, where department facts repeat on every row:
+
+```sql
+CREATE TABLE staff_flat (
+  employee  TEXT,
+  dept_name TEXT,
+  dept_city TEXT          -- repeated for every employee of the department
+);
+INSERT INTO staff_flat VALUES
+  ('Ravi',  'Sales', 'Mumbai'),
+  ('Priya', 'Sales', 'Mumbai'),
+  ('Imran', 'Sales', 'Mumbay');   -- update anomaly: a typo, now there are two "cities"
+
+SELECT dept_name, COUNT(DISTINCT dept_city) AS different_cities
+FROM staff_flat GROUP BY dept_name;
+```
+
+```output
+dept_name | different_cities
+----------+-----------------
+Sales     | 2
+```
+
+The normalized design is what our sample data already uses. The location is stored once, in `departments`:
+
+```sql
+SELECT e.name, d.name AS department, d.location
+FROM employees AS e
+JOIN departments AS d ON d.id = e.department_id
+WHERE d.name = 'Sales'
+ORDER BY e.name;
+```
+
+```output
+name        | department | location
+------------+------------+---------
+Divya Menon | Sales      | Mumbai
+Imran Ali   | Sales      | Mumbai
+Priya Iyer  | Sales      | Mumbai
+Ravi Kumar  | Sales      | Mumbai
+Vikram Shah | Sales      | Mumbai
+```
+
+```sql
+UPDATE departments SET location = 'Navi Mumbai' WHERE name = 'Sales';   -- ONE row changes
+
+SELECT DISTINCT d.location
+FROM employees AS e JOIN departments AS d ON d.id = e.department_id
+WHERE d.name = 'Sales';                                                 -- every employee sees it
+```
+
+```output
+location
+-----------
+Navi Mumbai
+```
+
+<Playground kind="sql">
+
+```sql
+-- order_items stores unit_price even though products has price. Is that duplication?
+SELECT p.name, p.price AS price_today, oi.unit_price AS price_when_ordered
+FROM order_items AS oi
+JOIN products AS p ON p.id = oi.product_id
+WHERE p.price <> oi.unit_price;
+
+-- No: unit_price is the price at the time of the order, a different fact.
+-- Try it: find which order paid a different price for the Mechanical Keyboard.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Repeating columns instead of a child table">
+
+<Wrong>
+
+```sql
+CREATE TABLE contacts_bad (id INTEGER PRIMARY KEY, name TEXT, phone1 TEXT, phone2 TEXT, phone3 TEXT);
+-- breaks 1NF: what about a fourth phone? how do you search all of them?
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+CREATE TABLE contacts (id INTEGER PRIMARY KEY, name TEXT);
+CREATE TABLE contact_phones (contact_id INTEGER REFERENCES contacts (id), phone TEXT);
+```
+
+</Right>
+
+One row per phone number. Any number of phones, and one simple `WHERE phone = ...` searches them all.
+
+</Mistake>
+
+<Mistake title="Normalizing away a historical value">
+
+<Wrong>
+
+```sql
+SELECT oi.order_id, oi.quantity * p.price AS total     -- uses TODAY's price
+FROM order_items AS oi JOIN products AS p ON p.id = oi.product_id
+WHERE oi.order_id = 9;
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT order_id, SUM(quantity * unit_price) AS total   -- uses the price that was paid
+FROM order_items
+WHERE order_id = 9
+GROUP BY order_id;
+```
+
+</Right>
+
+A price at the time of sale is its own fact, not a copy. Keeping it is correct design, not duplication.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is normalization and why is it needed?">
+
+The process of organising tables so each fact is stored once, by splitting data and linking it with keys. It removes redundancy and prevents update, insert and delete anomalies, keeping data consistent.
+
+</QA>
+
+<QA q="Explain 1NF, 2NF and 3NF.">
+
+**1NF**: atomic values, no repeating groups, unique rows. **2NF**: 1NF plus no partial dependency; every non-key column depends on the whole composite key. **3NF**: 2NF plus no transitive dependency; non-key columns depend only on the key, not on other non-key columns.
+
+</QA>
+
+<QA q="What is denormalization and when would you use it?">
+
+Deliberately adding redundancy, such as stored totals or copied columns, to avoid expensive joins and speed up reads. Used in read-heavy systems, reporting tables and data warehouses. The cost is extra storage and the work of keeping copies consistent, through triggers, application code or batch jobs.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A column holds "red,green,blue". Which normal form does this break?',
+      options: ['1NF', '2NF', '3NF', 'None'],
+      answer: 0,
+      why: '1NF requires each cell to hold a single value.',
+    },
+    {
+      q: 'employees stores department_id and department_location. Which rule is broken?',
+      options: ['1NF', '2NF', '3NF', 'None'],
+      answer: 2,
+      why: 'department_location depends on department_id, a non-key column: a transitive dependency.',
+    },
+    {
+      q: 'Why would a team denormalize?',
+      options: ['To save storage', 'To speed up reads', 'To remove duplicates', 'To enforce foreign keys'],
+      answer: 1,
+      why: 'Planned redundancy avoids joins and calculations at read time.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Form | Rule | Fix |
+| --- | --- | --- |
+| 1NF | One value per cell, no repeating columns | Move lists to a child table |
+| 2NF | No column depends on part of a composite key | Move it to the table of that part |
+| 3NF | No column depends on another non-key column | Move it to its own table |
+| BCNF | Every determinant is a candidate key | Split further (rarely needed) |
+| Denormalize | Planned duplication for speed | Keep copies in sync |
+| Memory line | "The key, the whole key, nothing but the key" | |
+
+</CheatSheet>

@@ -1,0 +1,210 @@
+---
+id: sql-delete-truncate-drop
+title: DELETE vs TRUNCATE vs DROP
+summary: DELETE removes chosen rows, TRUNCATE quickly empties the whole table, and DROP removes the table itself.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a notebook.
+
+- **DELETE**: you erase some lines, one by one. You can choose which lines
+- **TRUNCATE**: you tear out all the pages in one pull. The cover stays, ready for new pages
+- **DROP**: you throw the whole notebook in the bin
+
+</Analogy>
+
+## Simple explanation
+
+All three remove something, but at different levels.
+
+| Point | DELETE | TRUNCATE | DROP |
+| --- | --- | --- | --- |
+| Removes | Chosen rows | All rows | The table and its data |
+| `WHERE` allowed | Yes | No | No |
+| Table structure stays | Yes | Yes | No |
+| Type of command | DML | DDL | DDL |
+| Speed on big tables | Slow, row by row | Fast | Fast |
+| Rollback | Yes | Depends on database | Depends on database |
+| Fires DELETE triggers | Yes | No | No |
+| Resets auto-increment | No | Yes | Not applicable |
+
+**DELETE** logs every row it removes. That makes it slow on millions of rows, but safe: it can be rolled back and it runs triggers.
+
+**TRUNCATE** does not go row by row. It releases the table's storage in one step. So it is very fast, takes no `WHERE`, runs no delete triggers, and resets the auto-increment counter to the start.
+
+**DROP** removes the table definition, its data, its indexes and its triggers.
+
+About rollback: in **MySQL**, `TRUNCATE` and `DROP` commit automatically and **cannot** be rolled back. In **PostgreSQL** and **SQL Server**, they **can** be rolled back inside a transaction.
+
+Also, `TRUNCATE` usually fails on a table that other tables reference with a foreign key.
+
+SQLite has no `TRUNCATE` command. There, `DELETE FROM table;` without `WHERE` does the same job.
+
+## Code example
+
+```sql
+CREATE TABLE logs (id INTEGER PRIMARY KEY, message TEXT);
+INSERT INTO logs (message) VALUES ('started'), ('working'), ('error'), ('finished');
+
+DELETE FROM logs WHERE message = 'error';        -- DELETE: only the chosen rows
+
+SELECT * FROM logs;
+```
+
+```output
+id | message
+---+---------
+1  | started
+2  | working
+4  | finished
+```
+
+```mysql
+TRUNCATE TABLE logs;        -- all rows gone, table still exists, AUTO_INCREMENT back to 1
+
+SELECT COUNT(*) FROM logs;  -- 0
+```
+
+```sql
+CREATE TABLE logs (id INTEGER PRIMARY KEY, message TEXT);
+
+DROP TABLE logs;                                  -- DROP: the table no longer exists
+
+SELECT COUNT(*) AS tables_named_logs
+FROM sqlite_master WHERE name = 'logs';
+```
+
+```output
+tables_named_logs
+-----------------
+0
+```
+
+<Playground kind="sql">
+
+```sql
+CREATE TABLE scratch (id INTEGER PRIMARY KEY, note TEXT);
+INSERT INTO scratch (note) VALUES ('a'), ('b'), ('c');
+
+DELETE FROM scratch WHERE note = 'b';   -- remove one row
+SELECT * FROM scratch;
+
+-- Try it: add  DELETE FROM scratch;  then  DROP TABLE scratch;
+-- and see what  SELECT * FROM scratch;  says after each one.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using WHERE with TRUNCATE">
+
+<Wrong>
+
+```mysql
+TRUNCATE TABLE orders WHERE status = 'cancelled';
+-- Error: syntax error. TRUNCATE has no WHERE
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+DELETE FROM order_items WHERE order_id IN (SELECT id FROM orders WHERE status = 'cancelled');
+DELETE FROM orders WHERE status = 'cancelled';
+```
+
+</Right>
+
+`TRUNCATE` is all or nothing. To remove only some rows, use `DELETE`.
+
+</Mistake>
+
+<Mistake title="Expecting to undo TRUNCATE in MySQL">
+
+<Wrong>
+
+```mysql
+START TRANSACTION;
+TRUNCATE TABLE logs;
+ROLLBACK;          -- too late: TRUNCATE already committed, the rows are gone
+```
+
+</Wrong>
+
+<Right>
+
+```mysql
+START TRANSACTION;
+DELETE FROM logs;
+ROLLBACK;          -- the rows are back
+```
+
+</Right>
+
+In MySQL, DDL statements such as `TRUNCATE` and `DROP` cause an implicit commit. Use `DELETE` when you may need to undo.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between DELETE, TRUNCATE and DROP?">
+
+`DELETE` is DML: it removes rows that match a `WHERE`, logs each row, fires triggers and can be rolled back. `TRUNCATE` is DDL: it removes all rows by deallocating storage, is much faster, takes no `WHERE`, fires no delete triggers and resets identity counters. `DROP` is DDL: it removes the entire table with its structure, indexes and constraints.
+
+</QA>
+
+<QA q="Why is TRUNCATE faster than DELETE?">
+
+`DELETE` removes rows one at a time, writing each to the transaction log and checking triggers and foreign keys. `TRUNCATE` deallocates the data pages (or recreates the table) and logs only that, so its cost barely depends on the number of rows.
+
+</QA>
+
+<QA q="Can TRUNCATE be rolled back?">
+
+It depends on the database. In PostgreSQL and SQL Server, yes, inside a transaction. In MySQL and Oracle, no: `TRUNCATE` performs an implicit commit.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command removes the table structure too?',
+      options: ['DELETE', 'TRUNCATE', 'DROP', 'CLEAR'],
+      answer: 2,
+      why: 'DROP TABLE removes the table definition along with its data.',
+    },
+    {
+      q: 'Which command can use a WHERE clause?',
+      options: ['DELETE', 'TRUNCATE', 'DROP', 'All three'],
+      answer: 0,
+      why: 'Only DELETE can pick which rows to remove.',
+    },
+    {
+      q: 'What happens to the auto-increment counter after TRUNCATE?',
+      options: ['It continues', 'It resets to the start', 'It becomes NULL', 'It doubles'],
+      answer: 1,
+      why: 'TRUNCATE resets the identity counter; DELETE does not.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Remove some rows | `DELETE FROM t WHERE ...;` |
+| Remove all rows, can undo | `DELETE FROM t;` |
+| Empty a big table fast | `TRUNCATE TABLE t;` |
+| Remove the table | `DROP TABLE t;` |
+| Remove only if it exists | `DROP TABLE IF EXISTS t;` |
+| Remember | DELETE = DML, TRUNCATE and DROP = DDL |
+
+</CheatSheet>

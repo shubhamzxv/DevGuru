@@ -1,0 +1,246 @@
+---
+id: sql-window-functions
+title: Window functions
+summary: A window function calculates a value across a set of related rows, while keeping every row in the result.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a class marksheet. Next to each student's marks, the teacher writes the **class average**. Every student still has their own row. The average is just extra information beside it.
+
+`GROUP BY` would give one row for the class. A **window function** keeps all the students and adds the average to each row.
+
+</Analogy>
+
+## Simple explanation
+
+A **window function** looks at a group of rows related to the current row, called the **window**, and returns a value for **each row**.
+
+The key difference from `GROUP BY`:
+
+- `GROUP BY` **collapses** rows: many rows become one per group
+- A window function **keeps** every row and adds a calculated column
+
+You make a window function by adding `OVER (...)` after a function:
+
+`SUM(salary) OVER (PARTITION BY department_id ORDER BY salary)`
+
+Inside `OVER` you can write:
+
+- `PARTITION BY`: split the rows into groups. The function restarts for each group. Leave it out and the whole result is one window
+- `ORDER BY`: the order inside each group. Needed for ranking and running totals
+- A **frame**, such as `ROWS BETWEEN 2 PRECEDING AND CURRENT ROW`: which nearby rows to include
+
+Three families of window functions:
+
+- **Aggregates**: `SUM`, `AVG`, `COUNT`, `MIN`, `MAX` with `OVER`
+- **Ranking**: `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `NTILE`
+- **Value**: `LAG`, `LEAD`, `FIRST_VALUE`, `LAST_VALUE`
+
+Window functions run **after** `WHERE`, `GROUP BY` and `HAVING`. So you cannot use one in `WHERE`. Wrap the query in a CTE or subquery and filter outside.
+
+## Code example
+
+```sql
+SELECT
+  name,
+  department_id,
+  salary,
+  ROUND(AVG(salary) OVER (PARTITION BY department_id)) AS dept_avg   -- every row is kept
+FROM employees
+WHERE department_id IN (2, 3)
+ORDER BY department_id, salary DESC;
+```
+
+```output
+name         | department_id | salary | dept_avg
+-------------+---------------+--------+---------
+Vikram Shah  | 2             | 150000 | 90000.0
+Imran Ali    | 2             | 86000  | 90000.0
+Ravi Kumar   | 2             | 82000  | 90000.0
+Priya Iyer   | 2             | 78000  | 90000.0
+Divya Menon  | 2             | 54000  | 90000.0
+Meera Nair   | 3             | 120000 | 83000.0
+Suresh Patil | 3             | 68000  | 83000.0
+Tanvi Joshi  | 3             | 61000  | 83000.0
+```
+
+```sql
+SELECT
+  name,
+  salary,
+  SUM(salary) OVER ()                                   AS company_total,   -- empty OVER: all rows
+  ROUND(100.0 * salary / SUM(salary) OVER (), 1)        AS percent_of_total
+FROM employees
+ORDER BY salary DESC
+LIMIT 4;
+```
+
+```output
+name          | salary | company_total | percent_of_total
+--------------+--------+---------------+-----------------
+Anita Rao     | 185000 | 1911000       | 9.7
+Vikram Shah   | 150000 | 1911000       | 7.8
+Rohit Verma   | 140000 | 1911000       | 7.3
+Asha Kulkarni | 140000 | 1911000       | 7.3
+```
+
+```sql
+WITH ranked AS (
+  SELECT name, department_id, salary,
+         RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS rnk
+  FROM employees
+  WHERE department_id IS NOT NULL
+)
+SELECT department_id, name, salary
+FROM ranked
+WHERE rnk = 1                                -- filter OUTSIDE, in the outer query
+ORDER BY department_id;
+```
+
+```output
+department_id | name           | salary
+--------------+----------------+-------
+1             | Anita Rao      | 185000
+2             | Vikram Shah    | 150000
+3             | Meera Nair     | 120000
+4             | Farah Sheikh   | 130000
+5             | Lakshmi Pillai | 64000
+```
+
+<Playground kind="sql">
+
+```sql
+-- Each product beside the average and the highest price of its category
+SELECT
+  category,
+  name,
+  price,
+  ROUND(AVG(price) OVER (PARTITION BY category)) AS category_avg,
+  MAX(price) OVER (PARTITION BY category)        AS category_max
+FROM products
+ORDER BY category, price DESC;
+
+-- Try it: add  price - AVG(price) OVER (PARTITION BY category)  as a column named diff.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using a window function in WHERE">
+
+<Wrong>
+
+```sql
+SELECT name, salary
+FROM employees
+WHERE RANK() OVER (ORDER BY salary DESC) <= 3;   -- Error: misuse of window function RANK()
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, salary
+FROM (
+  SELECT name, salary, RANK() OVER (ORDER BY salary DESC) AS rnk
+  FROM employees
+) AS t
+WHERE rnk <= 3;
+```
+
+</Right>
+
+Window functions are calculated after `WHERE`. Compute them in a subquery or CTE, then filter.
+
+</Mistake>
+
+<Mistake title="Using GROUP BY when you need every row">
+
+<Wrong>
+
+```sql
+SELECT department_id, AVG(salary) AS dept_avg
+FROM employees
+GROUP BY department_id;   -- runs, but the employee names are gone
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT name, salary, AVG(salary) OVER (PARTITION BY department_id) AS dept_avg
+FROM employees
+LIMIT 5;
+```
+
+</Right>
+
+When you need the detail rows **and** the group value together, use `OVER (PARTITION BY ...)`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a window function?">
+
+A function that performs a calculation across a set of rows related to the current row, defined by the `OVER` clause, without collapsing the rows. It is used for rankings, running totals, moving averages, and comparing a row with its group or with neighbouring rows.
+
+</QA>
+
+<QA q="What is the difference between GROUP BY and PARTITION BY?">
+
+`GROUP BY` reduces each group to one output row. `PARTITION BY` only divides the rows into windows for the calculation; every input row still appears in the output with the computed value attached.
+
+</QA>
+
+<QA q="What is the difference between ROWS and RANGE in a frame?">
+
+`ROWS` counts physical rows: "the two rows before this one". `RANGE` works on values: rows with the same `ORDER BY` value as the current row are treated together as peers. With ties in the ordering column, `RANGE` (the default when `ORDER BY` is present) includes all tied rows, which can surprise you in running totals.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does a window function do to the number of rows?',
+      options: ['Reduces to one per group', 'Keeps every row', 'Doubles them', 'Removes duplicates'],
+      answer: 1,
+      why: 'It adds a calculated value to each row without collapsing rows.',
+    },
+    {
+      q: 'Which clause turns a function into a window function?',
+      options: ['GROUP BY', 'OVER', 'HAVING', 'WINDOWED'],
+      answer: 1,
+      why: 'OVER ( ... ) defines the window the function works on.',
+    },
+    {
+      q: 'Why can you not use a window function in WHERE?',
+      options: ['It is too slow', 'WHERE runs before window functions are calculated', 'WHERE only accepts numbers', 'You can'],
+      answer: 1,
+      why: 'Window functions are evaluated after WHERE, GROUP BY and HAVING.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Code |
+| --- | --- |
+| Group value on every row | `AVG(x) OVER (PARTITION BY g)` |
+| Grand total on every row | `SUM(x) OVER ()` |
+| Rank inside a group | `RANK() OVER (PARTITION BY g ORDER BY x DESC)` |
+| Running total | `SUM(x) OVER (ORDER BY d)` |
+| Moving average of 3 rows | `AVG(x) OVER (ORDER BY d ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)` |
+| Previous row's value | `LAG(x) OVER (ORDER BY d)` |
+| Filter on the result | wrap in a CTE, then `WHERE` |
+
+</CheatSheet>

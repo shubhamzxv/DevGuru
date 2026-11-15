@@ -1,5 +1,5 @@
 import type { MDXContent } from 'mdx/types';
-import type { TopicRef, Track } from './tracks';
+import { getTrack, TRACKS, type TopicRef, type Track } from './tracks';
 
 /** The block between --- lines at the top of every topic MDX file. */
 export interface TopicFrontmatter {
@@ -66,4 +66,49 @@ export function findTopic(track: Track, topicSlug: string): TopicPosition | unde
     prev: index > 0 ? written[index - 1] : undefined,
     next: index >= 0 ? written[index + 1] : undefined,
   };
+}
+
+export interface ResolvedTopic {
+  track: Track;
+  topic: TopicRef;
+  path: string;
+  title: string;
+  trackName: string;
+}
+
+/** Turns a saved key like "sql/sql-joins" back into a topic. undefined if it no longer exists. */
+export function resolveTopicKey(key: string): ResolvedTopic | undefined {
+  const slash = key.indexOf('/');
+  const track = getTrack(key.slice(0, slash));
+  const topic = track && allTopics(track).find((t) => t.id === key.slice(slash + 1));
+  if (!track || !topic) return undefined;
+  return {
+    track,
+    topic,
+    path: `/track/${track.slug}/${topic.slug}`,
+    title: topic.title,
+    trackName: track.name,
+  };
+}
+
+/**
+ * The first written, not-completed topic after the one at `lastPath`
+ * (wrapping round to the start of the same track).
+ */
+export function nextTopicToLearn(
+  lastPath: string | undefined,
+  completed: readonly string[],
+): { path: string; title: string } | undefined {
+  const match = /^\/track\/([^/]+)\/([^/]+)$/.exec(lastPath ?? '');
+  const track = match ? getTrack(match[1]) : TRACKS[0];
+  if (!track) return undefined;
+  const written = writtenTopics(track);
+  const start = match ? written.findIndex((t) => t.slug === match[2]) + 1 : 0;
+  const ordered = [...written.slice(start), ...written.slice(0, start)];
+  const next = ordered.find(
+    (t) => t.slug !== match?.[2] && !completed.includes(topicKey(track.slug, t.id)),
+  );
+  return (
+    next && { path: `/track/${track.slug}/${next.slug}`, title: `${track.name}: ${next.title}` }
+  );
 }

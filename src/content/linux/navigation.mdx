@@ -1,0 +1,198 @@
+---
+id: linux-navigation
+title: Navigation (pwd, ls, cd)
+summary: pwd shows where you are, ls shows what is in a folder, and cd moves you to another folder.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a big office building. **pwd** is asking "which floor and room am I in?". **ls** is looking around the room to see what is there. **cd** is walking to another room.
+
+An **absolute path** is the full address from the main gate: `/home/guru/app`. A **relative path** is directions from where you stand: "the next room", `app`.
+
+</Analogy>
+
+## Simple explanation
+
+Linux keeps everything in one tree of folders (directories) that starts at **/**, called the **root**. Your own files live in your **home folder**, `/home/<your name>`, written as `~` for short.
+
+The three commands you use all day:
+
+- **pwd** (print working directory): prints the folder you are in
+- **ls**: lists the folder. Useful options:
+  - `ls -l` long format: permissions, owner, size, date
+  - `ls -a` also shows hidden files (names starting with a dot, like `.bashrc`)
+  - `ls -la` both together
+  - `ls app` lists another folder without going there
+- **cd** (change directory): moves you
+  - `cd app` into a folder inside the current one (relative)
+  - `cd /var/log` to an exact place (absolute, starts with `/`)
+  - `cd ..` up one level; `cd ../..` up two
+  - `cd` or `cd ~` back home
+  - `cd -` back to the previous folder
+
+Special names: `.` is "this folder", `..` is "the parent folder".
+
+Two time savers: press **Tab** to complete a file or folder name, and press **Up arrow** to repeat earlier commands.
+
+Linux is **case-sensitive**: `App` and `app` are different folders.
+
+## Code example
+
+```bash
+pwd                 # where am I?
+ls                  # what is here?
+cd app              # go into app (relative path)
+pwd
+ls -l               # details of every file
+cd ..               # up one level
+cd /var/log         # absolute path
+pwd
+cd -                # back to the previous folder
+```
+
+```output
+/home/guru
+app/  logs/  notes.txt  scripts/
+/home/guru/app
+total 16
+-rw-r--r-- 1 guru  guru    199 Nov 15 09:00 Dockerfile
+-rw-r--r-- 1 guru  guru    110 Nov 15 09:00 app.py
+-rw-r--r-- 1 guru  guru    122 Nov 15 09:00 compose.yaml
+-rw-r--r-- 1 guru  guru     30 Nov 15 09:00 requirements.txt
+/var/log
+/home/guru
+```
+
+<Playground kind="terminal">
+
+```bash
+pwd
+ls
+ls -la
+cd logs
+pwd
+ls
+cd ..
+tree
+cd /etc
+ls
+cd
+pwd
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Mixing up absolute and relative paths">
+
+<Wrong>
+
+```bash
+cd /app          # looks for app at the ROOT of the disk
+# bash: cd: /app: No such file or directory
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+cd app           # app inside the current folder
+cd ~/app         # or the full path from home
+```
+
+</Right>
+
+A path that starts with `/` always starts from the root. Without `/`, it starts from where you are.
+
+</Mistake>
+
+<Mistake title="Wrong letter case">
+
+<Wrong>
+
+```bash
+cd Logs
+# bash: cd: Logs: No such file or directory
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+cd logs          # or type "cd l" and press Tab
+```
+
+</Right>
+
+Linux treats `Logs` and `logs` as different names. Tab completion avoids typing mistakes.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between an absolute and a relative path?">
+
+An absolute path starts from the root `/` and works from anywhere, for example `/home/guru/app/app.py`. A relative path starts from the current directory, for example `app/app.py` or `../logs`. `.` means the current directory and `..` the parent.
+
+</QA>
+
+<QA q="How do you see hidden files?">
+
+`ls -a` (or `ls -la` for details). Hidden files are files whose names start with a dot, such as `.bashrc`, `.env` and `.git`.
+
+</QA>
+
+<QA q="What does ~ mean?">
+
+The current user's home directory, for example `/home/guru`. `cd` with no argument also goes there. `~other` is another user's home.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command prints the folder you are in?',
+      options: ['ls', 'cd', 'pwd', 'where'],
+      answer: 2,
+      why: 'pwd = print working directory.',
+    },
+    {
+      q: 'You are in /home/guru/app. Where does cd .. take you?',
+      options: ['/', '/home', '/home/guru', '/home/guru/app'],
+      answer: 2,
+      why: '.. is the parent folder.',
+    },
+    {
+      q: 'Which shows hidden files with details?',
+      options: ['ls -h', 'ls -la', 'ls --hidden', 'cd -a'],
+      answer: 1,
+      why: '-l is the long format and -a includes names starting with a dot.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Where am I? | `pwd` |
+| List | `ls` |
+| List with details | `ls -l` |
+| Include hidden files | `ls -la` |
+| Go into a folder | `cd app` |
+| Go up one level | `cd ..` |
+| Go home | `cd` or `cd ~` |
+| Go back | `cd -` |
+| Exact place | `cd /var/log` |
+| See the tree | `tree` |
+
+</CheatSheet>

@@ -44,3 +44,14 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Printing (for example a cheat sheet): plain black on white, no app frame. */
+@media print {
+  html.dark {
+    color-scheme: light;
+  }
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+}

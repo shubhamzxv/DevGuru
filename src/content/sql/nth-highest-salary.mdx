@@ -1,0 +1,287 @@
+---
+id: sql-nth-highest-salary
+title: 2nd and Nth highest salary
+summary: The most asked SQL interview query, solved four ways, with the tie and NULL traps that interviewers check for.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A class's marks are 95, 90, 90, 85. Who came **second**?
+
+If you say "the second student in the list", you get 90. Who came **third**? The third student also has 90, but the real third-highest **mark** is 85.
+
+This question is about **distinct values**, not positions in a list. That one detail is what the interviewer is testing.
+
+</Analogy>
+
+## Simple explanation
+
+Our salaries from the top: **185000, 150000, 140000, 140000, 130000, ...** Two people share 140000.
+
+So the answers are:
+
+- 1st highest = 185000
+- 2nd highest = 150000
+- 3rd highest = 140000 (two people)
+- 4th highest = **130000**, not 140000 again
+
+There are four standard ways. Know at least two, and say which handles ties.
+
+| Method | Handles ties | Works for any N | Notes |
+| --- | --- | --- | --- |
+| `MAX` with a subquery | Yes | Only 2nd | Simplest for "second highest" |
+| `DISTINCT` + `LIMIT` / `OFFSET` | Yes | Yes | Short; returns no row if N is too big |
+| `DENSE_RANK()` | Yes | Yes | Best answer; also gives every tied person |
+| Correlated `COUNT(DISTINCT)` | Yes | Yes | Works without window functions |
+
+Traps the interviewer checks:
+
+1. **Ties**: `ORDER BY salary DESC LIMIT 1 OFFSET 3` without `DISTINCT` returns the 4th **row**, which is 140000 again. Wrong
+2. **ROW_NUMBER** has the same problem; use **DENSE_RANK**
+3. **No such salary**: if there is no Nth salary, many interviewers want `NULL`, not an empty result. Wrap the query: `SELECT (subquery) AS nth_salary`
+4. **Per department**: add `PARTITION BY department_id`
+
+## Code example
+
+Method 1: second highest with `MAX`.
+
+```sql
+SELECT MAX(salary) AS second_highest
+FROM employees
+WHERE salary < (SELECT MAX(salary) FROM employees);
+```
+
+```output
+second_highest
+--------------
+150000
+```
+
+Method 2: Nth highest with `DISTINCT` and `OFFSET` (N = 4, so skip 3). The outer `SELECT` returns `NULL` when there is no such salary.
+
+```sql
+SELECT (
+  SELECT DISTINCT salary
+  FROM employees
+  ORDER BY salary DESC
+  LIMIT 1 OFFSET 3                     -- OFFSET = N - 1
+) AS fourth_highest;
+```
+
+```output
+fourth_highest
+--------------
+130000
+```
+
+Method 3: `DENSE_RANK`, which also shows who earns it.
+
+```sql
+WITH ranked AS (
+  SELECT name, salary, DENSE_RANK() OVER (ORDER BY salary DESC) AS rnk
+  FROM employees
+)
+SELECT name, salary FROM ranked WHERE rnk = 3;   -- the 3rd highest salary: both people
+```
+
+```output
+name          | salary
+--------------+-------
+Rohit Verma   | 140000
+Asha Kulkarni | 140000
+```
+
+Method 4: correlated subquery. "Exactly N - 1 distinct salaries are higher than mine."
+
+```sql
+SELECT DISTINCT e.salary AS fourth_highest
+FROM employees AS e
+WHERE 3 = (                                       -- N - 1
+  SELECT COUNT(DISTINCT e2.salary)
+  FROM employees AS e2
+  WHERE e2.salary > e.salary
+);
+```
+
+```output
+fourth_highest
+--------------
+130000
+```
+
+Second highest **per department**:
+
+```sql
+WITH ranked AS (
+  SELECT d.name AS department, e.name, e.salary,
+         DENSE_RANK() OVER (PARTITION BY e.department_id ORDER BY e.salary DESC) AS rnk
+  FROM employees AS e
+  JOIN departments AS d ON d.id = e.department_id
+)
+SELECT department, name, salary FROM ranked WHERE rnk = 2 ORDER BY department, name;
+```
+
+```output
+department  | name          | salary
+------------+---------------+-------
+Engineering | Asha Kulkarni | 140000
+Engineering | Rohit Verma   | 140000
+Finance     | Gaurav Bose   | 76000
+Marketing   | Suresh Patil  | 68000
+Sales       | Imran Ali     | 86000
+Support     | Manoj Yadav   | 42000
+```
+
+A reusable function in MySQL (asked on LeetCode as "Nth Highest Salary"):
+
+```mysql
+CREATE FUNCTION getNthHighestSalary(N INT) RETURNS INT
+BEGIN
+  SET N = N - 1;
+  RETURN (SELECT DISTINCT salary FROM employees ORDER BY salary DESC LIMIT 1 OFFSET N);
+END
+```
+
+<Playground kind="sql">
+
+```sql
+-- Change N to try different positions. Try 25: there is no 25th salary, so you get NULL.
+WITH ranked AS (
+  SELECT salary, DENSE_RANK() OVER (ORDER BY salary DESC) AS rnk
+  FROM employees
+)
+SELECT (SELECT DISTINCT salary FROM ranked WHERE rnk = 5) AS nth_highest;
+
+-- Try it: find the 2nd LOWEST salary (change DESC to ASC).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Skipping rows instead of distinct values">
+
+<Wrong>
+
+```sql
+SELECT salary FROM employees
+ORDER BY salary DESC
+LIMIT 1 OFFSET 3;          -- 140000: the 4th ROW, a repeat of the 3rd highest
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT DISTINCT salary FROM employees
+ORDER BY salary DESC
+LIMIT 1 OFFSET 3;          -- 130000: the 4th highest VALUE
+```
+
+</Right>
+
+Without `DISTINCT`, tied salaries take up extra positions.
+
+</Mistake>
+
+<Mistake title="Using ROW_NUMBER or RANK">
+
+<Wrong>
+
+```sql
+SELECT salary FROM (
+  SELECT salary, RANK() OVER (ORDER BY salary DESC) AS r FROM employees
+) AS t
+WHERE r = 4;               -- no rows: RANK jumps from 3 to 5 after the tie
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT DISTINCT salary FROM (
+  SELECT salary, DENSE_RANK() OVER (ORDER BY salary DESC) AS r FROM employees
+) AS t
+WHERE r = 4;               -- 130000
+```
+
+</Right>
+
+`RANK` leaves gaps after ties and `ROW_NUMBER` splits ties. Only `DENSE_RANK` counts distinct values.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Find the second highest salary.">
+
+```sql
+SELECT MAX(salary) FROM employees
+WHERE salary < (SELECT MAX(salary) FROM employees);
+```
+
+It handles ties and returns `NULL` if everyone earns the same.
+
+</QA>
+
+<QA q="Find the Nth highest salary. How do you handle ties?">
+
+Use `DENSE_RANK() OVER (ORDER BY salary DESC)` in a CTE and filter `rnk = N`; ties share a rank and no rank is skipped. Alternatively `SELECT DISTINCT salary ... ORDER BY salary DESC LIMIT 1 OFFSET N-1`. Wrap it in an outer `SELECT (...)` to return `NULL` when there is no Nth salary.
+
+</QA>
+
+<QA q="Find the employees with the 2nd highest salary in each department.">
+
+```sql
+WITH r AS (
+  SELECT name, department_id, salary,
+         DENSE_RANK() OVER (PARTITION BY department_id ORDER BY salary DESC) AS rnk
+  FROM employees
+)
+SELECT * FROM r WHERE rnk = 2;
+```
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Salaries: 100, 90, 90, 80. What is the 3rd highest salary?',
+      options: ['90', '80', '100', 'There is none'],
+      answer: 1,
+      why: 'Distinct values are 100, 90, 80, so the 3rd highest is 80.',
+    },
+    {
+      q: 'Which ranking function is right for the Nth highest value?',
+      options: ['ROW_NUMBER', 'RANK', 'DENSE_RANK', 'NTILE'],
+      answer: 2,
+      why: 'DENSE_RANK gives ties the same rank and leaves no gaps.',
+    },
+    {
+      q: 'For the 5th highest with LIMIT and OFFSET, what is the OFFSET?',
+      options: ['5', '4', '6', '0'],
+      answer: 1,
+      why: 'Skip N - 1 values, then take one.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Question | Query |
+| --- | --- |
+| 2nd highest | `SELECT MAX(salary) FROM e WHERE salary < (SELECT MAX(salary) FROM e)` |
+| Nth highest | `SELECT DISTINCT salary FROM e ORDER BY salary DESC LIMIT 1 OFFSET N-1` |
+| Nth highest, NULL if none | `SELECT ( ...the query above... ) AS nth` |
+| Nth highest + names | `DENSE_RANK() OVER (ORDER BY salary DESC)`, then `rnk = N` |
+| Per department | `DENSE_RANK() OVER (PARTITION BY dept ORDER BY salary DESC)` |
+| No window functions | `WHERE N-1 = (SELECT COUNT(DISTINCT salary) FROM e2 WHERE e2.salary > e.salary)` |
+
+</CheatSheet>
