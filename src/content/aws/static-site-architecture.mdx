@@ -1,0 +1,225 @@
+---
+id: aws-static-site-architecture
+title: Static site (S3 + CloudFront)
+summary: The standard way to host a React or Vite single-page app on AWS is a private S3 bucket behind CloudFront with Origin Access Control, an ACM certificate in us-east-1, a Route 53 alias record, SPA fallback to index.html, long caching for hashed assets, security headers, and a CI pipeline that syncs the build and invalidates index.html.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **printed brochure distributed by a courier network**. The brochure is printed once (the build), the master copies sit in a locked storeroom (private S3), and couriers in every city (CloudFront) keep copies to hand out instantly. When you print a new edition, you replace the cover page (index.html) everywhere, and the cover tells readers which new inside pages to pick up.
+
+</Analogy>
+
+## Simple explanation
+
+**The pieces and why each is there**
+
+| Piece | Setting | Why |
+| --- | --- | --- |
+| **S3 bucket** | private, Block Public Access ON, versioning | stores `dist/`; never public |
+| **CloudFront distribution** | origin = bucket with **OAC**, default root object `index.html` | fast global delivery, HTTPS, only way in |
+| **Bucket policy** | allow `cloudfront.amazonaws.com` with `AWS:SourceArn` = the distribution | locks the bucket to this distribution |
+| **ACM certificate** | in **us-east-1**, DNS-validated | HTTPS on `shop.example.com` |
+| **Route 53** | alias A/AAAA `shop.example.com` → distribution | apex domain works |
+| **SPA fallback** | 403/404 → `/index.html`, status 200 (or a CloudFront Function) | `/products/7` loads the app, not an error |
+| **Caching** | hashed `assets/*` = 1 year immutable; `index.html` = no-cache | fast + instant updates |
+| **Headers** | response headers policy: HSTS, CSP, X-Content-Type-Options, frame options | security |
+| **Optional** | WAF, geo restriction, logs, `/api/*` behavior to an ALB/API Gateway | protection, one domain |
+
+**Deploy pipeline (GitHub Actions)**
+
+1. `npm ci && npm test && npm run build`
+2. Assume an AWS role with **OIDC** (no stored keys)
+3. `aws s3 sync dist/ s3://bucket --delete` with cache headers (assets long, `index.html` no-cache)
+4. `aws cloudfront create-invalidation --paths "/index.html"`
+
+**Cost**: a small site costs a few rupees to a few dollars a month (S3 storage + CloudFront transfer, which has a free monthly allowance).
+
+**Why not S3 static website hosting alone?** It is HTTP-only, needs a public bucket, and has no CDN. Use it only for redirects or quick experiments.
+
+## Code example
+
+GitHub Actions deploy job:
+
+```yaml
+name: deploy
+on: { push: { branches: [main] } }
+permissions: { id-token: write, contents: read }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci && npm test && npm run build
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/github-deploy-frontend
+          aws-region: ap-south-1
+      - run: |
+          aws s3 sync dist/ s3://shop-frontend --delete --exclude index.html \
+            --cache-control "public,max-age=31536000,immutable"
+          aws s3 cp dist/index.html s3://shop-frontend/index.html --cache-control "no-cache"
+          aws cloudfront create-invalidation --distribution-id E2ABCDEF123456 --paths "/index.html"
+```
+
+```output
+upload: dist/assets/index-3f9a1c.js to s3://shop-frontend/assets/index-3f9a1c.js
+upload: dist/assets/index-8b2e4d.css to s3://shop-frontend/assets/index-8b2e4d.css
+delete: s3://shop-frontend/assets/index-1a0b9c.js
+upload: dist/index.html to s3://shop-frontend/index.html
+{ "Invalidation": { "Id": "I2K9...", "Status": "InProgress" } }
+```
+
+Old hashed files are deleted by `--delete`; to avoid errors for users with an open old tab, you can keep previous assets for a while (sync without `--delete` and clean up with a lifecycle rule).
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "user", "label": "Visitor", "icon": "🧑", "col": 0, "row": 1, "info": "Opens https://shop.example.com/products/7.", "example": "Deep link shared on WhatsApp" },
+    { "id": "dns", "label": "Route 53 alias", "icon": "📒", "col": 1, "row": 0, "info": "shop.example.com → d1234abcd.cloudfront.net.", "example": "A + AAAA alias" },
+    { "id": "cf", "label": "CloudFront", "icon": "🌍", "col": 1, "row": 2, "info": "TLS with the us-east-1 ACM cert, security headers, cache. /products/7 is not a file → error response rule returns /index.html with 200.", "example": "x-cache: Hit from cloudfront" },
+    { "id": "s3", "label": "S3 bucket (private)", "icon": "🪣", "col": 2, "row": 1, "info": "index.html + assets/*; readable only by this distribution through OAC.", "example": "shop-frontend" },
+    { "id": "ci", "label": "GitHub Actions", "icon": "🤖", "col": 3, "row": 0, "info": "Builds, syncs to S3 with cache headers, invalidates /index.html, using an OIDC role.", "example": "On push to main" },
+    { "id": "api", "label": "API (separate)", "icon": "🖥️", "col": 3, "row": 2, "info": "The React app calls the backend at api.shop.example.com (or /api/* behavior).", "example": "API Gateway / ALB" }
+  ],
+  "edges": [
+    ["user", "dns", "lookup"],
+    ["user", "cf", "HTTPS"],
+    ["cf", "s3", "OAC (on miss)"],
+    ["ci", "s3", "sync"],
+    ["ci", "cf", "invalidate"],
+    ["user", "api", "fetch"]
+  ],
+  "flows": [
+    {
+      "name": "Deep link",
+      "steps": [
+        ["user", "Opens /products/7."],
+        ["dns", "Resolves to CloudFront."],
+        ["cf", "No such object → fallback to /index.html (200)."],
+        ["s3", "index.html fetched (no-cache), assets from the edge cache."],
+        ["user", "React Router shows product 7, then the app calls the API."]
+      ]
+    },
+    {
+      "name": "New release",
+      "steps": [
+        ["ci", "Upload new hashed assets and index.html."],
+        ["cf", "Invalidate /index.html."],
+        ["user", "Next visit loads the new index.html pointing to the new assets."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Public website bucket">
+
+<Wrong>
+
+```text
+S3 static website hosting + public-read bucket policy, http:// only, no CDN.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Private bucket + CloudFront (OAC) + ACM HTTPS + Route 53 alias.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Long-lived AWS keys in CI">
+
+<Wrong>
+
+```text
+AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY of an admin user saved as GitHub secrets.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+GitHub OIDC → assume a role that may only s3:PutObject/DeleteObject on this bucket and create invalidations.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How would you host a React single-page application on AWS?">
+
+Build it in CI, upload the output to a private S3 bucket, serve it through CloudFront with Origin Access Control and a bucket policy restricted to the distribution, attach an ACM certificate from us-east-1 and a Route 53 alias, configure SPA fallback to index.html, cache hashed assets long and index.html briefly, add security headers (and WAF if needed), and invalidate index.html on each deploy. Amplify Hosting is the managed alternative.
+
+</QA>
+
+<QA q="Why not just enable S3 static website hosting?">
+
+Website endpoints support only HTTP, require a public bucket, and lack CDN caching, custom TLS, WAF and edge features. CloudFront in front of a private bucket provides HTTPS, global performance and better security.
+
+</QA>
+
+<QA q="How do you deploy without users seeing stale files?">
+
+Use content-hashed asset names so new builds never overwrite old URLs, set long immutable caching on them, keep index.html no-cache or short TTL, and invalidate index.html after uploading. Keep old assets for a while so open tabs do not break.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Only CloudFront should read the bucket. Use...',
+      options: ['Public ACL', 'Origin Access Control + bucket policy', 'NAT gateway', 'IAM user'],
+      answer: 1,
+      why: 'OAC with SourceArn condition.',
+    },
+    {
+      q: '/products/7 returns 403 from S3. Fix?',
+      options: ['Make the bucket public', 'Error response → /index.html with 200', 'Delete the route', 'Use Route 53 weights'],
+      answer: 1,
+      why: 'SPA fallback.',
+    },
+    {
+      q: 'CI should authenticate to AWS with...',
+      options: ['Root keys', 'OIDC role', 'Admin user keys', 'Email password'],
+      answer: 1,
+      why: 'Short-lived credentials.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Piece | Setting |
+| --- | --- |
+| S3 | private · Block Public Access · versioning |
+| CloudFront | OAC · root `index.html` · 403/404 → `/index.html` 200 |
+| Cert | ACM **us-east-1** |
+| DNS | Route 53 alias A/AAAA |
+| Cache | `assets/*` 1 year immutable · `index.html` no-cache |
+| Headers | HSTS · CSP · nosniff · frame-ancestors |
+| CI | OIDC role · `s3 sync` · `create-invalidation /index.html` |
+| Managed option | Amplify Hosting |
+
+</CheatSheet>

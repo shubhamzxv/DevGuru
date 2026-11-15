@@ -1,0 +1,224 @@
+---
+id: aws-cloudfront
+title: CloudFront
+summary: CloudFront is AWS's content delivery network; it caches responses from an origin (S3, an ALB, API Gateway) at hundreds of edge locations so users get files from a nearby server, with HTTPS via ACM certificates, cache behaviors and policies per path, invalidations, Origin Access Control for private S3 buckets, WAF and edge functions.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A chain of **local warehouses**. Your main factory (the **origin**) is in Mumbai. Instead of shipping every order from Mumbai, copies of popular products are stocked in warehouses in Delhi, London and Singapore (**edge locations**). A customer is served from the nearest warehouse; only when it does not have the item (a **cache miss**) does the warehouse order it from the factory.
+
+</Analogy>
+
+## Simple explanation
+
+| Term | Meaning |
+| --- | --- |
+| **Distribution** | your CDN config, with a domain like `d1234abcd.cloudfront.net` (+ your own `shop.example.com`) |
+| **Origin** | where the real content lives: S3 bucket, ALB, API Gateway, any HTTP server |
+| **Edge location** | 600+ points of presence that cache responses |
+| **Cache behavior** | rules per path pattern: `/static/*` cache a year, `/api/*` no cache, forward cookies/headers |
+| **Cache key / TTL** | what makes two requests "the same" (path, chosen query strings/headers/cookies) and how long to keep it |
+| **Invalidation** | remove cached paths before their TTL: `/index.html`, `/*` |
+
+**Typical setup for a React/Vite site**:
+
+- Origin: private S3 bucket with **Origin Access Control (OAC)** (only CloudFront may read it)
+- Default root object `index.html`; SPA routing: custom error response 403/404 → `/index.html` with 200 (or a CloudFront Function)
+- Hashed assets (`assets/index-3f9a1c.js`) cached for a year; `index.html` short TTL or invalidated on deploy
+- **HTTPS**: ACM certificate in **us-east-1** (required for CloudFront), redirect HTTP → HTTPS, HTTP/2 and HTTP/3
+- Route 53 **alias** `shop.example.com` → the distribution
+
+Other features:
+
+| Feature | Use |
+| --- | --- |
+| Multiple origins | `/api/*` → ALB, everything else → S3, one domain (no CORS) |
+| Compression | gzip/brotli automatically |
+| Response headers policy | HSTS, CSP, X-Frame-Options at the edge |
+| **AWS WAF** | block SQL injection, bots, rate-limit by IP |
+| Signed URLs / cookies | private paid content |
+| **CloudFront Functions** / Lambda@Edge | rewrites, redirects, headers, auth at the edge |
+| Geo restriction | allow/deny countries |
+| Origin Shield | extra cache layer to protect the origin |
+
+## Code example
+
+Deploy a Vite build:
+
+```bash
+npm run build
+aws s3 sync dist/ s3://shop-frontend --delete \
+  --exclude index.html --cache-control "public,max-age=31536000,immutable"
+aws s3 cp dist/index.html s3://shop-frontend/index.html --cache-control "no-cache"
+aws cloudfront create-invalidation --distribution-id E2ABCDEF123456 --paths "/index.html"
+```
+
+```output
+{
+    "Location": "https://cloudfront.amazonaws.com/2020-05-31/distribution/E2ABCDEF123456/invalidation/I7XYZ...",
+    "Invalidation": { "Id": "I7XYZ...", "Status": "InProgress", "InvalidationBatch": { "Paths": { "Quantity": 1, "Items": ["/index.html"] } } }
+}
+```
+
+See whether a response came from the cache:
+
+```bash
+curl -sI https://shop.example.com/assets/index-3f9a1c.js | grep -i -E "x-cache|age|cache-control"
+```
+
+```output
+cache-control: public,max-age=31536000,immutable
+x-cache: Hit from cloudfront
+age: 5231
+```
+
+The first request in a location shows `Miss from cloudfront`; later ones show `Hit`.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "user", "label": "User in London", "icon": "🧑", "col": 0, "row": 1, "info": "Opens https://shop.example.com.", "example": "DNS alias → CloudFront" },
+    { "id": "edge", "label": "Edge location (London)", "icon": "📍", "col": 1, "row": 1, "info": "Terminates TLS, applies WAF and the cache behavior, serves cached copies.", "example": "x-cache: Hit from cloudfront" },
+    { "id": "waf", "label": "AWS WAF", "icon": "🧱", "col": 1, "row": 0, "info": "Blocks attacks and rate-limits before anything reaches your servers.", "example": "Rate limit 2,000 req / 5 min per IP" },
+    { "id": "s3", "label": "S3 origin (private)", "icon": "🪣", "col": 2, "row": 0, "info": "Built React app. Only CloudFront can read it (OAC + bucket policy).", "example": "/index.html, /assets/*" },
+    { "id": "alb", "label": "ALB origin", "icon": "⚖️", "col": 2, "row": 2, "info": "Behavior /api/* goes here with caching disabled and headers/cookies forwarded.", "example": "api tasks in ap-south-1" }
+  ],
+  "edges": [
+    ["user", "edge", "HTTPS"],
+    ["waf", "edge", "filters"],
+    ["edge", "s3", "miss: /*"],
+    ["edge", "alb", "/api/*"]
+  ],
+  "flows": [
+    {
+      "name": "Static file",
+      "steps": [
+        ["user", "GET /assets/index-3f9a1c.js"],
+        ["edge", "Cached in London? First time: Miss."],
+        ["s3", "Fetched from the bucket in Mumbai once."],
+        ["edge", "Stored for a year; every later London user gets a Hit in ~10 ms."]
+      ]
+    },
+    {
+      "name": "API call",
+      "steps": [
+        ["user", "POST /api/orders"],
+        ["waf", "Checked by WAF rules."],
+        ["edge", "Behavior /api/*: no caching, forward Authorization."],
+        ["alb", "The ALB in Mumbai handles it over AWS's network."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Caching index.html for a long time">
+
+<Wrong>
+
+```text
+Everything uploaded with max-age=31536000; after a deploy users still load the old index.html
+pointing to old JS files.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Hashed assets: long cache + immutable. index.html: no-cache (or short TTL) + invalidate /index.html on deploy.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Certificate in the wrong Region">
+
+<Wrong>
+
+```text
+ACM certificate requested in ap-south-1 → not selectable in the CloudFront distribution.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Request the certificate for CloudFront in us-east-1 (N. Virginia); ALB certificates stay in their own Region.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a CDN and how does CloudFront work?">
+
+A content delivery network caches content at edge locations close to users. CloudFront receives requests at the nearest edge, serves cached objects when available and otherwise fetches from the configured origin (S3, ALB, API Gateway or custom HTTP), caching per the behavior's cache policy and TTLs. It reduces latency and origin load, and adds TLS, WAF, compression and edge logic.
+
+</QA>
+
+<QA q="How do you serve a private S3 bucket through CloudFront?">
+
+Keep Block Public Access on, create an Origin Access Control in the distribution for the S3 origin, and add a bucket policy that allows s3:GetObject to the cloudfront.amazonaws.com service principal only when AWS:SourceArn equals that distribution. Users can then reach the files only through CloudFront.
+
+</QA>
+
+<QA q="How do you make users get the new version after a deployment?">
+
+Use content-hashed file names for assets with long TTLs, keep index.html uncached or short-lived, and create an invalidation for /index.html (or changed paths). Invalidating /* works but is slower and costs more beyond the free allowance.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where must the ACM certificate for CloudFront be?',
+      options: ['Any Region', 'us-east-1', 'The origin Region', 'eu-west-1'],
+      answer: 1,
+      why: 'CloudFront uses us-east-1 certificates.',
+    },
+    {
+      q: 'Remove /index.html from caches now?',
+      options: ['Delete the distribution', 'Create an invalidation', 'Change the bucket name', 'Lower the TTL tomorrow'],
+      answer: 1,
+      why: 'Invalidations purge paths.',
+    },
+    {
+      q: 'Let only CloudFront read the bucket?',
+      options: ['Public bucket', 'Origin Access Control', 'Presigned URLs for everyone', 'NAT gateway'],
+      answer: 1,
+      why: 'OAC + bucket policy.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Setting |
+| --- | --- |
+| Private S3 origin | OAC + bucket policy (SourceArn) |
+| Custom domain | ACM cert in **us-east-1** + Route 53 alias |
+| SPA routes | error 403/404 → `/index.html` (200) |
+| Caching | hashed assets 1 year `immutable` · `index.html` `no-cache` |
+| Purge | `create-invalidation --paths "/index.html"` |
+| API on same domain | behavior `/api/*` → ALB, caching disabled |
+| Security | WAF · response headers policy · signed URLs |
+| Check | `curl -I` → `x-cache: Hit/Miss from cloudfront` |
+
+</CheatSheet>

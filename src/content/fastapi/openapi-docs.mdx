@@ -1,0 +1,224 @@
+---
+id: fastapi-openapi-docs
+title: OpenAPI docs (Swagger UI)
+summary: FastAPI generates an OpenAPI schema at /openapi.json from your routes and models and serves interactive docs at /docs (Swagger UI) and /redoc; titles, tags, summaries, descriptions, examples and response documentation make it a contract for frontend teams.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A restaurant **menu** written automatically from the kitchen's recipes: every dish, its ingredients, price and allergy notes, always up to date, because it is printed from the recipes themselves. Swagger UI even lets you **order a sample** from the menu.
+
+</Analogy>
+
+## Simple explanation
+
+Without writing any docs you get:
+
+| URL | What |
+| --- | --- |
+| `/docs` | **Swagger UI**: try every endpoint in the browser, with an Authorize button for tokens |
+| `/redoc` | **ReDoc**: clean read-only reference |
+| `/openapi.json` | the machine-readable **OpenAPI 3** schema |
+
+Everything comes from your code: paths, methods, parameters with their rules, Pydantic body and response models, status codes, security schemes.
+
+Make it better:
+
+```python
+app = FastAPI(
+    title="Shop API",
+    version="1.4.0",
+    description="Orders, products and customers for the shop.",
+)
+
+@app.post(
+    "/orders",
+    status_code=201,
+    tags=["orders"],
+    summary="Place an order",
+    response_model=OrderOut,
+    responses={409: {"description": "Product out of stock"}},
+)
+def create_order(order: OrderIn):
+    """Creates an order for the current user.
+
+    - **quantity** must be 1 to 10
+    """
+```
+
+- `tags` group endpoints; the docstring becomes the description (Markdown works)
+- `Field(description=..., examples=[...])` and `model_config = {"json_schema_extra": {"examples": [...]}}` give sample bodies
+- `deprecated=True` marks old endpoints; `include_in_schema=False` hides internal ones
+- `openapi_tags=[{"name": "orders", "description": "..."}]` describes the groups
+
+Uses of the schema beyond reading:
+
+- **Generate clients**: `openapi-typescript`, OpenAPI Generator → typed TypeScript/Java/Swift clients for React and mobile apps
+- **Contract tests** and mocking (Prism, Schemathesis)
+- Import into **Postman** or API gateways (AWS API Gateway can import OpenAPI)
+
+In production you may disable or protect the docs: `FastAPI(docs_url=None, redoc_url=None)` or serve them only on an internal network.
+
+## Code example
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+
+app = FastAPI(title="Shop API", version="1.4.0")
+
+class OrderIn(BaseModel):
+    product_id: int = Field(description="ID from GET /products", examples=[7])
+    quantity: int = Field(default=1, ge=1, le=10, examples=[2])
+
+@app.post("/orders", status_code=201, tags=["orders"], summary="Place an order",
+          responses={409: {"description": "Product out of stock"}})
+def create_order(order: OrderIn):
+    """Creates an order for the logged-in customer."""
+    return {"id": 1}
+
+schema = app.openapi()
+op = schema["paths"]["/orders"]["post"]
+print(schema["info"])
+print(op["summary"], op["tags"], list(op["responses"]))
+print(schema["components"]["schemas"]["OrderIn"]["properties"]["quantity"])
+```
+
+```output
+{'title': 'Shop API', 'version': '1.4.0'}
+Place an order ['orders'] ['201', '409', '422']
+{'type': 'integer', 'maximum': 10, 'minimum': 1, 'examples': [2], 'title': 'Quantity', 'default': 1}
+```
+
+The 422 response was added automatically because the endpoint validates input.
+
+<Playground kind="none">
+
+```python
+# main.py  →  fastapi dev main.py  →  open http://127.0.0.1:8000/docs
+# Click "POST /orders" → "Try it out" → the example body is pre-filled → Execute.
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
+
+app = FastAPI(title="Shop API", version="1.4.0", description="Practice API for DevGuru")
+
+class OrderIn(BaseModel):
+    product_id: int = Field(description="ID from GET /products", examples=[7])
+    quantity: int = Field(default=1, ge=1, le=10, examples=[2])
+
+@app.post("/orders", status_code=201, tags=["orders"], summary="Place an order")
+def create_order(order: OrderIn):
+    """Creates an order. **quantity** must be between 1 and 10."""
+    return {"id": 1, **order.model_dump()}
+
+@app.get("/internal/health", include_in_schema=False)
+def health():
+    return {"ok": True}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Returning dicts with no response model">
+
+<Wrong>
+
+```python
+@app.get("/orders/{id}")
+def get_order(id: int):
+    return {...}                 # docs show "Successful Response: string" — frontend has to guess
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.get("/orders/{id}", response_model=OrderOut)
+def get_order(id: int): ...
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Public docs exposing internal endpoints">
+
+<Wrong>
+
+```text
+/docs on the public production URL lists /admin/reindex and /internal/debug.
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.post("/admin/reindex", include_in_schema=False)
+# or FastAPI(docs_url=None, redoc_url=None) in production, docs only internally
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is OpenAPI and how does FastAPI use it?">
+
+OpenAPI is a standard, language-agnostic JSON/YAML description of an HTTP API: paths, operations, parameters, request and response schemas, and security. FastAPI generates it automatically from routes, type hints and Pydantic models at /openapi.json and renders interactive documentation with Swagger UI (/docs) and ReDoc (/redoc).
+
+</QA>
+
+<QA q="How can a frontend team use the OpenAPI schema?">
+
+To read and try the API in Swagger UI, generate typed clients (for example openapi-typescript or OpenAPI Generator), mock the backend while it is being built, and run contract tests, so frontend and backend stay in sync.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where is the interactive Swagger UI?',
+      options: ['/openapi.json', '/docs', '/swagger', '/api-docs'],
+      answer: 1,
+      why: '/redoc is the other viewer.',
+    },
+    {
+      q: 'Hide one endpoint from the docs?',
+      options: ['tags=["hidden"]', 'include_in_schema=False', 'private=True', 'deprecated=True'],
+      answer: 1,
+      why: 'It still works, it is just not documented.',
+    },
+    {
+      q: 'Where does the endpoint description come from?',
+      options: ['A separate YAML file', 'The function docstring (or description=)', 'Comments', 'The URL'],
+      answer: 1,
+      why: 'Markdown docstrings are rendered.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| App info | `FastAPI(title=..., version=..., description=...)` |
+| Group | `tags=["orders"]` |
+| Short name | `summary="Place an order"` |
+| Long text | docstring (Markdown) |
+| Field docs | `Field(description=..., examples=[...])` |
+| Extra responses | `responses={409: {"description": "..."}}` |
+| Hide / deprecate | `include_in_schema=False` · `deprecated=True` |
+| Turn off docs | `FastAPI(docs_url=None, redoc_url=None)` |
+
+URLs: `/docs` · `/redoc` · `/openapi.json`
+
+</CheatSheet>

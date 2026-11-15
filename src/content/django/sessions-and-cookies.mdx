@@ -1,0 +1,194 @@
+---
+id: django-sessions-and-cookies
+title: Sessions and cookies
+summary: A cookie is a small value the browser stores and sends back; Django's session framework keeps data on the server (database, cache or signed cookie) and gives the browser only a sessionid cookie, which is how logins and carts persist between requests.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **cloakroom**: you hand in your bag (data), the attendant keeps it inside (server) and gives you a **numbered token** (the sessionid cookie). Next time you show the token and get your bag back. The token alone tells a stranger nothing.
+
+</Analogy>
+
+## Simple explanation
+
+**Cookies**: the server sends `Set-Cookie: name=value; ...`, the browser sends `Cookie: name=value` with every later request to that site.
+
+```python
+response.set_cookie("theme", "dark", max_age=60 * 60 * 24 * 365, httponly=True, samesite="Lax", secure=True)
+theme = request.COOKIES.get("theme", "light")
+response.delete_cookie("theme")
+response.set_signed_cookie("ref", "summer-sale")      # tamper-evident (signed with SECRET_KEY)
+```
+
+Cookie flags: `HttpOnly` (JavaScript cannot read it: protects against XSS stealing it), `Secure` (HTTPS only), `SameSite=Lax/Strict` (not sent on most cross-site requests: CSRF protection), `Max-Age`/`Expires`.
+
+**Sessions**: data per visitor stored on the server:
+
+```python
+request.session["cart"] = {"7": 2}              # set
+cart = request.session.get("cart", {})          # get
+request.session.modified = True                 # needed when you change a nested object in place
+del request.session["cart"]
+request.session.flush()                         # delete everything (logout does this)
+request.session.set_expiry(60 * 30)             # expire after 30 min of inactivity
+```
+
+How it works: `SessionMiddleware` reads the `sessionid` cookie, loads the data, and saves it after the view if it changed. `login()` stores `_auth_user_id` in the session and rotates the session key (prevents session fixation).
+
+**Backends** (`SESSION_ENGINE`):
+
+| Backend | Where data lives | Note |
+| --- | --- | --- |
+| `db` (default) | `django_session` table | simple; clean up with `clearsessions` |
+| `cache` / `cached_db` | Redis/Memcached (+ DB) | fast; good for scale |
+| `signed_cookies` | the cookie itself (signed, not encrypted) | no server storage; size-limited; visible to the user |
+| `file` | files | rare |
+
+Settings: `SESSION_COOKIE_AGE` (default 2 weeks), `SESSION_COOKIE_SECURE=True`, `SESSION_COOKIE_HTTPONLY=True` (default), `SESSION_EXPIRE_AT_BROWSER_CLOSE`, `SESSION_COOKIE_SAMESITE="Lax"`.
+
+APIs for mobile apps usually use **tokens** instead of session cookies (see DRF authentication).
+
+## Code example
+
+```python
+>>> c = Client()
+>>> list(c.get("/products/").cookies.keys())                # anonymous, nothing stored
+>>> c.login(username="asha", password="s3cretpass")
+>>> s = c.session; s["cart"] = {"1": 2}; s.save()
+>>> settings.SESSION_COOKIE_NAME, settings.SESSION_COOKIE_HTTPONLY, settings.SESSION_COOKIE_AGE // 86400
+>>> Session.objects.get(session_key=c.session.session_key).get_decoded()
+>>> c.logout()
+>>> Session.objects.filter(session_key=old_key).exists()
+```
+
+```output
+[]
+True
+('sessionid', True, 14)
+{'_auth_user_id': '1', '_auth_user_backend': 'django.contrib.auth.backends.ModelBackend', '_auth_user_hash': 'ebc4d078e7b2...', 'cart': {'1': 2}}
+False
+```
+
+The browser only ever holds the random `sessionid`; the user id and cart are in the server's table, and logout deletes the row.
+
+<Playground kind="http">
+
+```http
+POST /login
+Content-Type: application/json
+
+{"username": "guru", "password": "secret"}
+```
+
+</Playground>
+
+The DevGuru mock API returns a token instead of a cookie: compare the two styles. Browsers send cookies automatically; tokens must be added to each request's `Authorization` header.
+
+<Mistakes>
+
+<Mistake title="Storing secrets or big data in signed cookies">
+
+<Wrong>
+
+```python
+SESSION_ENGINE = "django.contrib.sessions.backends.signed_cookies"
+request.session["card_number"] = "4111..."     # signed, NOT encrypted: readable by the user, sent on every request
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Keep sensitive data on the server (db/cache sessions or the database) and only small, non-secret values in cookies.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Changing a nested value without marking the session modified">
+
+<Wrong>
+
+```python
+request.session["cart"]["7"] = 3          # dict changed in place: Django does not notice, change is lost
+```
+
+</Wrong>
+
+<Right>
+
+```python
+cart = request.session.get("cart", {})
+cart["7"] = 3
+request.session["cart"] = cart            # assignment marks it modified (or set session.modified = True)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a session and a cookie?">
+
+A cookie is data stored in the browser and sent with every request to the site. A session is data stored on the server, associated with the visitor through a cookie that holds only a random session id. Sessions keep data private and larger; cookies suit small, non-sensitive preferences.
+
+</QA>
+
+<QA q="How does Django keep a user logged in?">
+
+On login, Django stores the user id, the backend and a hash derived from the password in the session, rotates the session key and sends the sessionid cookie. On each request SessionMiddleware loads the session and AuthenticationMiddleware sets request.user; changing the password invalidates the hash and logs out other sessions.
+
+</QA>
+
+<QA q="Which session backend would you use at scale?">
+
+A cache-backed backend (cache or cached_db with Redis) for speed and shared storage across many app servers, with secure cookie settings (Secure, HttpOnly, SameSite) and a reasonable expiry; the database backend is fine for small sites if expired sessions are cleaned with clearsessions.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does the browser store for a Django DB session?',
+      options: ['All session data', 'Only the sessionid', 'The password', 'Nothing'],
+      answer: 1,
+      why: 'Data stays on the server.',
+    },
+    {
+      q: 'Cookie flag that blocks JavaScript access?',
+      options: ['Secure', 'HttpOnly', 'SameSite', 'Max-Age'],
+      answer: 1,
+      why: 'Protects against XSS stealing cookies.',
+    },
+    {
+      q: 'Default Django session lifetime?',
+      options: ['30 minutes', '1 day', '2 weeks', 'Forever'],
+      answer: 2,
+      why: 'SESSION_COOKIE_AGE = 1209600 seconds.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Set / read cookie | `response.set_cookie("k", "v", httponly=True, secure=True)` · `request.COOKIES.get("k")` |
+| Session write / read | `request.session["cart"] = {...}` · `.get("cart", {})` |
+| Nested change | `request.session.modified = True` |
+| Clear | `request.session.flush()` (logout does it) |
+| Expiry | `set_expiry(1800)` · `SESSION_COOKIE_AGE` |
+| Backend | `SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"` |
+| Clean old rows | `python manage.py clearsessions` |
+| Production | `SESSION_COOKIE_SECURE = True` · `CSRF_COOKIE_SECURE = True` |
+
+</CheatSheet>

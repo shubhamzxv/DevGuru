@@ -1,4 +1,7 @@
+import { arithmetic, isCompound, runBash, type BashHost, type Statement } from './bash';
 import { DockerEngine } from './docker';
+import { du, SystemState } from './system';
+import { awk, cut, sed, seq, tr } from './textTools';
 import { fail, ok, splitWords, type CommandResult, type Simulator } from './types';
 
 /**
@@ -36,10 +39,28 @@ const SEED: Record<string, string> = {
     '2026-11-15 09:05:17 ERROR Payment service timeout',
     '2026-11-15 09:06:00 INFO  GET /health 200 2ms',
   ].join('\n'),
+  [`${HOME}/logs/access.log`]: [
+    '192.168.1.10 - - [15/Nov/2026:09:00:01] "GET / HTTP/1.1" 200 512',
+    '192.168.1.11 - - [15/Nov/2026:09:00:03] "GET /products HTTP/1.1" 200 2048',
+    '10.0.0.5 - - [15/Nov/2026:09:00:04] "POST /login HTTP/1.1" 401 64',
+    '192.168.1.10 - - [15/Nov/2026:09:00:07] "GET /products/7 HTTP/1.1" 200 1024',
+    '10.0.0.5 - - [15/Nov/2026:09:00:09] "POST /login HTTP/1.1" 401 64',
+    '203.0.113.9 - - [15/Nov/2026:09:00:12] "GET /admin HTTP/1.1" 403 128',
+    '192.168.1.12 - - [15/Nov/2026:09:00:15] "GET /cart HTTP/1.1" 500 256',
+    '10.0.0.5 - - [15/Nov/2026:09:00:16] "POST /login HTTP/1.1" 200 96',
+    '192.168.1.11 - - [15/Nov/2026:09:00:20] "GET / HTTP/1.1" 200 512',
+    '192.168.1.10 - - [15/Nov/2026:09:00:25] "GET /orders HTTP/1.1" 200 768',
+  ].join('\n'),
   [`${HOME}/scripts/backup.sh`]:
     '#!/bin/bash\necho "Backing up notes..."\ncp notes.txt notes.bak\necho "Done"',
   '/etc/hostname': 'devguru',
   '/etc/hosts': '127.0.0.1   localhost\n127.0.1.1   devguru',
+  '/etc/nginx/nginx.conf':
+    'user www-data;\nworker_processes auto;\nhttp {\n    server {\n        listen 80;\n        server_name shop.example.com;\n        location / {\n            proxy_pass http://127.0.0.1:8000;\n        }\n    }\n}',
+  '/etc/ssh/sshd_config':
+    'Port 22\nPermitRootLogin no\nPasswordAuthentication no\nPubkeyAuthentication yes',
+  '/var/log/auth.log':
+    'Nov 15 08:58:01 devguru sshd[2201]: Failed password for invalid user admin from 203.0.113.9 port 51122 ssh2\nNov 15 08:58:04 devguru sshd[2203]: Failed password for root from 203.0.113.9 port 51130 ssh2\nNov 15 09:01:12 devguru sshd[2210]: Accepted publickey for guru from 192.168.1.10 port 50311 ssh2\nNov 15 09:05:40 devguru sudo:     guru : TTY=pts/0 ; PWD=/home/guru ; USER=root ; COMMAND=/usr/bin/apt update',
   '/etc/os-release': 'NAME="Ubuntu"\nVERSION="24.04.1 LTS (Noble Numbat)"\nID=ubuntu',
   '/var/log/syslog': 'Nov 15 09:00:00 devguru systemd[1]: Started Daily apt download activities.',
 };
@@ -119,6 +140,7 @@ function splitOutsideQuotes(text: string, separators: string[]): { part: string;
   const parts: { part: string; sep: string }[] = [];
   let current = '';
   let quote: string | null = null;
+  let depth = 0; // inside $( ... ) or (( ... ))
   for (let i = 0; i < text.length; i++) {
     const char = text[i] ?? '';
     if (quote) {
@@ -131,7 +153,9 @@ function splitOutsideQuotes(text: string, separators: string[]): { part: string;
       current += char;
       continue;
     }
-    const sep = separators.find((s) => text.startsWith(s, i));
+    if (char === '(') depth++;
+    if (char === ')' && depth > 0) depth--;
+    const sep = depth > 0 ? undefined : separators.find((s) => text.startsWith(s, i));
     if (sep && !(sep === '|' && (text[i + 1] === '|' || text[i - 1] === '|'))) {
       parts.push({ part: current, sep });
       current = '';
@@ -144,12 +168,26 @@ function splitOutsideQuotes(text: string, separators: string[]): { part: string;
   return parts;
 }
 
+/** Index of the last `char` that is not inside quotes, or -1. */
+function lastOutsideQuotes(text: string, char: string): number {
+  let quote: string | null = null;
+  let found = -1;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote) {
+      if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") quote = c;
+    else if (c === char) found = i;
+  }
+  return found;
+}
+
 export interface ShellContext {
   sudo: boolean;
   stdin: string | null;
 }
 
-export class ShellSimulator implements Simulator {
+export class ShellSimulator implements Simulator, BashHost {
   readonly root: FsNode = newDir();
   cwd = HOME;
   private previous = HOME;
@@ -162,6 +200,13 @@ export class ShellSimulator implements Simulator {
   ]);
   readonly typed: string[] = [];
   readonly docker: DockerEngine;
+  readonly system = new SystemState();
+  readonly functions = new Map<string, Statement[]>();
+  /** Exit status of the last command ($?). */
+  status = 0;
+  /** $1, $2 ... inside a script or function. */
+  positional: string[] = [];
+  private scriptName = 'bash';
   private processes = [
     { pid: 1, user: 'root', cmd: '/sbin/init' },
     { pid: 412, user: 'root', cmd: '/usr/sbin/sshd -D' },
@@ -183,6 +228,7 @@ export class ShellSimulator implements Simulator {
     const tmp = this.node('/tmp');
     if (tmp) tmp.mode = 0o777;
     this.docker = new DockerEngine(this);
+    this.syncUsers();
   }
 
   prompt(): string {
@@ -273,27 +319,140 @@ export class ShellSimulator implements Simulator {
     const trimmed = line.trim();
     if (trimmed === '') return ok('');
     this.typed.push(trimmed);
-    const chain = splitOutsideQuotes(trimmed, ['&&', ';']);
+    const first = trimmed.split(/[\s;|&]/)[0] ?? '';
+    if (isCompound(trimmed) || this.functions.has(first)) return runBash(this, [trimmed]);
+    return this.runSimple(trimmed);
+  }
+
+  /** Runs a command line with ; && || chains (used by run() and by the Bash interpreter). */
+  runSimple(line: string): CommandResult {
+    const chain = splitOutsideQuotes(line.trim(), ['&&', '||', ';']);
     const outputs: string[] = [];
     let last: CommandResult = ok('');
-    let skip = false;
+    let previousSep = '';
     for (const { part, sep } of chain) {
-      if (!skip && part.trim()) {
-        last = this.pipeline(part.trim());
-        if (last.clear) return last;
-        if (last.output) outputs.push(last.output);
-      }
-      skip = sep === '&&' && !!last.error;
-      if (skip) break;
+      const runIt =
+        previousSep === '' ||
+        previousSep === ';' ||
+        (previousSep === '&&' && this.status === 0) ||
+        (previousSep === '||' && this.status !== 0);
+      previousSep = sep;
+      if (!runIt || !part.trim()) continue;
+      const text = part.trim();
+      const firstWord = text.split(/\s+/)[0] ?? '';
+      last = /^\(\(.*\)\)$/.test(text)
+        ? this.arithmeticCommand(text.slice(2, -2))
+        : this.functions.has(firstWord) && !text.includes('|')
+          ? runBash(this, [text])
+          : this.pipeline(text);
+      this.status = last.exitCode ?? (last.error ? 1 : 0);
+      if (last.clear) return last;
+      if (last.output) outputs.push(last.output);
     }
     return { ...last, output: outputs.join('\n') };
   }
 
+  private arithmeticCommand(expr: string): CommandResult {
+    const value = arithmetic(this.expand(expr), this.env);
+    return { output: '', exitCode: value === 0 ? 1 : 0 };
+  }
+
+  /** Expands $VAR, ${VAR}, ${VAR:-default}, ${#VAR}, $1 $# $@ $? $(command) and $((arithmetic)); nothing inside 'single quotes'. */
   private expand(text: string): string {
-    return text.replace(
-      /\$(\w+)|\$\{(\w+)\}/g,
-      (_, a: string, b: string) => this.env.get(a ?? b) ?? '',
-    );
+    let out = '';
+    let quote: string | null = null;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i] ?? '';
+      if (quote === "'") {
+        out += c;
+        if (c === "'") quote = null;
+        continue;
+      }
+      if (c === "'" && !quote) {
+        quote = "'";
+        out += c;
+        continue;
+      }
+      if (c === '"') {
+        quote = quote === '"' ? null : '"';
+        out += c;
+        continue;
+      }
+      if (c === '\\' && text[i + 1] === '$') {
+        out += '$';
+        i++;
+        continue;
+      }
+      if (c !== '$') {
+        out += c;
+        continue;
+      }
+      if (text.startsWith('$((', i)) {
+        const end = this.closing(text, i + 1, '(', ')');
+        if (end > 0) {
+          out += String(arithmetic(this.expand(text.slice(i + 3, end - 1)), this.env));
+          i = end;
+          continue;
+        }
+      }
+      if (text[i + 1] === '(') {
+        const end = this.closing(text, i + 1, '(', ')');
+        if (end > 0) {
+          const inner = text.slice(i + 2, end);
+          const saved = this.status;
+          const result = this.runSimple(inner);
+          this.status = result.error ? 1 : saved;
+          out += result.output.replace(/\n+$/, '');
+          i = end;
+          continue;
+        }
+      }
+      if (text[i + 1] === '{') {
+        const end = text.indexOf('}', i);
+        if (end > 0) {
+          const inner = text.slice(i + 2, end);
+          if (inner.startsWith('#')) out += String(this.variable(inner.slice(1)).length);
+          else {
+            const [name = '', fallback] = inner.split(':-');
+            const value = this.variable(name);
+            out += value === '' && fallback !== undefined ? fallback : value;
+          }
+          i = end;
+          continue;
+        }
+      }
+      const match = /^\$([A-Za-z_]\w*|[0-9]|[?#@*$])/.exec(text.slice(i));
+      if (match) {
+        out += this.variable(match[1] ?? '');
+        i += (match[0]?.length ?? 1) - 1;
+        continue;
+      }
+      out += c;
+    }
+    return out;
+  }
+
+  private variable(name: string): string {
+    if (name === '?') return String(this.status);
+    if (name === '#') return String(this.positional.length);
+    if (name === '@' || name === '*') return this.positional.join(' ');
+    if (name === '$') return '4242';
+    if (name === '0') return this.scriptName;
+    if (/^\d$/.test(name)) return this.positional[Number(name) - 1] ?? '';
+    return this.env.get(name) ?? '';
+  }
+
+  /** Index of the bracket that closes the one at `start`, or -1. */
+  private closing(text: string, start: number, open: string, close: string): number {
+    let depth = 0;
+    for (let i = start; i < text.length; i++) {
+      if (text[i] === open) depth++;
+      if (text[i] === close) {
+        depth--;
+        if (depth === 0) return i;
+      }
+    }
+    return -1;
   }
 
   private pipeline(text: string): CommandResult {
@@ -302,13 +461,26 @@ export class ShellSimulator implements Simulator {
     let result: CommandResult = ok('');
     const explanations: string[] = [];
     for (let i = 0; i < stages.length; i++) {
-      let stage = stages[i] ?? '';
+      let stage = (stages[i] ?? '').replace(/\s+2>&1/g, '').replace(/\s+2>\s*\/dev\/null/g, '');
+      if (/\s(&>|>)\s*\/dev\/null$/.test(stage)) {
+        result = this.command(
+          splitWords(this.expand(stage.replace(/\s(&>|>)\s*\/dev\/null$/, ''))),
+          { sudo: false, stdin },
+        );
+        if (result.error) return { ...result, output: '' };
+        stdin = '';
+        result = { ...result, output: '' };
+        continue;
+      }
       let redirect: { file: string; append: boolean } | null = null;
       if (i === stages.length - 1) {
-        const match = /^(.*?)\s*(>>|>)\s*(\S+)$/.exec(stage);
-        if (match && !/^\s*$/.test(match[1] ?? '')) {
-          stage = match[1] ?? '';
-          redirect = { file: match[3] ?? '', append: match[2] === '>>' };
+        const at = lastOutsideQuotes(stage, '>');
+        const match = at >= 0 ? /^\s*(\S+)$/.exec(stage.slice(at + 1)) : null;
+        const append = at > 0 && stage[at - 1] === '>';
+        const before = stage.slice(0, append ? at - 1 : at);
+        if (match && !/^\s*$/.test(before)) {
+          stage = before.trimEnd();
+          redirect = { file: match[1] ?? '', append };
         }
       }
       result = this.command(splitWords(this.expand(stage)), { sudo: false, stdin });
@@ -382,8 +554,10 @@ export class ShellSimulator implements Simulator {
       case 'less':
       case 'more':
         return this.cat(args, ctx);
-      case 'echo':
-        return ok(args.filter((a) => a !== '-e' && a !== '-n').join(' '));
+      case 'echo': {
+        const text = args.filter((a) => a !== '-e' && a !== '-n').join(' ');
+        return ok(args.includes('-e') ? text.replace(/\\n/g, '\n').replace(/\\t/g, '\t') : text);
+      }
       case 'rm':
         return this.rm(args, ctx);
       case 'cp':
@@ -401,7 +575,7 @@ export class ShellSimulator implements Simulator {
       case 'uniq':
         return this.uniq(args, ctx);
       case 'find':
-        return this.find(args);
+        return this.find(args, ctx);
       case 'chmod':
         return this.chmod(args, ctx);
       case 'chown':
@@ -414,11 +588,9 @@ export class ShellSimulator implements Simulator {
       case 'whoami':
         return ok(ctx.sudo ? 'root' : 'guru');
       case 'id':
-        return ok(
-          ctx.sudo
-            ? 'uid=0(root) gid=0(root) groups=0(root)'
-            : 'uid=1000(guru) gid=1000(guru) groups=1000(guru),27(sudo),998(docker)',
-        );
+        return ctx.sudo && args.length === 0
+          ? ok('uid=0(root) gid=0(root) groups=0(root)')
+          : this.system.id(args, 'guru');
       case 'hostname':
         return ok('devguru');
       case 'uname':
@@ -427,8 +599,22 @@ export class ShellSimulator implements Simulator {
             ? 'Linux devguru 6.8.0-48-generic #48-Ubuntu SMP x86_64 GNU/Linux'
             : 'Linux',
         );
-      case 'date':
-        return ok('Sun Nov 15 09:30:00 IST 2026');
+      case 'date': {
+        const format = args.find((a) => a.startsWith('+'));
+        if (!format) return ok('Sun Nov 15 09:30:00 IST 2026');
+        return ok(
+          format
+            .slice(1)
+            .replace(/%F/g, '2026-11-15')
+            .replace(/%Y/g, '2026')
+            .replace(/%m/g, '11')
+            .replace(/%d/g, '15')
+            .replace(/%H/g, '09')
+            .replace(/%M/g, '30')
+            .replace(/%S/g, '00')
+            .replace(/%T/g, '09:30:00'),
+        );
+      }
       case 'uptime':
         return ok(' 09:30:00 up 3 days,  4:12,  1 user,  load average: 0.15, 0.10, 0.05');
       case 'df':
@@ -449,6 +635,10 @@ export class ShellSimulator implements Simulator {
         return ok(this.typed.map((t, i) => `${String(i + 1).padStart(5)}  ${t}`).join('\n'));
       case 'env':
       case 'printenv':
+        if (name === 'printenv' && args[0])
+          return this.env.has(args[0])
+            ? ok(this.env.get(args[0]) ?? '')
+            : { output: '', exitCode: 1 };
         return ok([...this.env].map(([k, v]) => `${k}=${v}`).join('\n'));
       case 'export':
         for (const pair of args) {
@@ -497,18 +687,157 @@ export class ShellSimulator implements Simulator {
         return ok('');
       case 'exit':
         return ok('logout (the simulator stays open)');
+      case '[':
+      case '[[':
+      case 'test':
+        return this.test(name === 'test' ? args : args.slice(0, -1));
+      case 'true':
+        return ok('');
+      case 'false':
+        return { output: '', exitCode: 1 };
+      case 'sleep':
+        return ok('', 'sleep N waits N seconds (the simulator does not really wait).');
+      case '__words':
+        return ok(this.words(args).join('\n'));
+      case 'basename':
+        return ok(
+          (args[0] ?? '')
+            .replace(/\/$/, '')
+            .split('/')
+            .pop()
+            ?.replace(args[1] ?? '\u0000', '') ?? '',
+        );
+      case 'dirname': {
+        const path = (args[0] ?? '').replace(/\/$/, '');
+        return ok(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) || '/' : '.');
+      }
+      case 'cut':
+      case 'tr': {
+        const files = name === 'cut' ? this.fileArgs(args, ['-d', '-f', '-c']) : [];
+        const text = this.input(files, ctx, name);
+        if (typeof text !== 'string') return text;
+        const options = args.filter((a) => !files.includes(a));
+        return name === 'cut' ? cut(options, text) : tr(options, text);
+      }
+      case 'sed': {
+        const { result, write } = sed(args, (path) => this.readFile(path), ctx.stdin ?? '');
+        if (write) {
+          const path = this.resolvePath(write.file);
+          if (!this.canWrite(path, ctx.sudo))
+            return fail(`sed: couldn't open ${write.file}: Permission denied`);
+          this.writeFile(path, write.content);
+        }
+        return result;
+      }
+      case 'awk':
+        return awk(args, (path) => this.readFile(path), ctx.stdin ?? '');
+      case 'seq':
+        return seq(args);
+      case 'tee': {
+        const append = args.includes('-a');
+        for (const file of args.filter((a) => !a.startsWith('-'))) {
+          const path = this.resolvePath(file);
+          if (!this.canWrite(path, ctx.sudo))
+            return fail(
+              `tee: ${file}: Permission denied`,
+              'Use sudo tee to write files that belong to root.',
+            );
+          const before = this.readFile(path);
+          this.writeFile(
+            path,
+            append && before !== undefined ? `${before}\n${ctx.stdin ?? ''}` : (ctx.stdin ?? ''),
+          );
+        }
+        return ok(
+          ctx.stdin ?? '',
+          'tee writes its input to the file AND prints it, like a T-junction in a pipe.',
+        );
+      }
+      case 'du': {
+        const target = args.find((a) => !a.startsWith('-')) ?? '.';
+        if (!this.node(this.resolvePath(target)))
+          return fail(`du: cannot access '${target}': No such file or directory`);
+        return du(args, this.filesUnder(target), target);
+      }
+      case 'systemctl':
+        return this.system.systemctl(args, ctx.sudo);
+      case 'service':
+        return this.system.systemctl([args[1] ?? 'status', args[0] ?? ''], ctx.sudo);
+      case 'journalctl':
+        return this.system.journalctl(args);
+      case 'useradd':
+      case 'adduser': {
+        const result = this.system.useradd(args, ctx.sudo);
+        if (!result.error)
+          this.syncUsers(
+            args.includes('-m') || name === 'adduser'
+              ? args.filter((a) => !a.startsWith('-')).pop()
+              : undefined,
+          );
+        return result;
+      }
+      case 'usermod':
+      case 'groupadd': {
+        const result =
+          name === 'usermod'
+            ? this.system.usermod(args, ctx.sudo)
+            : this.system.groupadd(args, ctx.sudo);
+        if (!result.error) this.syncUsers();
+        return result;
+      }
+      case 'groups':
+        return this.system.groups(args, 'guru');
+      case 'passwd':
+        return args[0] && !ctx.sudo
+          ? fail(
+              'passwd: You may not view or modify password information for ' + args[0] + '.',
+              "Changing another user's password needs sudo.",
+            )
+          : ok(
+              'New password: \nRetype new password: \npasswd: password updated successfully',
+              'In a real terminal passwd asks for the password twice and shows nothing while you type.',
+            );
+      case 'su':
+        return ok(
+          '',
+          `su switches to another user (su - ${args[args.length - 1] ?? 'root'}). In the simulator you stay guru; use sudo for admin commands.`,
+        );
+      case 'crontab':
+        return this.system.crontabCommand(args, ctx.stdin);
+      case 'ss':
+      case 'netstat':
+        return this.system.ss(this.docker.publishedPorts());
+      case 'scp':
+        return ok(
+          `${(args.find((a) => !a.startsWith('-') && !a.includes(':') && !a.endsWith('.pem')) ?? 'file').split('/').pop() ?? 'file'}                100%   12KB   1.1MB/s   00:00`,
+          'scp copies files over SSH: scp file user@server:/path uploads, scp user@server:/path . downloads. (Simulated.)',
+        );
+      case 'wget':
+        return ok(
+          `--2026-11-15 09:30:00--  ${args.find((a) => !a.startsWith('-')) ?? ''}\nHTTP request sent, awaiting response... 200 OK\nSaving to: '${(args.find((a) => !a.startsWith('-')) ?? 'index.html').split('/').pop() || 'index.html'}'`,
+          'wget downloads a file from a URL. (The simulator does not reach the internet.)',
+        );
+      case 'bash':
+      case 'sh':
+      case 'source':
+      case '.':
+        if (!args[0]) return ok('', 'Opens a new shell. In the simulator you are already in Bash.');
+        return this.runScript(args[0], args.slice(1), ctx, true);
       default:
         if (name.startsWith('./') || name.startsWith('/') || name.startsWith('~/'))
-          return this.runScript(name, ctx);
+          return this.runScript(name, args, ctx);
         if (name === 'python3' || name === 'python')
           return ok(
             'Python 3.12.3',
             'Python runs in the Python track playground. Here: python3 --version',
           );
-        return fail(
-          `${name}: command not found`,
-          `Type help to see the commands this simulator knows.`,
-        );
+        return {
+          ...fail(
+            `${name}: command not found`,
+            `Type help to see the commands this simulator knows.`,
+          ),
+          exitCode: 127,
+        };
     }
   }
 
@@ -525,8 +854,13 @@ export class ShellSimulator implements Simulator {
         'Files:    cat  touch  echo "text" > file  cp  mv  rm [-r]  head  tail  find . -name "*.py"',
         'Text:     grep [-i -n -c -v]  wc -l  sort  uniq -c   (join with |)',
         'Rights:   ls -l  chmod 755 file  chmod +x file  ./script.sh  sudo  whoami  id',
-        'System:   ps  top  kill  df -h  free -h  uname -a  env  export NAME=value  history',
-        'Network:  curl localhost:8000  ip a  ping',
+        "Text+:    cut -d, -f2  sed 's/a/b/g'  awk '{print $1}'  tr a-z A-Z  tee  seq",
+        'System:   ps  top  kill  df -h  du -sh  free -h  uname -a  env  export NAME=value  history',
+        'Services: systemctl status|start|stop|restart|enable nginx  journalctl -u nginx',
+        'Users:    sudo useradd -m name  sudo usermod -aG docker name  groups  id  passwd',
+        'Scripts:  bash file.sh  ./file.sh  if/elif/else/fi  for/while ... do/done  name() { }  $? $1 $#',
+        'Cron:     crontab -l   echo "0 2 * * * cmd" | crontab -',
+        'Network:  curl localhost:8000  ip a  ping  ss -tulpn  ssh  scp  wget',
         'Docker:   docker help',
       ].join('\n'),
     );
@@ -792,7 +1126,10 @@ export class ShellSimulator implements Simulator {
     if (pattern === undefined) return fail('usage: grep [-i -n -c -v -r] PATTERN [FILE...]');
     let regex: RegExp;
     try {
-      regex = new RegExp(pattern, flags.includes('i') ? 'i' : '');
+      regex = new RegExp(
+        flags.includes('w') ? `\\b${pattern}\\b` : pattern,
+        flags.includes('i') ? 'i' : '',
+      );
     } catch {
       regex = new RegExp(
         pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
@@ -822,9 +1159,15 @@ export class ShellSimulator implements Simulator {
       if (typeof text !== 'string') return text;
       matches = collect(text);
     }
-    if (flags.includes('c')) return ok(String(matches.length));
+    if (flags.includes('q')) return { output: '', exitCode: matches.length ? 0 : 1 };
+    if (flags.includes('c'))
+      return { output: String(matches.length), exitCode: matches.length ? 0 : 1 };
     if (matches.length === 0)
-      return { output: '', explanation: 'No line matched, so grep printed nothing.' };
+      return {
+        output: '',
+        exitCode: 1,
+        explanation: 'No line matched, so grep printed nothing (exit status 1).',
+      };
     return ok(matches.join('\n'));
   }
 
@@ -863,28 +1206,109 @@ export class ShellSimulator implements Simulator {
     );
   }
 
-  private find(args: string[]): CommandResult {
+  private find(args: string[], ctx: ShellContext): CommandResult {
     const start = args[0] && !args[0].startsWith('-') ? args[0] : '.';
-    const nameIndex = args.indexOf('-name');
-    const typeIndex = args.indexOf('-type');
-    const pattern = nameIndex >= 0 ? globToRegex(args[nameIndex + 1] ?? '*') : null;
-    const kind = typeIndex >= 0 ? args[typeIndex + 1] : undefined;
+    const option = (name: string) => {
+      const index = args.indexOf(name);
+      return index >= 0 ? args[index + 1] : undefined;
+    };
+    const name = option('-name');
+    const iname = option('-iname');
+    const pattern = name
+      ? globToRegex(name)
+      : iname
+        ? new RegExp(globToRegex(iname).source, 'i')
+        : null;
+    const kind = option('-type');
+    const maxDepth = option('-maxdepth') !== undefined ? Number(option('-maxdepth')) : Infinity;
+    const size = option('-size');
+    const mtime = option('-mtime');
+    const empty = args.includes('-empty');
+    const execIndex = args.indexOf('-exec');
+    const exec =
+      execIndex >= 0
+        ? args.slice(
+            execIndex + 1,
+            args.findIndex((a, i) => i > execIndex && (a === ';' || a === '\\;' || a === '+')),
+          )
+        : null;
+    const remove = args.includes('-delete');
     const base = this.node(this.resolvePath(start));
     if (!base) return fail(`find: '${start}': No such file or directory`);
+    const sizeOk = (node: FsNode) => {
+      if (!size) return true;
+      const match = /^([+-]?)(\d+)([ckMG]?)$/.exec(size);
+      if (!match) return true;
+      const unit = { c: 1, k: 1024, M: 1048576, G: 1073741824, '': 512 }[match[3] ?? ''] ?? 1;
+      const bytes = node.type === 'file' ? node.content.length : 4096;
+      const limit = Number(match[2]) * unit;
+      return match[1] === '+'
+        ? bytes > limit
+        : match[1] === '-'
+          ? bytes < limit
+          : Math.ceil(bytes / unit) === Number(match[2]);
+    };
+    // every simulator file was "modified today": -mtime -N matches, +N does not
+    const mtimeOk = !mtime || !mtime.startsWith('+');
     const out: string[] = [];
-    const walk = (node: FsNode, path: string, name: string) => {
+    const walk = (node: FsNode, path: string, fileName: string, depth: number) => {
       const typeOk = !kind || (kind === 'f' ? node.type === 'file' : node.type === 'dir');
-      if (typeOk && (!pattern || pattern.test(name))) out.push(path);
-      if (node.type === 'dir') {
+      const isEmpty = node.type === 'file' ? node.content === '' : node.children.size === 0;
+      if (
+        typeOk &&
+        (!pattern || pattern.test(fileName)) &&
+        sizeOk(node) &&
+        mtimeOk &&
+        (!empty || isEmpty)
+      )
+        out.push(path);
+      if (node.type === 'dir' && depth < maxDepth) {
         for (const [child, childNode] of [...node.children].sort(([a], [b]) =>
           a.localeCompare(b),
         )) {
-          walk(childNode, `${path}/${child}`, child);
+          walk(childNode, `${path}/${child}`, child, depth + 1);
         }
       }
     };
-    walk(base, start.replace(/\/$/, ''), start);
-    return ok(out.join('\n'));
+    walk(
+      base,
+      start.startsWith('~') ? this.resolvePath(start) : start.replace(/\/$/, ''),
+      start,
+      0,
+    );
+    if (exec && exec.length > 0) {
+      const outputs: string[] = [];
+      for (const path of out) {
+        const result = this.command(
+          exec.map((w) => w.replace('{}', path)),
+          ctx,
+        );
+        if (result.output) outputs.push(result.output);
+      }
+      return ok(
+        outputs.join('\n'),
+        '-exec ran the command once for each file found ({} is replaced by the path).',
+      );
+    }
+    if (remove) {
+      for (const path of [...out].reverse()) {
+        const full = this.resolvePath(path);
+        if (!this.canWrite(full, ctx.sudo))
+          return fail(`find: cannot delete '${path}': Permission denied`);
+        const { dir, name: base2 } = this.parentOf(full);
+        if (dir?.type === 'dir') dir.children.delete(base2);
+      }
+      return ok(
+        '',
+        `-delete removed ${out.length} item(s). Run the same find without -delete first to check the list!`,
+      );
+    }
+    return ok(
+      out.join('\n'),
+      mtime
+        ? 'In the simulator every file was modified today, so -mtime -N matches and -mtime +N does not.'
+        : undefined,
+    );
   }
 
   private chmod(args: string[], ctx: ShellContext): CommandResult {
@@ -917,26 +1341,178 @@ export class ShellSimulator implements Simulator {
     return ok('', `${EXPLAIN.chmod} Now: ${sample ? modeString(sample) : ''}`);
   }
 
-  private runScript(path: string, ctx: ShellContext): CommandResult {
+  private runScript(
+    path: string,
+    args: string[],
+    ctx: ShellContext,
+    viaBash = false,
+  ): CommandResult {
     const full = this.resolvePath(path);
     const found = this.node(full);
     if (!found) return fail(`bash: ${path}: No such file or directory`);
     if (found.type !== 'file') return fail(`bash: ${path}: Is a directory`);
-    if (!(found.mode & 0o100) && !ctx.sudo) {
-      return fail(
-        `bash: ${path}: Permission denied`,
-        'The file has no x (execute) permission. Run chmod +x on it first.',
+    if (!viaBash && !(found.mode & 0o100) && !ctx.sudo) {
+      return {
+        ...fail(
+          `bash: ${path}: Permission denied`,
+          'The file has no x (execute) permission. Run chmod +x on it first (or run it with bash script.sh).',
+        ),
+        exitCode: 126,
+      };
+    }
+    const saved = { positional: this.positional, name: this.scriptName };
+    this.positional = args;
+    this.scriptName = path;
+    try {
+      const result = runBash(this, found.content.split('\n'));
+      return {
+        ...result,
+        explanation:
+          result.explanation ?? 'Ran the script line by line, as if you typed each line.',
+      };
+    } finally {
+      this.positional = saved.positional;
+      this.scriptName = saved.name;
+    }
+  }
+
+  /** Test expressions for [ ], [[ ]] and test. */
+  private test(args: string[]): CommandResult {
+    const yes = (value: boolean): CommandResult => ({ output: '', exitCode: value ? 0 : 1 });
+    if (args[0] === '!') {
+      const inner = this.test(args.slice(1));
+      return yes(inner.exitCode !== 0);
+    }
+    const andIndex = args.findIndex((a) => a === '&&' || a === '-a');
+    if (andIndex > 0)
+      return yes(
+        this.test(args.slice(0, andIndex)).exitCode === 0 &&
+          this.test(args.slice(andIndex + 1)).exitCode === 0,
       );
+    const orIndex = args.findIndex((a) => a === '||' || a === '-o');
+    if (orIndex > 0)
+      return yes(
+        this.test(args.slice(0, orIndex)).exitCode === 0 ||
+          this.test(args.slice(orIndex + 1)).exitCode === 0,
+      );
+    if (args.length === 0) return yes(false);
+    if (args.length === 1) return yes((args[0] ?? '') !== '');
+    if (args.length === 2) {
+      const [op, value = ''] = args;
+      const node = this.node(this.resolvePath(value));
+      switch (op) {
+        case '-z':
+          return yes(value === '');
+        case '-n':
+          return yes(value !== '');
+        case '-f':
+          return yes(node?.type === 'file');
+        case '-d':
+          return yes(node?.type === 'dir');
+        case '-e':
+          return yes(node !== undefined);
+        case '-s':
+          return yes(node?.type === 'file' && node.content.length > 0);
+        case '-x':
+          return yes(node !== undefined && (node.mode & 0o100) !== 0);
+        case '-r':
+          return yes(node !== undefined && (node.mode & 0o400) !== 0);
+        case '-w':
+          return yes(node !== undefined && (node.mode & 0o200) !== 0);
+      }
+      return fail(`bash: [: ${op}: unary operator expected`);
     }
-    const outputs: string[] = [];
-    for (const line of found.content.split('\n')) {
-      if (line.trim() === '' || line.trim().startsWith('#')) continue;
-      const result = this.run(line);
-      this.typed.pop();
-      if (result.output) outputs.push(result.output);
-      if (result.error) return { ...result, output: outputs.join('\n') };
+    const [a = '', op, b = ''] = args;
+    const numbers = (): [number, number] | null =>
+      /^-?\d+$/.test(a) && /^-?\d+$/.test(b) ? [Number(a), Number(b)] : null;
+    switch (op) {
+      case '=':
+      case '==':
+        return yes(op === '==' && /[*?]/.test(b) ? globToRegex(b).test(a) : a === b);
+      case '!=':
+        return yes(a !== b);
+      case '=~':
+        return yes(new RegExp(b).test(a));
+      case '<':
+        return yes(a < b);
+      case '>':
+        return yes(a > b);
+      case '-eq':
+      case '-ne':
+      case '-lt':
+      case '-le':
+      case '-gt':
+      case '-ge': {
+        const pair = numbers();
+        if (!pair)
+          return fail(`bash: [: ${/^-?\d+$/.test(a) ? b : a}: integer expression expected`);
+        const [x, y] = pair;
+        const map: Record<string, boolean> = {
+          '-eq': x === y,
+          '-ne': x !== y,
+          '-lt': x < y,
+          '-le': x <= y,
+          '-gt': x > y,
+          '-ge': x >= y,
+        };
+        return yes(map[op] ?? false);
+      }
     }
-    return ok(outputs.join('\n'), 'Ran each line of the script in order, as if you typed them.');
+    return fail(`bash: [: ${op ?? ''}: binary operator expected`);
+  }
+
+  /** Word list for "for x in ...": brace ranges {1..5} and globs *.log are expanded. */
+  private words(args: string[]): string[] {
+    const out: string[] = [];
+    for (const word of args) {
+      const range = /^\{(-?\d+)\.\.(-?\d+)\}$/.exec(word);
+      if (range) {
+        const from = Number(range[1]);
+        const to = Number(range[2]);
+        const step = from <= to ? 1 : -1;
+        for (let n = from; step > 0 ? n <= to : n >= to; n += step) out.push(String(n));
+        continue;
+      }
+      const list = /^\{([^{}]*,[^{}]*)\}$/.exec(word);
+      if (list) {
+        out.push(...(list[1] ?? '').split(','));
+        continue;
+      }
+      if (/[*?]/.test(word)) {
+        const slash = word.lastIndexOf('/');
+        const dir = slash >= 0 ? word.slice(0, slash) || '/' : '.';
+        const node = this.node(this.resolvePath(dir));
+        const regex = globToRegex(word.slice(slash + 1));
+        const hits =
+          node?.type === 'dir'
+            ? [...node.children.keys()]
+                .filter((n) => regex.test(n))
+                .sort()
+                .map((n) => (slash >= 0 ? `${word.slice(0, slash)}/${n}` : n))
+            : [];
+        out.push(...(hits.length ? hits : [word]));
+        continue;
+      }
+      out.push(word);
+    }
+    return out;
+  }
+
+  /** The non-option arguments of a command whose options take a value (cut -d , -f 2 file). */
+  private fileArgs(args: string[], optionsWithValue: string[]): string[] {
+    const files: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i] ?? '';
+      if (optionsWithValue.includes(arg)) i++;
+      else if (!arg.startsWith('-')) files.push(arg);
+    }
+    return files;
+  }
+
+  private syncUsers(newHome?: string): void {
+    this.writeFile('/etc/passwd', this.system.passwdFile(), 'root');
+    this.writeFile('/etc/group', this.system.groupFile(), 'root');
+    if (newHome) this.mkdirp(`/home/${newHome}`, newHome);
   }
 
   private ps(): CommandResult {

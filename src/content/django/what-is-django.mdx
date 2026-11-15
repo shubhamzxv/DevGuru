@@ -1,0 +1,196 @@
+---
+id: django-what-is-django
+title: What is Django?
+summary: Django is a batteries-included Python web framework with an ORM, migrations, an admin panel, authentication, forms, templates and strong security defaults, built for shipping complete database-backed products quickly.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Buying a **fully equipped restaurant kitchen** instead of an empty room: the stove, fridge, sink, knives, cash counter and even a manager's office are already installed and tested together. You start cooking on day one. **Django** is that kitchen for web applications.
+
+</Analogy>
+
+## Simple explanation
+
+Django (2005, "the web framework for perfectionists with deadlines") gives you, out of the box:
+
+| Battery | What it does |
+| --- | --- |
+| **ORM** | Python classes ↔ database tables, queries without SQL |
+| **Migrations** | versioned schema changes (`makemigrations`, `migrate`) |
+| **Admin** | a complete back office to manage your data, generated from models |
+| **Auth** | users, passwords (hashed), login/logout, permissions, groups |
+| **URL routing + views** | map URLs to Python functions or classes |
+| **Templates** | HTML with variables, loops, inheritance |
+| **Forms** | validation and HTML rendering |
+| **Security** | CSRF protection, XSS auto-escaping, SQL injection safe ORM, clickjacking headers |
+| **Extras** | sessions, caching, email, i18n, signals, testing tools |
+
+Plus a huge ecosystem: **Django REST Framework** (APIs), Celery, django-filter, django-allauth, django-storages (S3).
+
+Who uses it: Instagram, Pinterest (early), Mozilla, Disqus, many fintech and e-commerce backends.
+
+Typical commands:
+
+```bash
+pip install django
+django-admin startproject config .        # the project
+python manage.py startapp store           # an app
+python manage.py makemigrations && python manage.py migrate
+python manage.py createsuperuser
+python manage.py runserver                # http://127.0.0.1:8000  and  /admin
+```
+
+Good fit: e-commerce, booking systems, CMS, dashboards with admin, SaaS products, REST APIs with DRF. Less ideal: tiny single-purpose microservices or heavily async real-time systems (FastAPI or Channels may fit better).
+
+## Code example
+
+A whole feature in three small files:
+
+```python
+# store/models.py
+from django.db import models
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=8, decimal_places=2)
+    stock = models.PositiveIntegerField(default=0)
+
+# store/admin.py
+from django.contrib import admin
+from .models import Product
+admin.site.register(Product)          # a full CRUD screen at /admin/
+
+# store/views.py
+from django.http import JsonResponse
+from .models import Product
+
+def cheap_products(request):
+    names = list(Product.objects.filter(price__lt=500).values_list("name", flat=True))
+    return JsonResponse({"products": names})
+```
+
+```output
+$ python manage.py makemigrations store
+Migrations for 'store':
+  store/migrations/0001_initial.py
+    + Create model Product
+$ python manage.py migrate
+  Applying store.0001_initial... OK
+GET /cheap/  -> {"products": ["Clean Code", "Rubik Cube", "USB Cable"]}
+GET /admin/  -> login page, then a list/add/edit/delete screen for Product
+```
+
+<Playground kind="none">
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install django
+django-admin startproject config shop && cd shop
+python manage.py startapp store
+python manage.py migrate
+python manage.py createsuperuser        # pick a username and password
+python manage.py runserver
+# open http://127.0.0.1:8000/admin/ and log in
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Fighting the framework">
+
+<Wrong>
+
+```text
+Writing raw SQL everywhere, a custom user table, hand-made password hashing and your own admin screens.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Use the ORM, django.contrib.auth (with a custom User model if needed), the admin and forms; customise them where the product needs it.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Using runserver in production">
+
+<Wrong>
+
+```bash
+python manage.py runserver 0.0.0.0:80       # development server: single process, not hardened
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+gunicorn config.wsgi:application -w 3 -b 127.0.0.1:8000    # behind nginx (see Deployment)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Django and why use it?">
+
+A high-level Python web framework that follows "batteries included": ORM with migrations, admin, authentication and permissions, URL routing, templates, forms, caching and strong security defaults. It lets teams build secure, database-backed products quickly with consistent conventions, and DRF extends it for REST APIs.
+
+</QA>
+
+<QA q="What security features does Django provide out of the box?">
+
+CSRF protection middleware and tokens, automatic HTML escaping in templates against XSS, parameterised ORM queries against SQL injection, clickjacking protection (X-Frame-Options), secure password hashing (PBKDF2, Argon2 optional), and settings for HTTPS, HSTS and secure cookies checked by `manage.py check --deploy`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which Django feature gives a ready back office for data?',
+      options: ['ORM', 'Admin', 'Signals', 'Middleware'],
+      answer: 1,
+      why: 'django.contrib.admin generates CRUD screens from models.',
+    },
+    {
+      q: 'Command to start the development server?',
+      options: ['django run', 'python manage.py runserver', 'python app.py', 'uvicorn manage'],
+      answer: 1,
+      why: 'Development only.',
+    },
+    {
+      q: 'Library most used for REST APIs with Django?',
+      options: ['Flask', 'Django REST Framework', 'Express', 'Pydantic'],
+      answer: 1,
+      why: 'DRF: serializers, viewsets, routers.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| New project | `django-admin startproject config .` |
+| New app | `python manage.py startapp store` |
+| Migrations | `makemigrations` → `migrate` |
+| Admin user | `createsuperuser` |
+| Dev server | `runserver` |
+| Shell | `python manage.py shell` |
+| Tests | `python manage.py test` |
+| Deploy check | `python manage.py check --deploy` |
+
+</CheatSheet>

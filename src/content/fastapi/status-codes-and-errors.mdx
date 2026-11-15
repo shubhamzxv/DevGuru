@@ -1,0 +1,262 @@
+---
+id: fastapi-status-codes-and-errors
+title: Status codes and HTTPException
+summary: Set the success status with status_code= on the decorator (201 for create, 204 for delete), raise HTTPException for expected errors such as 404 or 403, and register exception handlers to turn your own exceptions into clean JSON responses.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A courier's delivery report: "Delivered" (200), "New parcel booked" (201), "Address not found" (404), "Recipient refused" (403), "Our van broke down" (500). The **number** lets any system understand what happened, even without reading the note.
+
+</Analogy>
+
+## Simple explanation
+
+**Success codes**
+
+```python
+from fastapi import status
+
+@app.post("/books", status_code=status.HTTP_201_CREATED)     # 201: created
+@app.delete("/books/{id}", status_code=204)                  # 204: done, no body
+```
+
+Default is **200**. Use the `status` constants for readability.
+
+**Expected errors: raise `HTTPException`**
+
+```python
+from fastapi import HTTPException
+
+if book is None:
+    raise HTTPException(status_code=404, detail="Book not found")
+```
+
+- `raise`, not `return`: it stops the function immediately, from any depth (also inside dependencies and helper functions)
+- `detail` can be a string, dict or list; it becomes `{"detail": ...}`
+- `headers={"WWW-Authenticate": "Bearer"}` adds headers (needed for 401)
+
+Which code to use:
+
+| Code | When |
+| --- | --- |
+| 400 | bad request that is not a schema problem ("quantity exceeds max per order") |
+| 401 | not logged in / invalid token |
+| 403 | logged in but not allowed |
+| 404 | resource does not exist |
+| 409 | conflict: duplicate email, out of stock, version clash |
+| 422 | body/query fails validation (FastAPI does this for you) |
+| 429 | too many requests |
+| 500 | unexpected bug (FastAPI returns it for unhandled exceptions) |
+
+**Your own exceptions with a handler** (keeps business code free of HTTP details):
+
+```python
+class OutOfStock(Exception):
+    def __init__(self, title: str):
+        self.title = title
+
+@app.exception_handler(OutOfStock)
+def out_of_stock_handler(request: Request, exc: OutOfStock):
+    return JSONResponse(status_code=409, content={"error": "out_of_stock", "message": f"{exc.title} is out of stock"})
+```
+
+You can also override the default handlers for `RequestValidationError` (422 format) and `StarletteHTTPException` to give the whole API one error format, and log 500s with a request ID. Never return stack traces to clients.
+
+## Code example
+
+```python
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse
+
+app = FastAPI()
+BOOKS = {1: {"id": 1, "title": "Clean Code", "stock": 0}}
+
+class OutOfStock(Exception):
+    def __init__(self, title: str):
+        self.title = title
+
+@app.exception_handler(OutOfStock)
+def out_of_stock_handler(request: Request, exc: OutOfStock):
+    return JSONResponse(status_code=409, content={"error": "out_of_stock", "message": f"{exc.title} is out of stock"})
+
+@app.get("/books/{book_id}")
+def get_book(book_id: int):
+    if book_id not in BOOKS:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+    return BOOKS[book_id]
+
+@app.post("/books/{book_id}/buy")
+def buy(book_id: int):
+    book = get_book(book_id)                 # its HTTPException also works from here
+    if book["stock"] == 0:
+        raise OutOfStock(book["title"])
+    return {"ok": True}
+
+@app.delete("/books/{book_id}", status_code=204)
+def delete(book_id: int):
+    BOOKS.pop(book_id, None)
+
+@app.get("/admin")
+def admin():
+    raise HTTPException(status_code=403, detail="Admins only", headers={"X-Reason": "role"})
+
+@app.get("/crash")
+def crash():
+    return 1 / 0
+```
+
+```output
+GET    /books/1       -> 200 {"id": 1, "title": "Clean Code", "stock": 0}
+GET    /books/9       -> 404 {"detail": "Book not found"}
+POST   /books/1/buy   -> 409 {"error": "out_of_stock", "message": "Clean Code is out of stock"}
+GET    /admin         -> 403 {"detail": "Admins only"}   (header X-Reason: role)
+DELETE /books/1       -> 204 (empty body)
+GET    /crash         -> 500 Internal Server Error
+```
+
+<Playground kind="none">
+
+```python
+# main.py  →  fastapi dev main.py  →  try /books/1, /books/9, POST /books/1/buy, /crash
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse
+
+app = FastAPI()
+BOOKS = {1: {"title": "Clean Code", "stock": 0}}
+
+class OutOfStock(Exception):
+    pass
+
+@app.exception_handler(OutOfStock)
+def handle(request: Request, exc: OutOfStock):
+    return JSONResponse(status_code=409, content={"error": "out_of_stock"})
+
+@app.get("/books/{book_id}")
+def get_book(book_id: int):
+    if book_id not in BOOKS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Book not found")
+    return BOOKS[book_id]
+
+@app.post("/books/{book_id}/buy", status_code=201)
+def buy(book_id: int):
+    if get_book(book_id)["stock"] == 0:
+        raise OutOfStock()
+    return {"ok": True}
+
+@app.get("/crash")
+def crash():
+    return 1 / 0
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Returning errors with status 200">
+
+<Wrong>
+
+```python
+if book is None:
+    return {"error": "Book not found"}     # client sees 200 OK
+```
+
+</Wrong>
+
+<Right>
+
+```python
+if book is None:
+    raise HTTPException(404, "Book not found")
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Catching every exception and hiding bugs">
+
+<Wrong>
+
+```python
+try:
+    ...
+except Exception:
+    raise HTTPException(400, "Something went wrong")    # a bug looks like a client error, no log
+```
+
+</Wrong>
+
+<Right>
+
+```python
+except PaymentDeclined as e:
+    raise HTTPException(402, str(e))
+# let real bugs become 500, logged with a traceback and a request id
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you return a 404 in FastAPI?">
+
+Raise `HTTPException(status_code=404, detail="...")`. Raising (not returning) stops execution from anywhere in the call stack, including dependencies, and FastAPI converts it into a JSON response `{"detail": "..."}` with that status code.
+
+</QA>
+
+<QA q="How do you create a consistent error format for the whole API?">
+
+Register exception handlers with `@app.exception_handler`: one for your domain exceptions, one for `RequestValidationError` (to reshape 422s), one for `StarletteHTTPException`, and a catch-all that logs unexpected errors and returns a generic 500 with a correlation id.
+
+</QA>
+
+<QA q="What is the difference between 401 and 403, and 400 and 422?">
+
+401 means the request is not authenticated (missing or invalid credentials), 403 means the user is authenticated but not permitted. 422 means the request is well-formed but fails schema validation, which FastAPI produces automatically; 400 is for other client mistakes, often business rules.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Status for a successful create?',
+      options: ['200', '201', '204', '202'],
+      answer: 1,
+      why: 'status_code=201 on the decorator.',
+    },
+    {
+      q: 'Why raise HTTPException instead of returning it?',
+      options: ['Faster', 'It stops execution from any depth', 'It is required for 200', 'Returns are not allowed'],
+      answer: 1,
+      why: 'Works inside helpers and dependencies too.',
+    },
+    {
+      q: 'Duplicate email at signup?',
+      options: ['404', '409', '500', '204'],
+      answer: 1,
+      why: 'Conflict with existing state.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Success code | `@app.post(..., status_code=201)` · `204` for delete |
+| Error | `raise HTTPException(404, "Not found")` |
+| With headers | `HTTPException(401, "...", headers={"WWW-Authenticate": "Bearer"})` |
+| Constants | `status.HTTP_404_NOT_FOUND` |
+| Custom exception | `@app.exception_handler(MyError)` → `JSONResponse(...)` |
+| Validation format | handler for `RequestValidationError` |
+
+</CheatSheet>

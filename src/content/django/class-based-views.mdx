@@ -1,0 +1,229 @@
+---
+id: django-class-based-views
+title: Class-based views (CBV)
+summary: Class-based views are classes with get and post methods; generic views like ListView, DetailView, CreateView, UpdateView and DeleteView implement common patterns with a few attributes, and mixins such as LoginRequiredMixin add behaviour through inheritance.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Instead of writing every job description from scratch, a company has **standard job templates**: "Cashier", "Store keeper". You take the template and change only what differs: "Cashier, but for the night shift". Generic CBVs are those templates; you set a few attributes and override only the special part.
+
+</Analogy>
+
+## Simple explanation
+
+**Basic `View`**: one method per HTTP verb:
+
+```python
+from django.views import View
+
+class PingView(View):
+    def get(self, request):
+        return JsonResponse({"method": "GET"})
+
+    def post(self, request):
+        return JsonResponse({"method": "POST"})
+# urls.py: path("ping/", PingView.as_view())     (other methods → 405)
+```
+
+**Generic views** do the standard work:
+
+| View | Does | Default template |
+| --- | --- | --- |
+| `ListView` | list + pagination (`paginate_by`) | `app/model_list.html` → `object_list` |
+| `DetailView` | one object by `pk`/`slug`, 404 if missing | `app/model_detail.html` → `object` |
+| `CreateView` | form → save → redirect | `app/model_form.html` |
+| `UpdateView` | edit form | `app/model_form.html` |
+| `DeleteView` | confirm + delete (POST) | `app/model_confirm_delete.html` |
+| `TemplateView`, `RedirectView`, `FormView` | static page, redirect, non-model form | |
+
+```python
+class ProductListView(ListView):
+    model = Product
+    template_name = "store/product_list.html"
+    context_object_name = "products"
+    paginate_by = 3
+
+    def get_queryset(self):                                  # override a hook
+        return Product.active.select_related("category").order_by("price")
+
+class ProductCreateView(LoginRequiredMixin, CreateView):    # mixins go first
+    model = Product
+    form_class = ProductForm
+    template_name = "store/product_form.html"
+    success_url = reverse_lazy("store:cbv-list")
+```
+
+Common hooks to override: `get_queryset()`, `get_context_data(**kwargs)`, `form_valid(form)` (e.g. set `form.instance.owner = self.request.user`), `get_success_url()`, `get_object()`, `dispatch()`.
+
+Common mixins: `LoginRequiredMixin`, `PermissionRequiredMixin`, `UserPassesTestMixin`, plus your own.
+
+**FBV vs CBV**
+
+| | FBV | CBV |
+| --- | --- | --- |
+| Readability | explicit, top to bottom | logic spread over hooks and parents |
+| Reuse | decorators, helper functions | inheritance, mixins |
+| CRUD | write it yourself | a few attributes |
+| Best for | unique flows | standard screens, APIs (DRF) |
+
+Tool: the site **ccbv.co.uk** shows every attribute and method of each generic view.
+
+## Code example
+
+```python
+urlpatterns = [
+    path("cbv/", views.ProductListView.as_view(), name="cbv-list"),
+    path("cbv/<int:pk>/", views.ProductDetailView.as_view(), name="cbv-detail"),
+    path("cbv/new/", views.ProductCreateView.as_view(), name="cbv-create"),
+    path("ping/", views.PingView.as_view(), name="ping"),
+]
+```
+
+```output
+GET /products/cbv/         → USB Cable ₹199 · Rubik Cube ₹299 · Clean Code ₹450 · Page 1 of 2
+GET /products/cbv/?page=2  → Django for APIs ₹650 · Fluent Python ₹899 (out of stock) · Headphones ₹1499 · Page 2 of 2
+GET /products/cbv/new/     → 302 to login (LoginRequiredMixin)
+POST /products/ping/       → {"method": "POST"}
+PUT /products/ping/        → 405 Method Not Allowed
+```
+
+Pagination, ordering and the template context (`page_obj`) came from three attributes and one method.
+
+<Playground kind="none">
+
+```python
+# store/views.py — an UpdateView that only lets owners edit their own reviews
+from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
+from django.urls import reverse_lazy
+from django.views.generic import UpdateView
+
+from .models import Review
+
+class ReviewUpdateView(LoginRequiredMixin, UserPassesTestMixin, UpdateView):
+    model = Review
+    fields = ["rating", "text"]
+    template_name = "store/review_form.html"
+    success_url = reverse_lazy("store:product-list")
+
+    def test_func(self):                       # UserPassesTestMixin hook: 403 if False
+        return self.get_object().author == self.request.user
+
+    def form_valid(self, form):
+        form.instance.edited = True            # change the object before it is saved
+        return super().form_valid(form)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Mixins after the view">
+
+<Wrong>
+
+```python
+class ProductCreateView(CreateView, LoginRequiredMixin):   # dispatch of CreateView runs first: no login check
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class ProductCreateView(LoginRequiredMixin, CreateView):
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Forgetting the owner in form_valid">
+
+<Wrong>
+
+```python
+class OrderCreateView(CreateView):
+    model = Order
+    fields = ["customer", "status"]          # the user can submit someone else's id as customer
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class OrderCreateView(LoginRequiredMixin, CreateView):
+    model = Order
+    fields = ["status"]
+    def form_valid(self, form):
+        form.instance.customer = self.request.user
+        return super().form_valid(form)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are class-based views and generic views?">
+
+Views implemented as classes, where `as_view()` creates a callable and `dispatch()` routes to methods named after HTTP verbs. Generic CBVs (ListView, DetailView, CreateView, UpdateView, DeleteView, FormView, TemplateView) implement common patterns configured with attributes and customised by overriding hooks like get_queryset, get_context_data and form_valid; mixins add reusable behaviour.
+
+</QA>
+
+<QA q="How do you restrict a CBV to logged-in users or owners?">
+
+Put LoginRequiredMixin (and PermissionRequiredMixin or UserPassesTestMixin with test_func) first in the base classes; restrict the queryset in get_queryset to the user's own objects so others get 404; set the owner in form_valid instead of accepting it from the form.
+
+</QA>
+
+<QA q="What does as_view() do?">
+
+It returns a function suitable for URL patterns; on each request it creates a new instance of the class (so instance attributes are per request), stores request/args/kwargs, and calls dispatch(), which picks the handler method for the HTTP method or returns 405.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Show a paginated list with one attribute?',
+      options: ['DetailView.paginate', 'ListView with paginate_by', 'FormView', 'View.page'],
+      answer: 1,
+      why: 'paginate_by = items per page.',
+    },
+    {
+      q: 'Set the logged-in user as owner before saving in CreateView?',
+      options: ['get_queryset', 'form_valid', 'get_context_data', 'as_view'],
+      answer: 1,
+      why: 'Set form.instance.owner, then super().',
+    },
+    {
+      q: 'Where do mixins go in the base class list?',
+      options: ['Last', 'First (left)', 'Anywhere', 'In urls.py'],
+      answer: 1,
+      why: 'Method resolution order: left first.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Verbs | `class V(View): def get(self, request): ...` |
+| List | `ListView` + `model`, `paginate_by`, `get_queryset()` |
+| One | `DetailView` (`pk`/`slug` from URL) |
+| Create / edit / delete | `CreateView` · `UpdateView` · `DeleteView` + `success_url=reverse_lazy(...)` |
+| Login / perms | `LoginRequiredMixin` · `PermissionRequiredMixin` · `UserPassesTestMixin` |
+| Extra context | `get_context_data(self, **kwargs)` |
+| Before save | `form_valid(self, form)` |
+| URL | `path("x/", MyView.as_view())` |
+
+</CheatSheet>

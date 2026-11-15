@@ -1,0 +1,194 @@
+---
+id: linux-file-system
+title: The file system (/, /home, /etc)
+summary: Linux has one file tree starting at /, with standard folders such as /home for users, /etc for configuration, /var for logs and data, /tmp for temporary files and /usr for programs.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A big hospital has a fixed layout: reception on the ground floor, records room in the basement, staff lockers on floor 2, pharmacy on floor 1. A new doctor from another hospital still knows roughly where everything is, because all hospitals follow the same plan.
+
+Linux folders follow a standard plan too (the **Filesystem Hierarchy Standard**), so on any server you know where to find logs or config.
+
+</Analogy>
+
+## Simple explanation
+
+```text
+/                 root of everything (not the same as /root!)
+├── home/         users' personal folders: /home/guru, /home/priya
+├── root/         home folder of the root user
+├── etc/          system configuration: nginx, ssh, users, hosts
+├── var/          variable data: /var/log (logs), /var/lib (databases, docker), /var/www
+├── tmp/          temporary files, anyone can write, cleared on reboot
+├── usr/          installed programs and libraries: /usr/bin, /usr/local/bin
+├── bin, sbin     essential commands (today links into /usr)
+├── opt/          extra software installed by hand
+├── dev/          devices as files: /dev/sda (disk), /dev/null (black hole)
+├── proc/         live kernel and process info: /proc/cpuinfo, /proc/1234
+├── mnt, media/   mounted disks and USB drives
+└── boot/         the kernel and boot loader
+```
+
+Files you will open on real servers:
+
+| Path | What it is |
+| --- | --- |
+| `/etc/nginx/nginx.conf` | web server config |
+| `/etc/ssh/sshd_config` | SSH server settings |
+| `/etc/passwd`, `/etc/group` | users and groups |
+| `/etc/hosts` | local name → IP overrides |
+| `/var/log/syslog`, `/var/log/auth.log` | system and login logs |
+| `/var/log/nginx/access.log` | web requests |
+| `/etc/systemd/system/` | your own service files |
+| `~/.bashrc` | your shell settings and aliases |
+
+**Absolute path**: starts at `/`, works from anywhere: `/home/guru/app/app.py`. **Relative path**: starts from where you are: `app/app.py`, `../logs`. Shortcuts: `~` home, `.` here, `..` one level up.
+
+**Hidden files** start with a dot (`.bashrc`, `.git`, `.env`); `ls -a` shows them.
+
+## Code example
+
+```bash
+ls /
+cat /etc/hostname
+ls /var/log
+cat /etc/hosts
+```
+
+```output
+bin  etc  home  tmp  usr  var
+devguru
+auth.log  syslog
+127.0.0.1   localhost
+127.0.1.1   devguru
+```
+
+<Playground kind="terminal">
+
+```bash
+ls /
+ls /etc
+cat /etc/hostname
+cat /etc/nginx/nginx.conf
+ls /var/log
+cat /var/log/auth.log
+cd /tmp
+pwd
+cd ~
+pwd
+ls -a
+```
+
+</Playground>
+
+`/var/log/auth.log` shows failed SSH logins from the internet: a typical first look on a real server.
+
+<Mistakes>
+
+<Mistake title="Confusing / with /root">
+
+<Wrong>
+
+```text
+"Put the file in root" (meaning /root, the admin's home)
+```
+
+</Wrong>
+
+<Right>
+
+```text
+/      = the top of the tree
+/root  = the root user's home folder
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Keeping important files in /tmp">
+
+<Wrong>
+
+```bash
+cp backup.sql /tmp/        # deleted on reboot or by cleanup jobs
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+cp backup.sql ~/backups/   # or upload it to S3
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Where are configuration files and logs kept in Linux?">
+
+System-wide configuration lives under /etc (for example /etc/nginx, /etc/ssh/sshd_config, /etc/systemd/system). Logs live under /var/log (syslog or messages, auth.log, nginx and application logs), and services managed by systemd can also be read with journalctl.
+
+</QA>
+
+<QA q="What is the difference between an absolute and a relative path?">
+
+An absolute path starts from the root `/` and points to the same place no matter where you are. A relative path starts from the current directory, using `.` for here and `..` for the parent. Scripts and cron jobs should use absolute paths because their working directory may differ.
+
+</QA>
+
+<QA q="What are /proc and /dev?">
+
+/proc is a virtual filesystem the kernel generates on the fly with information about processes and the system (cpuinfo, meminfo, one folder per PID). /dev contains device files representing hardware and special devices such as /dev/sda, /dev/null and /dev/random.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where would you look for the nginx configuration?',
+      options: ['/var/log/nginx', '/etc/nginx', '/home/nginx', '/tmp/nginx'],
+      answer: 1,
+      why: '/etc holds configuration.',
+    },
+    {
+      q: 'Which folder holds logs?',
+      options: ['/etc', '/usr', '/var/log', '/bin'],
+      answer: 2,
+      why: '/var is for changing data, logs included.',
+    },
+    {
+      q: 'What does .. mean?',
+      options: ['Hidden file', 'Parent folder', 'Home folder', 'Root'],
+      answer: 1,
+      why: 'cd .. goes up one level.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Folder | Holds |
+| --- | --- |
+| `/` | top of the tree |
+| `/home/<user>` (`~`) | your files |
+| `/etc` | configuration |
+| `/var/log` | logs |
+| `/var/lib` | app data (docker, databases) |
+| `/tmp` | temporary, cleared on reboot |
+| `/usr/bin`, `/usr/local/bin` | programs |
+| `/opt` | manually installed software |
+| `/dev`, `/proc` | devices, live system info |
+
+`.` here · `..` up · `~` home · `.name` hidden (see with `ls -a`)
+
+</CheatSheet>

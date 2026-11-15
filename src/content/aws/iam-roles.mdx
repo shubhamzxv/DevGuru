@@ -1,0 +1,229 @@
+---
+id: aws-iam-roles
+title: IAM roles
+summary: An IAM role is an identity without permanent credentials that services, users or other accounts assume to get temporary credentials from STS; its trust policy says who may assume it and its permission policies say what it can do, which is how EC2, Lambda, ECS tasks and CI pipelines access AWS without stored keys.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **hotel key card** handed to a cleaner at the start of a shift: it opens only the floors they clean, and it **stops working at the end of the shift**. Nobody carries a permanent master key. The front desk's list of "who may receive a cleaner's card" is the **trust policy**; the floors the card opens are the **permission policy**.
+
+</Analogy>
+
+## Simple explanation
+
+A role has two policies:
+
+| Policy | Answers | Example |
+| --- | --- | --- |
+| **Trust policy** | **who** may assume the role | the EC2 service, a Lambda function, another AWS account, GitHub Actions via OIDC |
+| **Permission policies** | **what** the role can do once assumed | read `shop-media`, write to one DynamoDB table |
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {"Service": "ec2.amazonaws.com"},
+    "Action": "sts:AssumeRole"
+  }]
+}
+```
+
+When assumed, **STS** returns **temporary credentials** (access key, secret, session token, expiry from 15 minutes to 12 hours). SDKs refresh them automatically.
+
+**Where roles are used**
+
+| Who | How |
+| --- | --- |
+| EC2 | **instance profile**: the app calls `boto3.client("s3")` with no keys |
+| Lambda | **execution role** |
+| ECS tasks | **task role** (app permissions) + **task execution role** (pull image, write logs) |
+| CI/CD | GitHub Actions **OIDC** → `AssumeRoleWithWebIdentity`, no stored keys |
+| People | IAM Identity Center (SSO) gives users roles in many accounts |
+| Cross-account | account B trusts account A's role: `sts:AssumeRole` |
+| Services acting for you | service-linked roles (Auto Scaling, RDS) |
+
+Why roles beat access keys: **no long-lived secrets** to leak, automatic expiry, one place to change permissions, and CloudTrail shows which session did what (`assumed-role/shop-api-ec2/deploy-script`).
+
+`iam:PassRole` is the permission to hand a role to a service (for example launching an EC2 instance with a role); restrict it, or users can escalate privileges.
+
+## Code example
+
+```python
+import json, boto3
+
+iam = boto3.client("iam")
+trust = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow",
+         "Principal": {"Service": "ec2.amazonaws.com"}, "Action": "sts:AssumeRole"}]}
+role = iam.create_role(RoleName="shop-api-ec2", AssumeRolePolicyDocument=json.dumps(trust))["Role"]
+iam.attach_role_policy(RoleName="shop-api-ec2", PolicyArn=media_policy_arn)
+print("role:", role["Arn"])
+
+sts = boto3.client("sts")
+print("whoami:", sts.get_caller_identity()["Arn"])
+creds = sts.assume_role(RoleArn=role["Arn"], RoleSessionName="deploy-script", DurationSeconds=900)
+print("temp creds:", {k: (v[:8] + "..." if isinstance(v, str) else str(v)) for k, v in creds["Credentials"].items()})
+print("assumed:", creds["AssumedRoleUser"]["Arn"])
+```
+
+```output
+role: arn:aws:iam::123456789012:role/shop-api-ec2
+whoami: arn:aws:sts::123456789012:user/moto
+temp creds: {'AccessKeyId': 'ASIARZPU...', 'SecretAccessKey': 'Qs0rh454...', 'SessionToken': 'FQoGZXIv...', 'Expiration': '2026-11-15 07:53:05.653204+00:00'}
+assumed: arn:aws:sts::123456789012:assumed-role/shop-api-ec2/deploy-script
+```
+
+Temporary keys start with `ASIA` (permanent user keys start with `AKIA`) and expire after 15 minutes here. (Run against a mock of AWS, so the caller is the mock user.)
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "ec2", "label": "EC2: shop API", "icon": "🖥️", "col": 0, "row": 1, "info": "Launched with the instance profile for role shop-api-ec2. No keys on disk.", "example": "boto3.client('s3') just works." },
+    { "id": "imds", "label": "Instance metadata (IMDSv2)", "icon": "🪪", "col": 1, "row": 0, "info": "The SDK fetches the role's temporary credentials from the instance metadata service.", "example": "Refreshed automatically before expiry." },
+    { "id": "sts", "label": "AWS STS", "icon": "🎫", "col": 1, "row": 2, "info": "Issues temporary credentials after checking the role's TRUST policy.", "example": "Principal: ec2.amazonaws.com may assume shop-api-ec2." },
+    { "id": "role", "label": "Role: shop-api-ec2", "icon": "🎭", "col": 2, "row": 1, "info": "PERMISSION policy: s3:GetObject/PutObject on shop-media/*.", "example": "No other buckets, no deletes." },
+    { "id": "s3", "label": "S3: shop-media", "icon": "🪣", "col": 3, "row": 1, "info": "Accepts the request signed with the temporary credentials.", "example": "PUT products/7.jpg → 200" },
+    { "id": "gha", "label": "GitHub Actions (OIDC)", "icon": "🤖", "col": 0, "row": 2, "info": "CI gets a signed OIDC token from GitHub and exchanges it for a deploy role. No AWS keys in GitHub secrets.", "example": "aws-actions/configure-aws-credentials with role-to-assume" }
+  ],
+  "edges": [
+    ["ec2", "imds", "get credentials"],
+    ["imds", "sts"],
+    ["gha", "sts", "AssumeRoleWithWebIdentity"],
+    ["sts", "role", "trust check"],
+    ["role", "s3", "allowed actions"]
+  ],
+  "flows": [
+    {
+      "name": "App uploads a file",
+      "steps": [
+        ["ec2", "The app calls s3.put_object(...) with no keys in the code."],
+        ["imds", "The SDK reads temporary credentials of role shop-api-ec2."],
+        ["sts", "They were issued because the trust policy allows EC2."],
+        ["role", "The permission policy allows PutObject on shop-media/*."],
+        ["s3", "The object is stored. CloudTrail records assumed-role/shop-api-ec2/i-0abc..."]
+      ]
+    },
+    {
+      "name": "CI deploys without stored keys",
+      "steps": [
+        ["gha", "The workflow asks GitHub for an OIDC token."],
+        ["sts", "STS verifies it against the role's trust policy (repo and branch conditions)."],
+        ["role", "The deploy role's credentials last one hour."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Copying access keys onto servers">
+
+<Wrong>
+
+```bash
+# on the EC2 instance
+aws configure     # pasting a developer's AKIA... keys into ~/.aws/credentials
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Attach an IAM role (instance profile) to the instance; the SDK finds temporary credentials automatically.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Trusting a whole account or anyone">
+
+<Wrong>
+
+```json
+{"Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "sts:AssumeRole"}
+```
+
+</Wrong>
+
+<Right>
+
+```json
+{"Effect": "Allow", "Principal": {"AWS": "arn:aws:iam::111122223333:role/ci-deployer"},
+ "Action": "sts:AssumeRole", "Condition": {"StringEquals": {"sts:ExternalId": "shop-2026"}}}
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is an IAM role and how is it different from a user?">
+
+A role is an identity with permissions but no long-term credentials; trusted principals (services, users, other accounts, web identities) assume it and receive temporary credentials from STS. A user has permanent credentials tied to one person or app. Roles are preferred for applications, services, CI and cross-account access.
+
+</QA>
+
+<QA q="How does an EC2 instance access S3 securely?">
+
+Create a role with a trust policy for ec2.amazonaws.com and a least-privilege permission policy for the bucket, attach it as an instance profile, and let the SDK obtain rotating temporary credentials from the instance metadata service (IMDSv2); no keys are stored on the instance.
+
+</QA>
+
+<QA q="What is the difference between the ECS task role and the task execution role?">
+
+The task execution role is used by the ECS agent to pull the image from ECR, fetch secrets and write logs to CloudWatch. The task role is assumed by your application code inside the container to call AWS services such as S3 or DynamoDB.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which policy defines WHO can assume a role?',
+      options: ['Permission policy', 'Trust policy', 'Bucket policy', 'SCP'],
+      answer: 1,
+      why: 'Principal + sts:AssumeRole.',
+    },
+    {
+      q: 'Temporary credentials come from...',
+      options: ['IAM users', 'STS', 'S3', 'KMS'],
+      answer: 1,
+      why: 'Security Token Service.',
+    },
+    {
+      q: 'GitHub Actions deploying to AWS without stored keys uses...',
+      options: ['Root user', 'OIDC + AssumeRoleWithWebIdentity', 'Access keys in secrets', 'SSH'],
+      answer: 1,
+      why: 'Short-lived credentials per run.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Use |
+| --- | --- |
+| App on EC2 | instance profile role |
+| Lambda | execution role |
+| ECS | task role (app) + execution role (agent) |
+| CI/CD | OIDC → AssumeRoleWithWebIdentity |
+| People, many accounts | IAM Identity Center (SSO) |
+| Other account | trust its role + `sts:AssumeRole` (+ ExternalId) |
+| Who | trust policy · What: permission policies |
+
+Temporary keys `ASIA...` + session token · permanent keys `AKIA...` · restrict `iam:PassRole`
+
+</CheatSheet>

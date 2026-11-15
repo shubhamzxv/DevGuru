@@ -1,0 +1,214 @@
+---
+id: aws-ec2
+title: EC2
+summary: EC2 provides virtual servers (instances) that you launch from an AMI with an instance type, key pair, security group, subnet and IAM role; you pay per second while it runs, storage lives on EBS volumes, user data scripts configure it at boot, and you manage the operating system.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Renting a **furnished flat by the hour**. You choose the size (instance type), the furniture set it comes with (AMI: the OS image), the front-door lock (key pair + security group), the building and floor (VPC, subnet) and a list of chores to do on move-in day (user data). You can stop renting at any time; the lease is per second.
+
+</Analogy>
+
+## Simple explanation
+
+Launching an instance means choosing:
+
+| Choice | Example | Notes |
+| --- | --- | --- |
+| **AMI** | Ubuntu 24.04, Amazon Linux 2023, your own golden image | the disk image with the OS |
+| **Instance type** | `t3.micro`, `m7g.large`, `c7i.xlarge` | family + generation + size |
+| **Key pair** | `shop-key` | for SSH (or use SSM Session Manager, no SSH needed) |
+| **Network** | VPC + subnet (public or private) + security group | see VPC and Security groups |
+| **Storage** | 20 GB gp3 EBS root volume | persists across stop/start |
+| **IAM role** | instance profile `shop-api-ec2` | never put access keys on servers |
+| **User data** | a shell script run on first boot | install packages, pull code |
+
+**Instance families**: `t` burstable (cheap, CPU credits), `m` general purpose, `c` compute, `r` memory, `g/p` GPU, `i` storage. Suffix `g` = Graviton ARM (cheaper), `i`/`a` = Intel/AMD. Example: `m7g.large` = general purpose, 7th generation, Graviton, large.
+
+**Lifecycle**: `pending → running → stopping → stopped → terminated`. Stopped instances cost nothing for compute (EBS still charged); a **public IP changes** on stop/start unless you use an **Elastic IP**. Terminate deletes the instance (and the root volume by default).
+
+**User data** example:
+
+```bash
+#!/bin/bash
+apt-get update -y && apt-get install -y nginx python3-venv
+systemctl enable --now nginx
+```
+
+When EC2 fits: full control of the OS, long-running servers, special software, GPUs. When something else fits better: containers on ECS/Fargate, functions on Lambda, managed platforms like App Runner/Beanstalk (less patching).
+
+## Code example
+
+```python
+import boto3
+
+ec2 = boto3.client("ec2", region_name="ap-south-1")
+inst = ec2.run_instances(
+    ImageId=ami, InstanceType="t3.micro", MinCount=1, MaxCount=1,
+    KeyName="shop-key", SecurityGroupIds=[sg],
+    TagSpecifications=[{"ResourceType": "instance", "Tags": [{"Key": "Name", "Value": "shop-web-1"}]}],
+)["Instances"][0]
+print("instance:", inst["InstanceId"], inst["InstanceType"], inst["State"]["Name"],
+      inst["Placement"]["AvailabilityZone"], inst["PrivateIpAddress"])
+
+d = ec2.describe_instances(Filters=[{"Name": "tag:Name", "Values": ["shop-web-1"]}])["Reservations"][0]["Instances"][0]
+print("described:", d["State"]["Name"], d.get("PublicIpAddress"))
+
+ec2.stop_instances(InstanceIds=[inst["InstanceId"]])
+print("after stop:", ec2.describe_instances(InstanceIds=[inst["InstanceId"]])["Reservations"][0]["Instances"][0]["State"]["Name"])
+```
+
+```output
+instance: i-bfb0cc7b362fd8b75 t3.micro pending ap-south-1a 10.48.18.83
+described: running 54.214.60.234
+after stop: stopped
+```
+
+```bash
+ssh -i shop-key.pem ubuntu@54.214.60.234           # or: aws ssm start-session --target i-bfb0cc7b362fd8b75
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "ami", "label": "AMI: Ubuntu 24.04", "icon": "💿", "col": 0, "row": 0, "info": "The image the root disk is created from.", "example": "ami-0abcdef1234567890" },
+    { "id": "type", "label": "Type: t3.micro", "icon": "📏", "col": 0, "row": 2, "info": "2 vCPU (burstable), 1 GiB RAM. Change it later by stopping the instance.", "example": "Upgrade to t3.small when RAM runs out." },
+    { "id": "inst", "label": "EC2 instance", "icon": "🖥️", "col": 1, "row": 1, "info": "A virtual machine in one AZ. You manage the OS, patches and software.", "example": "nginx + gunicorn + the shop API" },
+    { "id": "ebs", "label": "EBS volume (gp3)", "icon": "💾", "col": 2, "row": 0, "info": "Network disk attached to the instance; survives stop/start; snapshot it for backups.", "example": "20 GB root volume" },
+    { "id": "sg", "label": "Security group", "icon": "🛡️", "col": 2, "row": 2, "info": "Stateful firewall: which ports are open, and from where.", "example": "443 from the ALB; 22 from your IP" },
+    { "id": "role", "label": "IAM role", "icon": "🎭", "col": 3, "row": 1, "info": "Temporary credentials for the app to call S3, SQS... no keys on disk.", "example": "shop-api-ec2" }
+  ],
+  "edges": [
+    ["ami", "inst", "boots from"],
+    ["type", "inst", "size"],
+    ["inst", "ebs", "disk"],
+    ["inst", "sg", "protected by"],
+    ["inst", "role", "assumes"]
+  ],
+  "flows": [
+    {
+      "name": "Launch to first request",
+      "steps": [
+        ["ami", "You pick Ubuntu 24.04."],
+        ["type", "and t3.micro in ap-south-1a."],
+        ["inst", "The instance boots; user data installs nginx."],
+        ["ebs", "Its root disk is a new 20 GB gp3 volume."],
+        ["sg", "Port 443 opens only for the load balancer."],
+        ["role", "The app reads product images from S3 with the role."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Storing data only on the instance">
+
+<Wrong>
+
+```text
+Uploads saved to /var/www/uploads on one EC2 instance; it is terminated by Auto Scaling → files gone.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Stateless instances: uploads in S3, database in RDS, sessions in Redis; servers can be replaced any time.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Relying on the public IP">
+
+<Wrong>
+
+```text
+DNS points to the instance's public IP; after a stop/start the IP changed and the site is down.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Put a load balancer (stable DNS name) in front, or attach an Elastic IP for a single server.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is EC2 and what do you configure when launching an instance?">
+
+Elastic Compute Cloud provides resizable virtual machines. A launch specifies the AMI, instance type, key pair (or SSM access), network placement (VPC, subnet, security groups, public IP), storage (EBS volumes), IAM instance profile, user data and tags; launch templates save these settings for reuse and Auto Scaling.
+
+</QA>
+
+<QA q="What is the difference between stopping and terminating an instance?">
+
+Stopping shuts it down but keeps the instance and its EBS volumes; you pay for storage only, and the public IP usually changes on restart. Terminating deletes the instance permanently and by default its root volume; it cannot be restarted.
+
+</QA>
+
+<QA q="How do you connect to an EC2 instance without opening port 22?">
+
+AWS Systems Manager Session Manager: install/enable the SSM agent, attach a role with AmazonSSMManagedInstanceCore, and start a session from the console or CLI; access is controlled by IAM and logged, with no inbound ports or keys. EC2 Instance Connect Endpoint is another option for private instances.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which defines the OS image of an instance?',
+      options: ['Instance type', 'AMI', 'Security group', 'EBS snapshot only'],
+      answer: 1,
+      why: 'Amazon Machine Image.',
+    },
+    {
+      q: 'm7g.large: what does "g" mean?',
+      options: ['GPU', 'Graviton (ARM)', 'General', 'Gigabit'],
+      answer: 1,
+      why: 'AWS Graviton processors.',
+    },
+    {
+      q: 'Stopped instance: what do you still pay for?',
+      options: ['Nothing', 'EBS storage', 'Compute hours', 'Data transfer in'],
+      answer: 1,
+      why: 'Compute stops; volumes remain.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Choice |
+| --- | --- |
+| OS image | AMI (Ubuntu, Amazon Linux, golden image) |
+| Size | instance type: `t3` burstable · `m` general · `c` compute · `r` memory · `g` Graviton |
+| Access | SSM Session Manager (best) · key pair + SSH |
+| Permissions | IAM role (instance profile) |
+| Boot script | user data |
+| Disk | EBS gp3 (snapshots for backup) |
+| Stable address | load balancer · Elastic IP |
+| Reuse settings | launch template |
+
+States: pending → running → stopped → terminated
+
+</CheatSheet>

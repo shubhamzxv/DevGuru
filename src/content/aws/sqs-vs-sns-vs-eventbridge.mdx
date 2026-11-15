@@ -1,0 +1,233 @@
+---
+id: aws-sqs-vs-sns-vs-eventbridge
+title: SQS vs SNS vs EventBridge
+summary: SQS is a queue for one consumer to pull work at its own pace, SNS pushes one message to many subscribers quickly, and EventBridge is an event bus that routes events by content-based rules to many AWS targets, receives events from AWS services and SaaS apps, and runs schedules; real systems often combine them.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+- **SQS** is a **to-do tray** on a worker's desk: tasks pile up, one worker takes one task at a time.
+- **SNS** is a **loudspeaker**: one announcement, everybody in the building hears it now.
+- **EventBridge** is a **smart mail room**: every letter arriving from anywhere (your apps, AWS, partner companies) is read, and rules decide which departments get it — "invoices over ₹500 to finance". It also has an **alarm clock** that sends a letter every night at 2 AM.
+
+</Analogy>
+
+## Simple explanation
+
+| | **SQS** | **SNS** | **EventBridge** |
+| --- | --- | --- | --- |
+| Model | queue (pull) | pub/sub (push) | event bus + rules (push) |
+| Receivers | one consumer group | many subscribers | many targets per rule (up to 5), 20+ target types |
+| Stores messages | yes, up to 14 days | no | no (but **archive & replay**) |
+| Filtering | none (consumer decides) | filter policies | rich **event patterns** on any field |
+| Sources | your code | your code, some AWS services | your code, **AWS service events**, **SaaS** partners |
+| Ordering | FIFO option | FIFO option | no ordering guarantee |
+| Speed / scale | very high | very high, low latency | high (soft limits per Region), slightly more latency |
+| Extras | DLQ, delay, visibility | SMS, email, mobile push | **Scheduler** (cron/rate), schema registry, input transformation, cross-account buses, Pipes |
+
+**When to use which**
+
+| Situation | Choose |
+| --- | --- |
+| Background jobs, buffer spikes, rate-limit a downstream API | **SQS** |
+| Broadcast an event to several services fast; SMS/push | **SNS** (+ SQS per consumer) |
+| Route events by content, many event types, AWS events ("EC2 stopped", "S3 object created"), SaaS events | **EventBridge** |
+| Cron jobs (nightly report) | **EventBridge Scheduler** |
+| Multi-step workflow with state, retries, waits | **Step Functions** |
+
+**Common combination**
+
+```text
+Order service → EventBridge bus "shop" (event: OrderPlaced)
+   rule: all OrderPlaced          → SQS email-q → email worker
+   rule: total >= 500             → SQS vip-q   → VIP worker
+   rule: detail-type = Refunded   → Lambda      → finance alert
+```
+
+Queues behind each rule keep durability and pacing; EventBridge does the routing.
+
+## Code example
+
+```python
+import boto3, json
+
+eb = boto3.client("events", region_name="ap-south-1")
+eb.put_rule(Name="big-orders", EventPattern=json.dumps({
+    "source": ["shop.orders"], "detail-type": ["OrderPlaced"],
+    "detail": {"total": [{"numeric": [">=", 500]}]}}))
+eb.put_targets(Rule="big-orders", Targets=[{"Id": "1", "Arn": vip_queue_arn}])
+
+res = eb.put_events(Entries=[
+    {"Source": "shop.orders", "DetailType": "OrderPlaced", "Detail": json.dumps({"order_id": 4, "total": 848})},
+    {"Source": "shop.orders", "DetailType": "OrderPlaced", "Detail": json.dumps({"order_id": 5, "total": 199})},
+])
+print("put_events failed:", res["FailedEntryCount"])
+msgs = sqs.receive_message(QueueUrl=vip_queue_url, MaxNumberOfMessages=10).get("Messages", [])
+print("vip-q:", [json.loads(m["Body"])["detail"]["order_id"] for m in msgs])
+
+eb.put_rule(Name="nightly-report", ScheduleExpression="cron(30 20 * * ? *)")    # 20:30 UTC = 2 AM IST
+print("schedule:", eb.describe_rule(Name="nightly-report")["ScheduleExpression"])
+```
+
+```output
+put_events failed: 0
+vip-q: [4]
+schedule: cron(30 20 * * ? *)
+```
+
+(Run against a mock of AWS.) Only order 4 (₹848) matched the rule. Schedules run in UTC unless you use EventBridge Scheduler with a time zone.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "orders", "label": "Order service", "icon": "🛒", "col": 0, "row": 0, "info": "put_events: OrderPlaced with the order details.", "example": "total 848" },
+    { "id": "aws", "label": "AWS events", "icon": "☁️", "col": 0, "row": 2, "info": "Services emit events automatically: EC2 state changes, S3 uploads (when enabled), CodePipeline...", "example": "ECS task stopped" },
+    { "id": "bus", "label": "EventBridge bus", "icon": "🚌", "col": 1, "row": 1, "info": "Matches every event against rules (patterns on any field).", "example": "Rule big-orders: total >= 500" },
+    { "id": "sqs", "label": "SQS vip-q", "icon": "📬", "col": 2, "row": 0, "info": "Buffer: the VIP worker pulls at its own pace; DLQ for failures.", "example": "Only big orders" },
+    { "id": "sns", "label": "SNS ops-alerts", "icon": "📣", "col": 2, "row": 2, "info": "Broadcast to on-call email, SMS and a Slack Lambda.", "example": "Task stopped unexpectedly" },
+    { "id": "cron", "label": "Scheduler", "icon": "⏰", "col": 1, "row": 3, "info": "cron / rate expressions trigger targets on time.", "example": "Nightly sales report at 2 AM IST" },
+    { "id": "lambda", "label": "Lambda: report", "icon": "⚡", "col": 2, "row": 3, "info": "Builds the report and stores it in S3.", "example": "reports/2026-11-15.csv" }
+  ],
+  "edges": [
+    ["orders", "bus", "put_events"],
+    ["aws", "bus", "automatic"],
+    ["bus", "sqs", "rule match"],
+    ["bus", "sns", "rule match"],
+    ["cron", "lambda", "schedule"]
+  ],
+  "flows": [
+    {
+      "name": "Big order",
+      "steps": [
+        ["orders", "OrderPlaced, total 848."],
+        ["bus", "Matches big-orders."],
+        ["sqs", "Queued for the VIP worker (durable, retried)."]
+      ]
+    },
+    {
+      "name": "Infrastructure alert",
+      "steps": [
+        ["aws", "An ECS task stops with an error."],
+        ["bus", "Rule on source aws.ecs matches."],
+        ["sns", "Broadcast to the on-call team."]
+      ]
+    },
+    {
+      "name": "Nightly job",
+      "steps": [
+        ["cron", "2 AM IST."],
+        ["lambda", "Report generated."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using SNS or EventBridge as a buffer">
+
+<Wrong>
+
+```text
+EventBridge → Lambda that calls a slow partner API; during a spike Lambda throttles and events are retried/dropped.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+EventBridge → SQS → consumer with controlled concurrency; SQS holds the backlog.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Expecting ordering everywhere">
+
+<Wrong>
+
+```text
+OrderPaid processed before OrderPlaced because events went through EventBridge.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Design handlers to tolerate order (version numbers, state checks) or use SQS FIFO / SNS FIFO where order matters.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="When would you use SQS, SNS or EventBridge?">
+
+SQS to decouple a producer from a single consumer group, buffer load and retry work durably. SNS to push the same message to many subscribers quickly, including SMS, email and mobile push, usually fanned out to SQS queues. EventBridge for event-driven architectures where events from your services, AWS services or SaaS apps are routed by content-based rules to many targets, with schemas, archive/replay and schedules.
+
+</QA>
+
+<QA q="How do you run a cron job on AWS without a server?">
+
+Use EventBridge Scheduler (or a scheduled EventBridge rule) with a cron or rate expression and time zone to invoke a Lambda function, an ECS task, Step Functions or another target; add retries and a DLQ for failed invocations.
+
+</QA>
+
+<QA q="What is the difference between SNS filter policies and EventBridge rules?">
+
+Both filter messages, but SNS filters per subscription mainly on message attributes (or payload) for a single topic, while EventBridge rules match patterns on any field of structured events from many sources and can transform input, route to many target types, archive and replay, and work across accounts.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Process image thumbnails at a steady pace with retries?',
+      options: ['SNS', 'SQS', 'EventBridge only', 'Route 53'],
+      answer: 1,
+      why: 'Queue + workers.',
+    },
+    {
+      q: 'React to "EC2 instance stopped" events from AWS?',
+      options: ['SQS', 'EventBridge rule', 'CloudFront', 'IAM'],
+      answer: 1,
+      why: 'AWS services publish to the default bus.',
+    },
+    {
+      q: 'Send an SMS and an email for the same alert?',
+      options: ['SNS topic', 'SQS FIFO', 'DynamoDB', 'S3'],
+      answer: 0,
+      why: 'Multiple protocol subscribers.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Service |
+| --- | --- |
+| Work queue / buffer / retries | SQS (+ DLQ) |
+| Broadcast to many, SMS/email/push | SNS (+ SQS per consumer) |
+| Route by content, AWS/SaaS events | EventBridge rules |
+| Cron | EventBridge Scheduler |
+| Ordered | SQS FIFO / SNS FIFO |
+| Replay past events | EventBridge archive |
+| Workflows | Step Functions |
+| Typical combo | EventBridge / SNS → SQS → worker |
+
+</CheatSheet>

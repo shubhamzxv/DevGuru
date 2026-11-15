@@ -1,0 +1,195 @@
+---
+id: django-drf-intro
+title: What is Django REST Framework?
+summary: Django REST Framework (DRF) is the standard toolkit for building REST APIs on Django; serializers convert models to and from JSON with validation, APIView, generic views and ViewSets handle requests, routers create URLs, and it adds authentication, permissions, pagination, filtering, throttling and a browsable API.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Your Django shop already has a kitchen (models, ORM, auth). **DRF** adds a **delivery counter**: standard packaging (serializers → JSON), an order window per item (views), a menu board (routers and the browsable API), and rules about who can order what (permissions, throttling), so mobile apps and React frontends can order too.
+
+</Analogy>
+
+## Simple explanation
+
+```bash
+pip install djangorestframework django-filter
+```
+
+```python
+INSTALLED_APPS += ["rest_framework", "rest_framework.authtoken", "django_filters"]
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.TokenAuthentication",
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 3,
+}
+```
+
+The building blocks (each has its own topic next):
+
+| Piece | Job | Django equivalent |
+| --- | --- | --- |
+| **Serializer** | model ↔ JSON, validation | Form / ModelForm |
+| **APIView / generic views** | handle requests | View / generic CBVs |
+| **ViewSet + Router** | all CRUD actions + URLs | — |
+| **Request / Response** | parsed `request.data`, content negotiation | HttpRequest / HttpResponse |
+| **Authentication** | who is calling (Session, Token, JWT) | auth middleware |
+| **Permissions** | may they do it (`IsAuthenticated`, custom) | permissions |
+| **Pagination, filtering, throttling** | big lists, search, rate limits | — |
+| **Browsable API** | clickable HTML version of every endpoint | — |
+
+A complete CRUD API in a few lines:
+
+```python
+# serializers.py
+class ProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = ["id", "name", "price", "stock", "category"]
+
+# api.py
+class ProductViewSet(viewsets.ModelViewSet):
+    queryset = Product.objects.select_related("category").order_by("id")
+    serializer_class = ProductSerializer
+
+# urls.py
+router = DefaultRouter()
+router.register("products", ProductViewSet, basename="product")
+urlpatterns = [path("api/", include(router.urls))]
+```
+
+That gives `GET/POST /api/products/` and `GET/PUT/PATCH/DELETE /api/products/<id>/`, validation, pagination and docs-like browsable pages.
+
+Alternatives: **Django Ninja** (FastAPI-style typed APIs on Django), plain `JsonResponse` views for tiny needs. Generate OpenAPI docs for DRF with **drf-spectacular**.
+
+## Code example
+
+```output
+GET /api/categories/            → 200 [{"id": 1, "name": "Books", "slug": "books"}, {"id": 2, "name": "Electronics", "slug": "electronics"}, {"id": 3, "name": "Toys", "slug": "toys"}]
+GET /api/products/              → 200 {"count": 7, "next": "http://testserver/api/products/?page=2", "previous": null,
+                                       "results": [{"id": 1, "name": "Clean Code", "price": "450.00", "stock": 12, "category": 1, "category_name": "Books", "in_stock": true}, ...]}
+POST /api/products/ (anonymous) → 401 {"detail": "Authentication credentials were not provided."}
+POST /api/products/ (admin)     → 201 {"id": 8, "name": "Mouse", "price": "399.00", "stock": 5, "category": 2, "category_name": "Electronics", "in_stock": true}
+GET /api/orders/ (asha)         → 200 {"count": 2, ...}  only her own orders
+```
+
+These are the real responses of the shop project used in the next DRF topics.
+
+<Playground kind="http">
+
+```http
+GET /books
+Accept: application/json
+```
+
+</Playground>
+
+The DevGuru mock API behaves like a small DRF-style service: list, create, update and delete books, with validation errors, auth and rate limiting.
+
+<Mistakes>
+
+<Mistake title="Building APIs with plain JsonResponse everywhere">
+
+<Wrong>
+
+```python
+def products(request):
+    data = [{"id": p.id, "name": p.name, "price": str(p.price)} for p in Product.objects.all()]   # no validation, no auth, no paging
+    return JsonResponse(data, safe=False)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class ProductViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Product.objects.order_by("id")
+    serializer_class = ProductSerializer
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Leaving the default permissions open">
+
+<Wrong>
+
+```python
+REST_FRAMEWORK = {}      # DEFAULT_PERMISSION_CLASSES = AllowAny: every endpoint is public and writable
+```
+
+</Wrong>
+
+<Right>
+
+```python
+REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"]}
+# open specific read-only endpoints explicitly
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Django REST Framework?">
+
+A toolkit on top of Django for building Web APIs: serializers for converting and validating data, APIView/generic views/ViewSets for request handling, routers for URL generation, pluggable authentication, permissions, throttling, pagination, filtering, content negotiation and a browsable HTML API.
+
+</QA>
+
+<QA q="What is the difference between a Django view and a DRF APIView?">
+
+APIView receives a DRF Request (parsed `request.data` for JSON, form or multipart), returns a Response that is rendered according to content negotiation, runs authentication, permission and throttling checks before the handler, and converts exceptions like ValidationError or NotAuthenticated into proper HTTP error responses.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which DRF piece converts models to JSON?',
+      options: ['Router', 'Serializer', 'Permission', 'Throttle'],
+      answer: 1,
+      why: 'Like a ModelForm for APIs.',
+    },
+    {
+      q: 'Which piece generates the URL patterns for a ViewSet?',
+      options: ['Router', 'Serializer', 'Middleware', 'Signal'],
+      answer: 0,
+      why: 'DefaultRouter / SimpleRouter.',
+    },
+    {
+      q: 'Default permission if you configure nothing?',
+      options: ['IsAuthenticated', 'AllowAny', 'IsAdminUser', 'DenyAll'],
+      answer: 1,
+      why: 'Set a safer default in settings.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Piece | Example |
+| --- | --- |
+| Install | `pip install djangorestframework` + `"rest_framework"` in apps |
+| Serializer | `class ProductSerializer(serializers.ModelSerializer)` |
+| View | `APIView` · `generics.ListCreateAPIView` · `viewsets.ModelViewSet` |
+| URLs | `DefaultRouter().register("products", ProductViewSet)` |
+| Auth | `TokenAuthentication` · `SessionAuthentication` · JWT (simplejwt) |
+| Permissions | `IsAuthenticated` · `IsAdminUser` · custom `BasePermission` |
+| Lists | `PageNumberPagination` · django-filter · `SearchFilter` · `OrderingFilter` |
+| Docs | drf-spectacular → OpenAPI / Swagger |
+
+</CheatSheet>

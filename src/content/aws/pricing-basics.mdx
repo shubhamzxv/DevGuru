@@ -1,0 +1,219 @@
+---
+id: aws-pricing-basics
+title: Pricing basics and the free tier
+summary: AWS charges pay-as-you-go for compute time, storage, requests and data transfer out; On-Demand, Savings Plans, Reserved Instances and Spot trade flexibility for discounts; since July 2025 new accounts choose a credit-based Free plan or a Paid plan, and Budgets, Cost Explorer and tags keep bills under control.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **mobile phone bill**: you pay for minutes, data and SMS you use (pay as you go). A **yearly pack** is cheaper if you commit (Savings Plans). A **night-time offer** is very cheap but can be cut when the network is busy (Spot). And you set an **alert at ₹500** so the bill never surprises you (Budgets).
+
+</Analogy>
+
+## Simple explanation
+
+**What you pay for** (the three big ones):
+
+1. **Compute**: per second/hour (EC2, Fargate), per request + duration (Lambda)
+2. **Storage**: per GB-month (S3, EBS, RDS storage, snapshots)
+3. **Data transfer**: **in** is free; **out to the internet** is charged; between AZs and Regions small charges
+
+Plus requests (S3 GET/PUT, API Gateway), managed-service hours (RDS, NAT Gateway, load balancers), and features (KMS keys, CloudWatch logs).
+
+**EC2 purchase options**
+
+| Option | Discount vs On-Demand | Commitment | Good for |
+| --- | --- | --- | --- |
+| **On-Demand** | — | none | spiky, short, unknown |
+| **Savings Plans** | up to ~72% | $/hour for 1 or 3 years | steady base load (flexible across instance types, Fargate, Lambda) |
+| **Reserved Instances** | up to ~72% | specific instance type, 1/3 years | steady, predictable |
+| **Spot** | up to ~90% | none, but AWS can reclaim with a 2-minute warning | batch jobs, CI, stateless workers |
+
+**Free Tier** (changed on **15 July 2025**):
+
+| Account created | What you get |
+| --- | --- |
+| On or after 15 July 2025 | choose a **Free plan** or **Paid plan** at sign-up; $100 credits + up to $100 more for onboarding activities; the Free plan ends after **6 months** or when credits run out (then you upgrade or the account closes); plus **Always Free** offers (for example Lambda's monthly free requests) |
+| Before 15 July 2025 | the legacy model: 12-month free tier offers + Always Free + short trials |
+
+**Cost control tools**
+
+- **AWS Budgets**: alerts by email/SNS at 50%, 80%, 100% of a monthly amount (set one on day one!)
+- **Cost Explorer**: where the money goes, by service, tag, account
+- **Cost allocation tags**: `Project=shop`, `Env=prod` on every resource
+- **Pricing Calculator**: estimate before building
+- **Trusted Advisor / Compute Optimizer**: idle and oversized resources
+
+Common surprise costs: NAT Gateways (hourly + per GB), idle load balancers, forgotten EC2/RDS instances, unattached EBS volumes and old snapshots, CloudWatch Logs without retention, data transfer out, Elastic IPs not attached.
+
+## Code example
+
+A budget with an email alert at 80% of ₹1,000 (about $12), from the CLI:
+
+```bash
+aws budgets create-budget --account-id 123456789012 \
+  --budget '{"BudgetName": "monthly-limit", "BudgetLimit": {"Amount": "12", "Unit": "USD"},
+             "TimeUnit": "MONTHLY", "BudgetType": "COST"}' \
+  --notifications-with-subscribers '[{"Notification": {"NotificationType": "ACTUAL",
+      "ComparisonOperator": "GREATER_THAN", "Threshold": 80, "ThresholdType": "PERCENTAGE"},
+      "Subscribers": [{"SubscriptionType": "EMAIL", "Address": "you@example.com"}]}]'
+aws budgets describe-budgets --account-id 123456789012 --query "Budgets[].BudgetName"
+```
+
+```output
+[
+    "monthly-limit"
+]
+```
+
+Rough monthly estimate for a small shop API (illustrative, check the Pricing Calculator for current prices):
+
+```output
+2 × t3.small On-Demand (24×7)            → compute
+1 × db.t3.micro RDS PostgreSQL, 20 GB    → database
+1 × Application Load Balancer            → fixed hourly + capacity units
+1 × NAT Gateway                          → often the surprise line item
+S3 50 GB + CloudFront 100 GB out         → storage + transfer
+→ Savings Plan on the 2 instances and RDS reserved instance cut the steady part by ~30–60%
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "compute", "label": "Compute", "icon": "🖥️", "col": 0, "row": 0, "info": "EC2/Fargate per second, Lambda per request + GB-second.", "example": "t3.small × 2, 730 hours" },
+    { "id": "storage", "label": "Storage", "icon": "💾", "col": 0, "row": 1, "info": "Per GB-month: S3, EBS volumes, RDS storage, snapshots.", "example": "S3 Standard 50 GB" },
+    { "id": "transfer", "label": "Data transfer out", "icon": "📤", "col": 0, "row": 2, "info": "Into AWS is free; out to the internet is charged per GB. CloudFront is often cheaper than direct S3.", "example": "100 GB/month to users" },
+    { "id": "bill", "label": "Monthly bill", "icon": "🧾", "col": 2, "row": 1, "info": "Sum of everything, broken down in Cost Explorer by service and tag.", "example": "Tag Project=shop" },
+    { "id": "save", "label": "Savings Plans / RIs / Spot", "icon": "💸", "col": 1, "row": 0, "info": "Commit for 1–3 years for steady load, or use Spot for interruptible work.", "example": "Workers on Spot: up to 90% cheaper" },
+    { "id": "budget", "label": "AWS Budgets alert", "icon": "🔔", "col": 3, "row": 1, "info": "Email/SNS when actual or forecast cost crosses a threshold.", "example": "80% of monthly limit" }
+  ],
+  "edges": [
+    ["compute", "bill"],
+    ["storage", "bill"],
+    ["transfer", "bill"],
+    ["save", "compute", "discounts"],
+    ["bill", "budget", "watched by"]
+  ],
+  "flows": [
+    {
+      "name": "Avoid a surprise bill",
+      "steps": [
+        ["budget", "Day one: create a budget with an 80% alert."],
+        ["compute", "Stop or delete what you do not use; right-size instances."],
+        ["storage", "Set S3 lifecycle rules and CloudWatch log retention; delete old snapshots."],
+        ["transfer", "Serve static files through CloudFront."],
+        ["save", "Buy a Savings Plan only for the steady base load."],
+        ["bill", "Review Cost Explorer by tag every month."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="No budget alert">
+
+<Wrong>
+
+```text
+A test GPU instance left running over a long weekend: the first sign is the invoice.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+AWS Budgets with alerts on day one, tags on every resource, and a cleanup checklist after experiments.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Spot for things that cannot be interrupted">
+
+<Wrong>
+
+```text
+The only database server runs on a Spot instance to save money.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Spot for stateless, retryable work (CI runners, batch, queue workers); On-Demand/Savings Plans for databases and the base API fleet.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the main AWS pricing factors?">
+
+Compute time, storage volume and data transfer out, plus request counts and managed-service hours. Data into AWS is free; data out to the internet and across Regions costs more than within an AZ. Prices vary by Region and purchase option.
+
+</QA>
+
+<QA q="On-Demand vs Savings Plans vs Reserved Instances vs Spot?">
+
+On-Demand: no commitment, highest price. Savings Plans: commit to a dollar amount per hour for 1 or 3 years for large discounts, flexible across instance families (Compute Savings Plans also cover Fargate and Lambda). Reserved Instances: discounts for specific instance types, with capacity reservation options. Spot: unused capacity at up to about 90% off but reclaimable with two minutes' notice, for interruptible workloads.
+
+</QA>
+
+<QA q="How do you keep AWS costs under control?">
+
+Budgets and alerts, cost allocation tags and Cost Explorer reviews, right-sizing with Compute Optimizer, autoscaling and turning off non-production environments at night, Savings Plans for steady load and Spot for flexible work, lifecycle policies for S3 and log retention, removing idle resources, and watching NAT Gateway and data transfer costs.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which data transfer is free?',
+      options: ['Out to the internet', 'Into AWS', 'Between Regions', 'All of it'],
+      answer: 1,
+      why: 'Inbound is free; outbound is charged.',
+    },
+    {
+      q: 'Cheapest option for interruptible batch jobs?',
+      options: ['On-Demand', 'Reserved', 'Spot', 'Dedicated hosts'],
+      answer: 2,
+      why: 'Up to ~90% off, can be reclaimed.',
+    },
+    {
+      q: 'New accounts since 15 July 2025 get...',
+      options: ['12 months free on everything', 'A credit-based Free plan or a Paid plan', 'Nothing free', 'Unlimited free Lambda'],
+      answer: 1,
+      why: 'Credits; the Free plan lasts up to 6 months.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Topic | Remember |
+| --- | --- |
+| Pay for | compute · storage · data out · requests |
+| Free | data in · Always Free offers |
+| Discounts | Savings Plans · Reserved · Spot |
+| Free Tier (new accounts since 15 Jul 2025) | Free plan with credits (up to 6 months) or Paid plan |
+| Alerts | AWS Budgets (set on day one) |
+| Analysis | Cost Explorer · tags · Compute Optimizer |
+| Surprises | NAT Gateway · idle ALB/EC2/RDS · snapshots · log retention · data out |
+
+</CheatSheet>

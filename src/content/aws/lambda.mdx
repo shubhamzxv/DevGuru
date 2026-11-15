@@ -1,0 +1,236 @@
+---
+id: aws-lambda
+title: Lambda
+summary: AWS Lambda runs your function code in response to events (API Gateway requests, S3 uploads, SQS messages, schedules) without managing servers, scales automatically per request, bills per request and per millisecond of duration by memory size, and has limits such as a 15-minute maximum run time and cold starts.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **plumber on call**: you do not employ one full time. When a pipe leaks (an event), one arrives, fixes it and leaves, and you pay only for the time spent. If ten pipes leak at once, ten plumbers come. The first visit to a new house takes a little longer (cold start) because they must find the address.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+import json
+
+def lambda_handler(event, context):
+    """Triggered by API Gateway (HTTP API): returns the order total."""
+    body = json.loads(event.get("body") or "{}")
+    items = body.get("items", [])
+    if not items:
+        return {"statusCode": 400, "body": json.dumps({"error": "items required"})}
+    total = sum(i["price"] * i["qty"] for i in items)
+    return {"statusCode": 200, "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"items": len(items), "total": total})}
+```
+
+- **Handler** `lambda_handler(event, context)`: `event` is the trigger's data, `context` has the request id and remaining time
+- **Runtimes**: Python, Node.js, Java, .NET, Ruby, Go (custom/`provided.al2023`), or a **container image** (up to 10 GB)
+- **Configuration**: memory 128 MB–10 GB (CPU scales with memory), timeout up to **15 minutes**, environment variables, **execution role** (IAM permissions), VPC access if it must reach RDS/ElastiCache
+- **Layers**: shared libraries; package size limits 50 MB zipped / 250 MB unzipped
+
+**Triggers (event sources)**
+
+| Source | Pattern |
+| --- | --- |
+| API Gateway / function URL / ALB | synchronous HTTP API |
+| S3 | object uploaded → make a thumbnail |
+| SQS | poll messages in batches, retries + DLQ |
+| SNS, EventBridge | fan-out, events, **schedules** (cron) |
+| DynamoDB Streams, Kinesis | react to data changes |
+| Cognito, CloudFront | auth triggers, edge logic |
+
+**Scaling and cold starts**: each concurrent request gets its own execution environment; the first one in a new environment pays the **cold start** (download code, start runtime, run init code: usually 100 ms–1 s for Python). Reduce it with small packages, init outside the handler (DB clients reused across invocations), **provisioned concurrency** or **SnapStart**. Concurrency limits per account and **reserved concurrency** per function protect databases.
+
+**Pricing**: per request + per GB-second of duration. Great for spiky or low traffic and glue code; for constant heavy load, containers can be cheaper.
+
+Python web frameworks run on Lambda with adapters (Mangum for FastAPI, apig-wsgi or zappa for Django/Flask).
+
+## Code example
+
+Call the handler locally, exactly as API Gateway would:
+
+```python
+import json
+from handler import lambda_handler
+
+print(lambda_handler({"body": json.dumps({"items": [{"price": 450, "qty": 1}, {"price": 199, "qty": 2}]})}, None))
+print(lambda_handler({"body": "{}"}, None))
+```
+
+```output
+{'statusCode': 200, 'headers': {'Content-Type': 'application/json'}, 'body': '{"items": 2, "total": 848}'}
+{'statusCode': 400, 'body': '{"error": "items required"}'}
+```
+
+Deploy and invoke with the CLI:
+
+```bash
+zip function.zip handler.py
+aws lambda create-function --function-name order-total --runtime python3.13 \
+  --handler handler.lambda_handler --zip-file fileb://function.zip \
+  --role arn:aws:iam::123456789012:role/order-total-lambda --memory-size 256 --timeout 10
+aws lambda invoke --function-name order-total --cli-binary-format raw-in-base64-out \
+  --payload '{"body": "{\"items\": [{\"price\": 450, \"qty\": 1}]}"}' out.json && cat out.json
+```
+
+```output
+{"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": "{\"items\": 1, \"total\": 450}"}
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "client", "label": "Mobile app", "icon": "📱", "col": 0, "row": 0, "info": "Calls POST /orders/total.", "example": "Cart screen" },
+    { "id": "apigw", "label": "API Gateway", "icon": "🚪", "col": 1, "row": 0, "info": "Turns the HTTP request into an event and invokes the function synchronously.", "example": "HTTP API route POST /orders/total" },
+    { "id": "s3", "label": "S3 upload", "icon": "🪣", "col": 0, "row": 2, "info": "A new product photo triggers an asynchronous event.", "example": "s3:ObjectCreated:* on uploads/" },
+    { "id": "fn", "label": "Lambda function", "icon": "⚡", "col": 2, "row": 1, "info": "Runs lambda_handler(event, context). Scales out: one environment per concurrent request.", "example": "Python 3.13, 256 MB, 10 s timeout" },
+    { "id": "role", "label": "Execution role", "icon": "🎭", "col": 3, "row": 0, "info": "IAM permissions of the function: write logs, read the table, put the thumbnail.", "example": "AWSLambdaBasicExecutionRole + table access" },
+    { "id": "logs", "label": "CloudWatch Logs", "icon": "📜", "col": 3, "row": 2, "info": "print() and errors appear here, with duration and billed time per request.", "example": "REPORT Duration: 12 ms Billed: 13 ms Memory: 256 MB" }
+  ],
+  "edges": [
+    ["client", "apigw", "HTTPS"],
+    ["apigw", "fn", "sync invoke"],
+    ["s3", "fn", "async event"],
+    ["fn", "role", "uses"],
+    ["fn", "logs", "logs"]
+  ],
+  "flows": [
+    {
+      "name": "First request (cold start)",
+      "steps": [
+        ["client", "POST /orders/total with two items."],
+        ["apigw", "API Gateway invokes the function."],
+        ["fn", "No warm environment: AWS starts one (cold start, ~200 ms), runs init code, then the handler."],
+        ["logs", "Logs: Init Duration + Duration."],
+        ["client", "Response {items: 2, total: 848}."]
+      ]
+    },
+    {
+      "name": "Sale burst",
+      "steps": [
+        ["client", "500 requests arrive in the same second."],
+        ["fn", "Lambda runs up to 500 environments in parallel (within the concurrency limit)."],
+        ["logs", "You pay only for the milliseconds used."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Creating clients inside the handler">
+
+<Wrong>
+
+```python
+def lambda_handler(event, context):
+    dynamodb = boto3.resource("dynamodb")          # rebuilt on every invocation
+    table = dynamodb.Table("orders")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+table = boto3.resource("dynamodb").Table("orders")   # init once, reused while the environment is warm
+
+def lambda_handler(event, context):
+    ...
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Long jobs and unlimited concurrency against RDS">
+
+<Wrong>
+
+```text
+A 40-minute report in Lambda (times out at 15 min); 1,000 concurrent functions each opening a PostgreSQL connection.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Long jobs: ECS/Fargate task or Step Functions. Databases: RDS Proxy + reserved concurrency, or DynamoDB.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is AWS Lambda and when would you use it?">
+
+A serverless compute service that runs functions in response to events without provisioning servers, scaling automatically and billing per request and duration. It fits event-driven glue (S3 uploads, queue processing, scheduled jobs), spiky or low-traffic APIs, and automation; it fits poorly for long-running jobs over 15 minutes, very steady high load, or workloads needing persistent connections.
+
+</QA>
+
+<QA q="What is a cold start and how do you reduce it?">
+
+The extra latency when Lambda creates a new execution environment: downloading code, starting the runtime and running initialisation. Reduce it with smaller deployment packages and lighter dependencies, initialisation outside the handler, more memory (more CPU), provisioned concurrency, SnapStart where supported, and keeping functions out of a VPC unless needed (modern VPC networking is much faster than before).
+
+</QA>
+
+<QA q="How does Lambda handle failures from asynchronous and SQS events?">
+
+Asynchronous invocations are retried twice by default and can go to an on-failure destination or dead-letter queue. For SQS, failed batches become visible again after the visibility timeout and are retried until maxReceiveCount, then moved to the queue's DLQ; partial batch responses let you fail only the bad messages. Handlers should be idempotent.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Maximum Lambda run time?',
+      options: ['30 seconds', '5 minutes', '15 minutes', '1 hour'],
+      answer: 2,
+      why: 'Use ECS/Step Functions for longer work.',
+    },
+    {
+      q: 'What gives Lambda its AWS permissions?',
+      options: ['Access keys in code', 'The execution role', 'A security group', 'The trigger'],
+      answer: 1,
+      why: 'An IAM role assumed by the function.',
+    },
+    {
+      q: 'Lambda pricing is based on...',
+      options: ['Hours running', 'Requests and duration × memory', 'Disk size', 'Number of developers'],
+      answer: 1,
+      why: 'Pay per request and GB-second.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Value |
+| --- | --- |
+| Handler | `def lambda_handler(event, context)` |
+| Timeout | up to 15 min |
+| Memory | 128 MB – 10 GB (CPU scales with it) |
+| Package | 50 MB zip / 250 MB unzipped · container image up to 10 GB |
+| Permissions | execution role |
+| Triggers | API Gateway · S3 · SQS · SNS · EventBridge (cron) · DynamoDB Streams |
+| Cold starts | init outside handler · small package · provisioned concurrency · SnapStart |
+| Databases | RDS Proxy · reserved concurrency |
+| Logs | CloudWatch Logs |
+
+</CheatSheet>

@@ -1,0 +1,230 @@
+---
+id: aws-elasticache
+title: ElastiCache (Redis)
+summary: ElastiCache runs managed in-memory Redis-compatible (Valkey, Redis OSS) and Memcached caches inside your VPC; apps use it for cache-aside reads, sessions, rate limiting, leaderboards and Celery brokers, with replicas and Multi-AZ failover, cluster mode for sharding, and TTLs plus invalidation to keep data fresh.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **notepad on the shop counter**. Instead of walking to the back store room (the database) every time a customer asks the price of headphones, the cashier checks the notepad first. If the price is written there (a **hit**), the answer is instant. If not (a **miss**), they walk to the store room, then write it on the notepad for next time, with a note "valid for 5 minutes" (**TTL**).
+
+</Analogy>
+
+## Simple explanation
+
+| Engine | When |
+| --- | --- |
+| **Valkey / Redis OSS** | the default: data structures (strings, hashes, lists, sets, sorted sets, streams), replication, persistence, pub/sub, Lua |
+| **Memcached** | simple multi-threaded key-value cache, no replication |
+| **ElastiCache Serverless** | no nodes to size; pay for data stored and requests |
+
+**Common uses**
+
+| Use | Redis feature |
+| --- | --- |
+| Cache DB/API results | `GET`/`SET key value EX 300` |
+| Sessions (Django `SESSION_ENGINE` cache) | keys with TTL |
+| Rate limiting | `INCR` + `EXPIRE` |
+| Leaderboards, "top products" | sorted sets `ZINCRBY`, `ZREVRANGE` |
+| Celery broker / results | lists / streams |
+| Distributed locks | `SET key val NX PX 30000` |
+
+**Cache-aside pattern** (the most common):
+
+1. Read: look in the cache → **hit**: return it; **miss**: read the DB, store in cache with a TTL, return
+2. Write: update the DB, then **delete** (invalidate) the cache key
+
+Other patterns: **write-through** (write cache and DB together), **write-behind** (risky), TTL-only for data that may be a bit stale.
+
+**Problems to know**: stale data (invalidate on writes, short TTLs), **cache stampede** (many misses at once → locks, jittered TTLs, early refresh), **hot keys**, memory eviction policy (`allkeys-lru`), and the cache must not be the only copy of important data.
+
+**Setup**: in **private subnets**, SG allowing 6379 only from the app's SG, encryption in transit (TLS) and at rest, AUTH/RBAC users, replicas with **Multi-AZ automatic failover**, **cluster mode** to shard across node groups. Use the **primary endpoint** for writes and the **reader endpoint** for reads.
+
+## Code example
+
+Cache-aside in Python (runs the same against ElastiCache with `redis.Redis(host=endpoint, port=6379, ssl=True)`):
+
+```python
+import json
+
+DB_CALLS = 0
+def db_get_product(pid):
+    global DB_CALLS; DB_CALLS += 1
+    return {"id": pid, "name": "Headphones", "price": 450}
+
+def get_product(pid):
+    key = f"product:{pid}"
+    cached = r.get(key)
+    if cached:
+        return json.loads(cached), "HIT"
+    p = db_get_product(pid)
+    r.set(key, json.dumps(p), ex=300)            # TTL 5 minutes
+    return p, "MISS"
+
+print(get_product(7)); print(get_product(7)); print("db calls:", DB_CALLS, "ttl:", r.ttl("product:7"))
+r.delete("product:7")                            # invalidate after the price changes
+print(get_product(7)[1], "db calls:", DB_CALLS)
+r.incr("views:7"); r.incr("views:7"); print("views:", r.get("views:7"))
+```
+
+```output
+({'id': 7, 'name': 'Headphones', 'price': 450}, 'MISS')
+({'id': 7, 'name': 'Headphones', 'price': 450}, 'HIT')
+db calls: 1 ttl: 300
+MISS db calls: 2
+views: 2
+```
+
+Django settings for ElastiCache:
+
+```python
+CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache",
+                      "LOCATION": "rediss://master.shop-cache.abc123.aps1.cache.amazonaws.com:6379"}}
+SESSION_ENGINE = "django.contrib.sessions.backends.cache"
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "app", "label": "App server", "icon": "🖥️", "col": 0, "row": 1, "info": "Needs product 7 for the product page.", "example": "get_product(7)" },
+    { "id": "cache", "label": "ElastiCache primary", "icon": "⚡", "col": 1, "row": 0, "info": "In-memory: answers in under a millisecond. Keys expire after their TTL.", "example": "product:7 → JSON, TTL 300 s" },
+    { "id": "replica", "label": "Replica (AZ-b)", "icon": "🪞", "col": 2, "row": 0, "info": "Serves reads via the reader endpoint; promoted automatically if the primary fails.", "example": "Multi-AZ failover" },
+    { "id": "db", "label": "RDS PostgreSQL", "icon": "🗄️", "col": 1, "row": 2, "info": "The source of truth; slower (milliseconds, disk, joins).", "example": "SELECT ... FROM products WHERE id = 7" },
+    { "id": "admin", "label": "Admin updates price", "icon": "✏️", "col": 2, "row": 2, "info": "Writes to the DB, then deletes the cache key.", "example": "price 450 → 399, DEL product:7" }
+  ],
+  "edges": [
+    ["app", "cache", "1. GET"],
+    ["app", "db", "2. on miss"],
+    ["cache", "replica", "replication"],
+    ["admin", "db", "UPDATE"],
+    ["admin", "cache", "DEL key"]
+  ],
+  "flows": [
+    {
+      "name": "Miss then hit",
+      "steps": [
+        ["app", "First visitor opens product 7."],
+        ["cache", "GET product:7 → nothing (MISS)."],
+        ["db", "Read the product from PostgreSQL."],
+        ["cache", "SET product:7 with EX 300."],
+        ["app", "Next 1,000 visitors get a HIT: the database is not touched."]
+      ]
+    },
+    {
+      "name": "Price change",
+      "steps": [
+        ["admin", "Price updated in the database."],
+        ["cache", "The key is deleted, so the next read is a MISS and loads 399."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Caching without expiry or invalidation">
+
+<Wrong>
+
+```python
+r.set(f"product:{pid}", json.dumps(p))       # no TTL, never deleted → old prices shown for weeks
+```
+
+</Wrong>
+
+<Right>
+
+```python
+r.set(key, value, ex=300)                    # plus r.delete(key) whenever the product is saved
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Treating the cache as the database">
+
+<Wrong>
+
+```text
+Orders stored only in Redis; a node replacement or eviction loses them.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+The database is the source of truth; the cache holds copies that can be rebuilt.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the cache-aside pattern?">
+
+The application checks the cache first; on a hit it returns the cached value, on a miss it reads from the database, stores the result in the cache with a TTL and returns it. On updates it writes to the database and invalidates (deletes) the cache entry so the next read reloads fresh data. Only requested data is cached and the cache can fail without losing data.
+
+</QA>
+
+<QA q="Redis or Memcached on ElastiCache?">
+
+Redis/Valkey for most cases: rich data structures, replication with Multi-AZ failover, persistence, pub/sub, sorted sets, cluster sharding and use as a broker. Memcached only for a simple, multi-threaded, non-persistent key-value cache where losing data on node failure is acceptable.
+
+</QA>
+
+<QA q="What is a cache stampede and how do you prevent it?">
+
+When a popular key expires, many requests miss at the same time and all hit the database. Prevent it with a lock so only one request recomputes (SET NX), serving stale data while refreshing, refreshing before expiry, and adding random jitter to TTLs.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'After updating a product in the DB, the cache should...',
+      options: ['Keep the old value', 'Delete (invalidate) the key', 'Restart', 'Double the TTL'],
+      answer: 1,
+      why: 'Next read reloads fresh data.',
+    },
+    {
+      q: 'Leaderboard of top-selling products?',
+      options: ['Memcached', 'Redis sorted set', 'S3', 'EBS'],
+      answer: 1,
+      why: 'ZINCRBY / ZREVRANGE.',
+    },
+    {
+      q: 'Who should reach port 6379?',
+      options: ['Everyone', 'Only the app security group', 'Only CloudFront', 'The internet with a password'],
+      answer: 1,
+      why: 'Private subnet, SG reference.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Engines | Valkey / Redis OSS (default) · Memcached · Serverless |
+| Cache-aside | GET → miss → DB → SET EX → return · write DB → DEL key |
+| TTL | `SET key val EX 300` · jitter TTLs |
+| Uses | cache · sessions · rate limits (`INCR`) · sorted sets · Celery broker · locks (`NX`) |
+| HA | replicas + Multi-AZ failover · cluster mode = sharding |
+| Endpoints | primary (writes) · reader (reads) |
+| Security | private subnets · SG from app · TLS (`rediss://`) · AUTH/RBAC |
+
+</CheatSheet>

@@ -1,0 +1,231 @@
+---
+id: linux-shell-scripts
+title: Your first shell script
+summary: A shell script is a text file of commands that starts with a shebang line (#!/bin/bash); make it executable with chmod +x and run it with ./script.sh, or run it with bash script.sh, and pass arguments as $1, $2 and $@.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Every morning a shopkeeper does the same steps: unlock, switch on lights, count cash, open the shutter. Writing those steps on a card means anyone can do it the same way, every time. A **shell script** is that card for the computer.
+
+</Analogy>
+
+## Simple explanation
+
+**1. Write it** (`backup.sh`):
+
+```bash
+#!/bin/bash
+# Back up the notes file with today's date.
+set -euo pipefail
+
+SOURCE="$HOME/notes.txt"
+DEST="$HOME/backups"
+STAMP=$(date +%F)
+
+mkdir -p "$DEST"
+cp "$SOURCE" "$DEST/notes-$STAMP.txt"
+echo "Backed up to $DEST/notes-$STAMP.txt"
+```
+
+**2. Make it executable and run it**
+
+```bash
+chmod +x backup.sh
+./backup.sh          # needs the x permission and the ./ (current folder is not in PATH)
+bash backup.sh       # works without chmod
+```
+
+The parts:
+
+| Part | Meaning |
+| --- | --- |
+| `#!/bin/bash` | **shebang**: which interpreter runs the file (`#!/usr/bin/env python3` for Python) |
+| `# ...` | comment |
+| `set -euo pipefail` | safety: stop on errors (`-e`), on unset variables (`-u`), on failures inside pipes |
+| `NAME="value"` | variable (no spaces around `=`) |
+| `"$NAME"` | use it, **in double quotes** so spaces in values do not break things |
+| `$(command)` | command substitution: the output of a command |
+
+**Arguments**
+
+| Variable | Meaning |
+| --- | --- |
+| `$0` | the script's name |
+| `$1`, `$2`... | first, second argument |
+| `$#` | how many arguments |
+| `$@` | all arguments |
+| `$?` | exit status of the last command |
+
+```bash
+#!/bin/bash
+echo "Deploying $1 to $2 ($# arguments)"
+```
+
+`./deploy.sh v1.4 staging` prints `Deploying v1.4 to staging (2 arguments)`.
+
+Put your own scripts in `~/bin` or `/usr/local/bin` (in PATH) to run them from anywhere without `./`.
+
+## Code example
+
+```bash
+echo '#!/bin/bash' > hello.sh
+echo 'echo "Hello, $1! Today is $(date +%F)."' >> hello.sh
+./hello.sh Shubham
+chmod +x hello.sh
+./hello.sh Shubham
+```
+
+```output
+bash: ./hello.sh: Permission denied
+Hello, Shubham! Today is 2026-11-15.
+```
+
+<Playground kind="terminal">
+
+```bash
+echo '#!/bin/bash' > backup.sh
+echo 'set -e' >> backup.sh
+echo 'DEST="$HOME/backups"' >> backup.sh
+echo 'STAMP=$(date +%F)' >> backup.sh
+echo 'mkdir -p "$DEST"' >> backup.sh
+echo 'cp notes.txt "$DEST/notes-$STAMP.txt"' >> backup.sh
+echo 'echo "Backed up $# extra args: $@"' >> backup.sh
+echo 'echo "Saved to $DEST/notes-$STAMP.txt"' >> backup.sh
+cat backup.sh
+./backup.sh
+chmod +x backup.sh
+./backup.sh daily quick
+ls backups
+bash backup.sh
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Unquoted variables">
+
+<Wrong>
+
+```bash
+FILE="my notes.txt"
+cp $FILE /backup/         # becomes: cp my notes.txt /backup/  → two files "my" and "notes.txt"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+cp "$FILE" /backup/
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Windows line endings">
+
+<Wrong>
+
+```text
+Script written on Windows: "/bin/bash^M: bad interpreter: No such file or directory"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+sed -i 's/\r$//' script.sh        # or dos2unix script.sh; set your editor to LF line endings
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Script keeps going after a failure">
+
+<Wrong>
+
+```bash
+cd /var/www/shop
+git pull
+rm -rf build/*            # if cd failed, this runs in the WRONG folder
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+set -euo pipefail
+cd /var/www/shop
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a shebang?">
+
+The first line of a script starting with `#!`, giving the path of the interpreter the kernel should use, for example `#!/bin/bash` or `#!/usr/bin/env python3` (which finds python3 through PATH). Without it the script runs in the caller's default shell.
+
+</QA>
+
+<QA q="Why do you need ./ to run a script in the current folder?">
+
+The shell only searches the directories in PATH for commands, and the current directory is not in PATH for security reasons. `./script.sh` gives an explicit path; alternatively run it with `bash script.sh` or put it in a PATH folder.
+
+</QA>
+
+<QA q="What does set -euo pipefail do?">
+
+`-e` exits on the first command that fails, `-u` treats unset variables as errors, and `-o pipefail` makes a pipeline fail if any command in it fails, not just the last. Together they stop scripts from silently continuing in a broken state.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'First argument inside a script?',
+      options: ['$0', '$1', '$#', '$@'],
+      answer: 1,
+      why: '$0 is the script name.',
+    },
+    {
+      q: 'Run a script without execute permission?',
+      options: ['./s.sh', 'bash s.sh', 's.sh', 'run s.sh'],
+      answer: 1,
+      why: 'bash reads the file as input.',
+    },
+    {
+      q: 'Why quote "$FILE"?',
+      options: ['Faster', 'Values with spaces stay one argument', 'Required by bash', 'To make it a comment'],
+      answer: 1,
+      why: 'Unquoted values are split on spaces.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Piece | Example |
+| --- | --- |
+| Shebang | `#!/bin/bash` |
+| Safety | `set -euo pipefail` |
+| Variable | `NAME="value"` → `"$NAME"` |
+| Command output | `TODAY=$(date +%F)` |
+| Arguments | `$1 $2` · `$#` · `$@` · `$0` |
+| Last status | `$?` |
+| Run | `chmod +x s.sh && ./s.sh` · `bash s.sh` |
+
+</CheatSheet>

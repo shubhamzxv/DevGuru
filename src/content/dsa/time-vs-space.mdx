@@ -1,0 +1,200 @@
+---
+id: dsa-time-vs-space
+title: Time vs space complexity
+summary: Time complexity counts steps and space complexity counts extra memory; many solutions trade one for the other, for example a set or a cache uses O(n) memory to turn O(n²) time into O(n), while recursion uses stack space for every call.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Doing exam revision. You can **re-solve every formula from scratch** each time you need it (slow, but needs only your brain), or **write a formula sheet** once and look things up (fast, but needs paper). The formula sheet is a time-for-space trade.
+
+</Analogy>
+
+## Simple explanation
+
+- **Time complexity**: how the number of steps grows with input size n
+- **Space complexity**: how much **extra** memory grows with n (the input itself usually does not count; say "auxiliary space" to be clear)
+
+| Uses extra memory | Space |
+| --- | --- |
+| a few variables, in-place swaps | **O(1)** |
+| a new list / set / dict of size n | **O(n)** |
+| an n × n grid (DP table, adjacency matrix) | **O(n²)** |
+| recursion depth d (each call is a stack frame) | **O(d)**: O(n) for a linked list walk, O(log n) for balanced splits |
+
+**Common trades**
+
+| Problem | Low memory | Faster with memory |
+| --- | --- | --- |
+| Duplicates | compare all pairs: O(n²) time, O(1) space | set: O(n) time, O(n) space |
+| Two-sum | nested loops O(n²) / sort + two pointers O(n log n), O(1)* | dict of seen values: O(n) time, O(n) space |
+| Fibonacci | naive recursion: O(2ⁿ) time | memo: O(n) time, O(n) space · two variables: O(n) time, **O(1)** space |
+| Range sums | add up every time: O(n) per query | prefix sums: O(1) per query, O(n) space |
+
+(*sorting in place; Python's `sorted()` makes a copy, O(n).)
+
+**Python memory notes**: slicing `a[1:]` copies (O(n) space and time); generators (`sum(x*x for x in a)`) use O(1) extra space; `reversed()` and `range()` do not build lists.
+
+In interviews, state **both**: "O(n) time and O(n) extra space; we could do O(1) space if we sort in place, at O(n log n) time."
+
+## Code example
+
+Fibonacci three ways, counting calls:
+
+```python
+from functools import lru_cache
+
+calls = 0
+def fib_naive(n):                        # O(2ⁿ) time, O(n) stack space
+    global calls
+    calls += 1
+    return n if n < 2 else fib_naive(n - 1) + fib_naive(n - 2)
+
+@lru_cache(maxsize=None)
+def fib_memo(n):                         # O(n) time, O(n) space (cache + stack)
+    return n if n < 2 else fib_memo(n - 1) + fib_memo(n - 2)
+
+def fib_loop(n):                         # O(n) time, O(1) space
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return a
+
+print(fib_naive(25), "naive calls:", calls)
+print(fib_memo(25), "memo cache size:", fib_memo.cache_info().currsize)
+print(fib_loop(25), "loop: two variables")
+print(fib_loop(300) == fib_memo(300))
+```
+
+```output
+75025 naive calls: 242785
+75025 memo cache size: 26
+75025 loop: two variables
+True
+```
+
+<Playground kind="python">
+
+```python
+import sys
+
+small = [0] * 10
+big = [0] * 1_000_000
+gen = (x * x for x in range(1_000_000))      # a generator holds no list
+
+print("list of 10:       ", sys.getsizeof(small), "bytes")
+print("list of 1,000,000:", sys.getsizeof(big), "bytes")
+print("generator:        ", sys.getsizeof(gen), "bytes")
+print("sum via generator:", sum(gen))
+
+# Try it: make a set of 1,000,000 numbers and compare its size with the list.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting the recursion stack">
+
+<Wrong>
+
+```text
+"My recursive list sum uses O(1) space — I don't create any lists."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Each call waits on the stack: n calls deep = O(n) space (and Python stops at ~1000 frames by default).
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Slicing in a loop">
+
+<Wrong>
+
+```python
+def total(a):
+    return 0 if not a else a[0] + total(a[1:])    # each slice copies: O(n²) time and memory churn
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def total(a, i=0):
+    return 0 if i == len(a) else a[i] + total(a, i + 1)   # pass an index instead (or just sum(a))
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is space complexity?">
+
+How the extra memory an algorithm needs grows with the input size, including new data structures and the recursion call stack, usually excluding the input itself (auxiliary space).
+
+</QA>
+
+<QA q="Give an example of trading space for time.">
+
+Checking for duplicates with a set uses O(n) extra memory but makes each lookup O(1) on average, turning an O(n²) pairwise comparison into O(n). Memoization and prefix sums are other examples.
+
+</QA>
+
+<QA q="What is the space complexity of a recursive function?">
+
+At least the maximum recursion depth times the memory per frame: O(n) for a recursion that reduces n by one each call, O(log n) for one that halves it, plus any data structures created.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Using a set to find duplicates costs...',
+      options: ['O(1) space', 'O(n) space', 'O(n²) space', 'No memory'],
+      answer: 1,
+      why: 'Up to n items stored.',
+    },
+    {
+      q: 'Iterative Fibonacci with two variables uses...',
+      options: ['O(1) space', 'O(n) space', 'O(2ⁿ) space', 'O(log n) space'],
+      answer: 0,
+      why: 'Only a and b.',
+    },
+    {
+      q: 'Recursion n levels deep needs at least...',
+      options: ['O(1) space', 'O(n) stack space', 'O(n²)', 'Nothing'],
+      answer: 1,
+      why: 'One frame per active call.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Thing | Space |
+| --- | --- |
+| variables, in-place swaps | O(1) |
+| new list/set/dict of n | O(n) |
+| n × n table | O(n²) |
+| recursion depth d | O(d) |
+| slice `a[i:j]` | O(j − i) copy |
+| generator / `range` | O(1) |
+
+Always say: "X time, Y extra space" and the trade-off you chose.
+
+</CheatSheet>

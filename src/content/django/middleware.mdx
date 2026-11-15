@@ -1,0 +1,201 @@
+---
+id: django-middleware
+title: Middleware
+summary: Middleware is a chain of hooks that wraps every request and response; built-in middleware handles security headers, sessions, CSRF, authentication and messages, and you write your own as a class with __init__(get_response) and __call__(request) for logging, timing, request IDs or tenant detection.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Airport checkpoints: every passenger passes **check-in, security, passport control** in order on the way to the plane, and **passport control, customs, baggage** on the way back. Each checkpoint can add a stamp, stop the passenger, or let them through. Middleware are those checkpoints for every request.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",          # HTTPS redirect, HSTS, security headers
+    "django.contrib.sessions.middleware.SessionMiddleware",   # request.session
+    "django.middleware.common.CommonMiddleware",              # APPEND_SLASH, ...
+    "django.middleware.csrf.CsrfViewMiddleware",              # CSRF check on POST/PUT/DELETE
+    "django.contrib.auth.middleware.AuthenticationMiddleware",# request.user (needs sessions)
+    "django.contrib.messages.middleware.MessageMiddleware",   # flash messages
+    "django.middleware.clickjacking.XFrameOptionsMiddleware", # X-Frame-Options header
+]
+```
+
+Requests go **top → bottom**, responses **bottom → top**. Order matters (auth after sessions; WhiteNoise right after SecurityMiddleware; CORS headers early).
+
+**Writing one**:
+
+```python
+import time, uuid
+
+class RequestTimingMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response          # once, at server start
+
+    def __call__(self, request):
+        request.request_id = uuid.uuid4().hex[:8]      # before the view
+        start = time.perf_counter()
+        response = self.get_response(request)          # the rest of the chain + view
+        response["X-Request-ID"] = request.request_id  # after the view
+        response["X-Response-Time"] = f"{(time.perf_counter() - start) * 1000:.1f}ms"
+        return response
+```
+
+Add it to `MIDDLEWARE` (`"store.middleware.RequestTimingMiddleware"`). Optional hooks: `process_view(request, view_func, args, kwargs)` (just before the view), `process_exception(request, exception)` (log or convert errors), `process_template_response`.
+
+A middleware can **short-circuit** by returning a response without calling `get_response` (maintenance mode, IP block, rate limit).
+
+Typical custom uses: request IDs and structured logging, timing/metrics, maintenance mode, tenant detection from the domain, adding security headers, simple rate limiting, forcing a timezone per user.
+
+Middleware vs decorator: middleware runs for **every** request (keep it fast); decorators/mixins apply to chosen views.
+
+## Code example
+
+```python
+>>> r = Client().get("/products/health/")
+>>> r["X-Request-ID"], r["X-Response-Time"]
+```
+
+```output
+('3f9a1c2b', '1.8ms')
+```
+
+```output
+POST /products/ping/ with CSRF checks enforced and no token
+Forbidden (CSRF cookie not set.): /products/ping/   → 403
+```
+
+CsrfViewMiddleware answered with 403 before the view ran.
+
+<Playground kind="none">
+
+```python
+# store/middleware.py — maintenance mode that still lets staff in
+from django.conf import settings
+from django.http import HttpResponse
+
+class MaintenanceModeMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if getattr(settings, "MAINTENANCE_MODE", False) and not request.path.startswith("/admin/"):
+            user = getattr(request, "user", None)      # needs AuthenticationMiddleware above this one
+            if not (user and user.is_staff):
+                return HttpResponse("We are upgrading the shop. Back in 10 minutes!", status=503)
+        return self.get_response(request)
+
+# settings.py: add "store.middleware.MaintenanceModeMiddleware" AFTER AuthenticationMiddleware
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Database queries in middleware for every request">
+
+<Wrong>
+
+```python
+def __call__(self, request):
+    request.settings = SiteSetting.objects.get(pk=1)      # one extra query on EVERY request, even static ones
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def __call__(self, request):
+    request.settings = cache.get_or_set("site_settings", lambda: SiteSetting.objects.get(pk=1), 300)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Using request.user above AuthenticationMiddleware">
+
+<Wrong>
+
+```text
+A custom middleware placed before AuthenticationMiddleware reads request.user → AttributeError.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Place it after AuthenticationMiddleware in the MIDDLEWARE list.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is middleware in Django?">
+
+A framework of hooks that process every request and response globally. Each middleware is a callable built with the next handler (get_response); on a request it can modify the request, return a response early, or call the next layer, then modify the response on the way back. Built-in middleware provides security headers, sessions, CSRF, authentication and messages.
+
+</QA>
+
+<QA q="How do you write custom middleware?">
+
+A class whose `__init__(self, get_response)` stores the next handler and whose `__call__(self, request)` does work before calling `self.get_response(request)` and after it, returning the response; optional process_view and process_exception hooks; then add its dotted path to MIDDLEWARE in the right position.
+
+</QA>
+
+<QA q="Why does middleware order matter?">
+
+Requests pass in list order and responses in reverse, and middleware depend on each other: SessionMiddleware must precede AuthenticationMiddleware and MessageMiddleware; CSRF should come before views that rely on it; security and static-file middleware go first so they act on everything.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which built-in middleware sets request.user?',
+      options: ['SessionMiddleware', 'AuthenticationMiddleware', 'CommonMiddleware', 'SecurityMiddleware'],
+      answer: 1,
+      why: 'It needs SessionMiddleware before it.',
+    },
+    {
+      q: 'How does middleware stop a request early?',
+      options: ['raise SystemExit', 'Return a response without calling get_response', 'Delete the request', 'It cannot'],
+      answer: 1,
+      why: 'Short-circuit.',
+    },
+    {
+      q: 'Response phase order?',
+      options: ['Top to bottom', 'Bottom to top', 'Random', 'Only the last one'],
+      answer: 1,
+      why: 'Reverse of the request phase.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Skeleton | `__init__(self, get_response)` + `__call__(self, request)` |
+| Before view | code before `self.get_response(request)` |
+| After view | modify `response` before returning it |
+| Short-circuit | `return HttpResponse(..., status=503)` |
+| Hooks | `process_view` · `process_exception` |
+| Register | `MIDDLEWARE = [..., "app.middleware.MyMiddleware"]` |
+
+Order: Security → Session → Common → Csrf → Auth → Messages → XFrame
+
+</CheatSheet>

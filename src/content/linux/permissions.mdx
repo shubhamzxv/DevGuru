@@ -1,0 +1,214 @@
+---
+id: linux-permissions
+title: Permissions (chmod, chown)
+summary: Every file has an owner, a group and read/write/execute permissions for owner, group and others; chmod changes the permissions (755, 644, +x) and chown changes the owner.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A flat in a society: the **owner** has all keys, the **family (group)** can enter and use the kitchen, **visitors (others)** may only look from the door. For each kind of person you decide: may they **read** (look), **write** (change things), **execute** (use it / walk in)?
+
+</Analogy>
+
+## Simple explanation
+
+`ls -l` shows permissions:
+
+```text
+-rwxr-xr--  1  guru  developers  1024  Nov 15 09:30  deploy.sh
+│└┬┘└┬┘└┬┘     └─┬─┘ └───┬────┘
+│ │  │  │        owner   group
+│ │  │  └── others: r--  (read only)
+│ │  └───── group:  r-x  (read + execute)
+│ └──────── owner:  rwx  (read + write + execute)
+└────────── type: - file, d directory, l link
+```
+
+| Letter | On a file | On a folder |
+| --- | --- | --- |
+| `r` (4) | read the content | list the names (`ls`) |
+| `w` (2) | change the content | create, delete, rename files inside |
+| `x` (1) | run it as a program | enter it (`cd`) and reach files inside |
+
+**Numeric (octal) form**: add the numbers per group: owner, group, others.
+
+| Number | Letters | Typical use |
+| --- | --- | --- |
+| `755` | `rwxr-xr-x` | scripts, programs, folders |
+| `644` | `rw-r--r--` | normal files, configs |
+| `700` | `rwx------` | private folders (`~/.ssh`) |
+| `600` | `rw-------` | private keys, `.env`, secrets |
+| `777` | `rwxrwxrwx` | **almost never**: anyone can change it |
+
+**chmod** changes permissions:
+
+```bash
+chmod 755 deploy.sh
+chmod +x deploy.sh          # add execute for everyone
+chmod u+x,g-w file          # u=user/owner, g=group, o=others, a=all
+chmod -R 755 public/        # recursive
+chmod 600 ~/.ssh/id_ed25519
+```
+
+**chown** changes owner and group (needs sudo):
+
+```bash
+sudo chown www-data:www-data /var/www/shop -R
+sudo chown guru app.log
+```
+
+Two more ideas: **umask** sets default permissions for new files (usually 644 files, 755 folders), and **root ignores permissions**, which is why you should not run apps as root.
+
+## Code example
+
+```bash
+ls -l scripts/backup.sh
+./scripts/backup.sh
+chmod +x scripts/backup.sh
+ls -l scripts/backup.sh
+./scripts/backup.sh
+```
+
+```output
+-rw-r--r-- 1 guru guru 63 Nov 15 09:30 backup.sh
+bash: ./scripts/backup.sh: Permission denied
+-rwxr-xr-x 1 guru guru 63 Nov 15 09:30 backup.sh
+Backing up notes...
+Done
+```
+
+<Playground kind="terminal">
+
+```bash
+ls -l
+ls -l scripts
+./scripts/backup.sh
+chmod +x scripts/backup.sh
+ls -l scripts
+./scripts/backup.sh
+echo "SECRET=abc" > .env
+chmod 600 .env
+ls -la
+chown root .env
+sudo chown root .env
+```
+
+</Playground>
+
+The script fails until it has the `x` bit. `chown` needs sudo.
+
+<Mistakes>
+
+<Mistake title="chmod 777 to fix a permission error">
+
+<Wrong>
+
+```bash
+sudo chmod -R 777 /var/www/shop     # any user or hacked process can change the code
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+sudo chown -R www-data:www-data /var/www/shop
+sudo chmod -R 755 /var/www/shop     # files 644, folders 755
+```
+
+</Right>
+
+Fix the owner, give the minimum permission needed.
+
+</Mistake>
+
+<Mistake title="SSH key with open permissions">
+
+<Wrong>
+
+```bash
+ssh -i key.pem ubuntu@1.2.3.4
+# WARNING: UNPROTECTED PRIVATE KEY FILE! Permissions 0644 for 'key.pem' are too open.
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+chmod 400 key.pem
+ssh -i key.pem ubuntu@1.2.3.4
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain chmod 755 and 644.">
+
+Each digit is the sum of read (4), write (2) and execute (1) for owner, group and others. 755 = owner rwx, group and others r-x: used for scripts, binaries and directories. 644 = owner rw, group and others read only: used for normal files and configuration.
+
+</QA>
+
+<QA q="What does the execute permission mean on a directory?">
+
+It allows entering the directory and accessing files inside it by name (traversal). Read on a directory allows listing names; without execute you cannot cd into it or open its files even if you know their names.
+
+</QA>
+
+<QA q="What is the difference between chmod and chown?">
+
+chmod changes the permission bits (who may read, write, execute). chown changes the owning user and group of a file. chown usually requires root.
+
+</QA>
+
+<QA q="What are setuid, setgid and the sticky bit?">
+
+Special bits: setuid on an executable runs it with the file owner's privileges (for example passwd); setgid on a directory makes new files inherit its group; the sticky bit on a directory such as /tmp lets users delete only their own files. Shown as s or t in ls -l, set with a leading digit like chmod 1777.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is rw-r----- in numbers?',
+      options: ['644', '640', '750', '600'],
+      answer: 1,
+      why: 'rw- = 6, r-- = 4, --- = 0.',
+    },
+    {
+      q: 'Best permission for a private SSH key?',
+      options: ['777', '644', '600 or 400', '755'],
+      answer: 2,
+      why: 'Only the owner may read it.',
+    },
+    {
+      q: 'Which command changes the owner?',
+      options: ['chmod', 'chown', 'chgrp only', 'umask'],
+      answer: 1,
+      why: 'chown user:group file.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| See | `ls -l` · `ls -ld folder` |
+| Make runnable | `chmod +x script.sh` |
+| Standard file / dir | `chmod 644 f` · `chmod 755 d` |
+| Private | `chmod 600 .env` · `chmod 700 ~/.ssh` |
+| Recursive | `chmod -R 755 dir` |
+| Owner | `sudo chown user:group f` (`-R`) |
+
+r=4 w=2 x=1 · order: owner, group, others · u g o a with + - =
+
+</CheatSheet>

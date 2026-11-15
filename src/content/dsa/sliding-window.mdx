@@ -1,0 +1,223 @@
+---
+id: dsa-sliding-window
+title: Sliding window
+summary: A sliding window keeps a contiguous range of a list or string between two indexes and updates its state incrementally as the right edge grows and the left edge shrinks, solving maximum-sum, longest-substring and minimum-window problems in O(n) instead of re-scanning every subarray.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Looking out of a **train window** at houses passing by. You do not start counting houses from the beginning of the journey every second; one new house appears on the right, one disappears on the left, and you update your count. That is all a sliding window does.
+
+</Analogy>
+
+## Simple explanation
+
+**Fixed-size window (size k)**: add the new right item, remove the item that fell off the left.
+
+```text
+window_sum = sum(a[:k])
+for right in range(k, n):
+    window_sum += a[right] - a[right - k]
+```
+
+**Variable-size window**: grow `right` every step; while the window is invalid (or while it is valid, for "minimum" problems), shrink from `left`.
+
+```text
+left = 0
+for right in range(n):
+    add a[right] to the window state
+    while window breaks the rule:
+        remove a[left] from the state; left += 1
+    update the answer with the window [left, right]
+```
+
+The state is usually a running **sum**, a **set** or a **dict of counts**. Each index enters once and leaves once → **O(n)**.
+
+| Problem | Window type | State |
+| --- | --- | --- |
+| Max sum of k consecutive | fixed | sum |
+| Moving average | fixed | sum |
+| Longest substring without repeating chars | variable (longest) | last-seen index / set |
+| Longest substring with ≤ k distinct chars | variable | Counter |
+| Smallest subarray with sum ≥ target (positives) | variable (shortest) | sum |
+| Minimum window containing all chars of t | variable (shortest) | two Counters |
+| Permutation / anagram in string | fixed (len of pattern) | Counter |
+
+Signals in a question: **"contiguous"**, **"substring"**, **"subarray"**, **"longest/shortest/maximum with a condition"**.
+
+Note: the shrinking trick for sums needs **non-negative** numbers; with negatives use prefix sums + hashing.
+
+## Code example
+
+```python
+def max_sum_k(a, k):
+    window = best = sum(a[:k])
+    for right in range(k, len(a)):
+        window += a[right] - a[right - k]
+        best = max(best, window)
+    return best
+
+def longest_unique_substring(s):
+    last = {}                         # char -> last index seen
+    left = best = 0
+    for right, c in enumerate(s):
+        if c in last and last[c] >= left:
+            left = last[c] + 1        # jump past the previous copy
+        last[c] = right
+        best = max(best, right - left + 1)
+    return best
+
+def min_subarray_len(target, nums):
+    left = total = 0
+    best = float("inf")
+    for right, x in enumerate(nums):
+        total += x
+        while total >= target:        # valid: try to shrink
+            best = min(best, right - left + 1)
+            total -= nums[left]
+            left += 1
+    return 0 if best == float("inf") else best
+
+print(max_sum_k([2, 1, 5, 1, 3, 2], 3))
+print(longest_unique_substring("abcabcbb"), longest_unique_substring("pwwkew"))
+print(min_subarray_len(7, [2, 3, 1, 2, 4, 3]))
+```
+
+```output
+9
+3 3
+2
+```
+
+<Playground kind="python">
+
+```python
+from collections import Counter
+
+def find_anagrams(s, p):
+    """Start indexes of p's anagrams in s, with a fixed window of len(p)."""
+    need, window, out = Counter(p), Counter(), []
+    for right, c in enumerate(s):
+        window[c] += 1
+        if right >= len(p):
+            old = s[right - len(p)]
+            window[old] -= 1
+            if window[old] == 0:
+                del window[old]
+        if window == need:
+            out.append(right - len(p) + 1)
+    return out
+
+print(find_anagrams("cbaebabacd", "abc"))
+
+# Try it: change p to "ab" and s to "abab".
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Recomputing the whole window each step">
+
+<Wrong>
+
+```python
+best = max(sum(a[i:i + k]) for i in range(len(a) - k + 1))    # O(n·k)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+window = sum(a[:k])
+for r in range(k, len(a)):
+    window += a[r] - a[r - k]                                  # O(1) update → O(n)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Moving left backwards">
+
+<Wrong>
+
+```python
+if c in last:
+    left = last[c] + 1        # "abba": at the last 'a', left jumps BACK to 1
+```
+
+</Wrong>
+
+<Right>
+
+```python
+if c in last and last[c] >= left:
+    left = last[c] + 1        # only move forward, inside the current window
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the sliding window technique?">
+
+A way to process contiguous subarrays or substrings by keeping a window defined by left and right indexes and updating its state incrementally: add the element entering on the right, remove the one leaving on the left. Each element enters and leaves at most once, so the total work is O(n) instead of examining all O(n²) subarrays.
+
+</QA>
+
+<QA q="Find the length of the longest substring without repeating characters.">
+
+Keep the last index of each character and a left boundary. For each right index, if the character was seen inside the current window, move left just past its previous position; record the index and update the best length right − left + 1. O(n) time, O(k) space for the alphabet.
+
+</QA>
+
+<QA q="When does a sliding window not work for subarray sums?">
+
+When numbers can be negative, adding an element can decrease the sum, so shrinking from the left no longer has a predictable effect. Use prefix sums with a hash map instead (for example, count subarrays summing to k).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Max sum of any 3 consecutive numbers: best time?',
+      options: ['O(n·k)', 'O(n)', 'O(n²)', 'O(log n)'],
+      answer: 1,
+      why: 'Fixed window update.',
+    },
+    {
+      q: 'Keyword that suggests a sliding window?',
+      options: ['Contiguous substring', 'Any subset', 'Shortest path', 'Sorted pairs'],
+      answer: 0,
+      why: 'Windows are contiguous.',
+    },
+    {
+      q: 'Shrinking by sum works only if numbers are...',
+      options: ['Sorted', 'Non-negative', 'Unique', 'Even'],
+      answer: 1,
+      why: 'Otherwise sums do not change monotonically.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Type | Template |
+| --- | --- |
+| Fixed k | `w += a[r] - a[r-k]` |
+| Longest valid | grow r · `while invalid: shrink l` · answer after |
+| Shortest valid | grow r · `while valid: answer, shrink l` |
+| State | sum · set · Counter · last-seen dict |
+| Time | O(n) — each index in/out once |
+| Negatives | use prefix sums + dict instead |
+
+</CheatSheet>

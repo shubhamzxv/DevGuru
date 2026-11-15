@@ -1,0 +1,249 @@
+---
+id: fastapi-path-parameters
+title: Path parameters
+summary: Path parameters are variable parts of the URL such as /books/{book_id}; FastAPI passes them to the function, converts and validates them by type hint, supports Enums for fixed choices and Path() for limits, and matches routes in order.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+House addresses: "Street 5, **House 42**". The street is fixed; the house number changes. A path parameter is the house number in a URL: `/books/42`, `/users/priya`.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+@app.get("/books/{book_id}")
+def get_book(book_id: int):        # name must match {book_id}
+    ...
+```
+
+- The `{book_id}` part of the path is passed to the parameter with the same name
+- The **type hint** converts and validates: `/books/2` → `2` (int); `/books/abc` → **422**
+- Typical types: `int`, `str`, `UUID`, `date`, and `Enum` for a fixed list
+
+**Fixed choices with Enum**
+
+```python
+from enum import Enum
+
+class Category(str, Enum):
+    fiction = "fiction"
+    tech = "tech"
+
+@app.get("/categories/{category}")
+def by_category(category: Category):
+    return {"category": category, "is_tech": category is Category.tech}
+```
+
+Only `fiction` and `tech` are accepted, and the docs show a dropdown.
+
+**Limits with Path()**
+
+```python
+from typing import Annotated
+from fastapi import Path
+
+@app.get("/orders/{order_id}")
+def order(order_id: Annotated[int, Path(gt=0, le=1_000_000)]):
+    ...
+```
+
+`gt`, `ge`, `lt`, `le` for numbers; `min_length`, `max_length`, `pattern` for strings.
+
+**Order matters**: routes are checked top to bottom. Put the fixed path first:
+
+```python
+@app.get("/users/me")              # first
+def me(): ...
+
+@app.get("/users/{username}")      # after
+def user(username: str): ...
+```
+
+Otherwise `/users/me` would be treated as the username "me".
+
+**Paths containing slashes**: `/files/{file_path:path}` captures `reports/2026/nov.pdf`.
+
+Use path parameters to **identify a resource** (`/orders/42`); use query parameters to **filter or page** (`/orders?status=paid`).
+
+## Code example
+
+```python
+from enum import Enum
+from typing import Annotated
+from fastapi import FastAPI, Path
+
+app = FastAPI()
+BOOKS = {1: "Clean Code", 2: "Fluent Python"}
+
+@app.get("/books/{book_id}")
+def get_book(book_id: int):
+    return {"id": book_id, "title": BOOKS.get(book_id)}
+
+class Category(str, Enum):
+    fiction = "fiction"
+    tech = "tech"
+
+@app.get("/categories/{category}")
+def by_category(category: Category):
+    return {"category": category, "is_tech": category is Category.tech}
+
+@app.get("/users/me")
+def me():
+    return {"user": "current user"}
+
+@app.get("/users/{username}")
+def user(username: str):
+    return {"user": username}
+
+@app.get("/files/{file_path:path}")
+def read_file(file_path: str):
+    return {"path": file_path}
+
+@app.get("/orders/{order_id}")
+def order(order_id: Annotated[int, Path(gt=0, le=1_000_000)]):
+    return {"order_id": order_id}
+```
+
+```output
+GET /books/2                     -> 200 {"id": 2, "title": "Fluent Python"}
+GET /books/abc                   -> 422 {"detail": [{"type": "int_parsing", "loc": ["path", "book_id"], "msg": "Input should be a valid integer, unable to parse string as an integer", "input": "abc"}]}
+GET /categories/tech             -> 200 {"category": "tech", "is_tech": true}
+GET /categories/sports           -> 422 {"detail": [{"type": "enum", "loc": ["path", "category"], "msg": "Input should be 'fiction' or 'tech'", ...}]}
+GET /users/me                    -> 200 {"user": "current user"}
+GET /users/priya                 -> 200 {"user": "priya"}
+GET /files/reports/2026/nov.pdf  -> 200 {"path": "reports/2026/nov.pdf"}
+GET /orders/0                    -> 422 {"detail": [{"type": "greater_than", "loc": ["path", "order_id"], "msg": "Input should be greater than 0", ...}]}
+```
+
+<Playground kind="none">
+
+```python
+# main.py  →  fastapi dev main.py  →  try the URLs in the comments
+from fastapi import FastAPI, HTTPException
+
+app = FastAPI()
+BOOKS = {1: "Clean Code", 2: "Fluent Python"}
+
+@app.get("/books/{book_id}")            # /books/1   /books/9   /books/abc
+def get_book(book_id: int):
+    if book_id not in BOOKS:
+        raise HTTPException(status_code=404, detail="Book not found")
+    return {"id": book_id, "title": BOOKS[book_id]}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Dynamic route before the fixed one">
+
+<Wrong>
+
+```python
+@app.get("/users/{username}")
+def user(username: str): ...
+
+@app.get("/users/me")           # never reached: "me" matches {username}
+def me(): ...
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.get("/users/me")
+def me(): ...
+
+@app.get("/users/{username}")
+def user(username: str): ...
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Parameter name does not match the path">
+
+<Wrong>
+
+```python
+@app.get("/books/{book_id}")
+def get_book(id: int): ...       # "id" becomes a required QUERY parameter; book_id is ignored
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.get("/books/{book_id}")
+def get_book(book_id: int): ...
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does FastAPI validate path parameters?">
+
+From the type hint of the function parameter with the same name as the `{placeholder}`: it converts the string from the URL to that type and returns a 422 with details if it cannot. Extra constraints come from `Path()` (gt, le, min_length, pattern) and Enums restrict values to a fixed set.
+
+</QA>
+
+<QA q="When should you use a path parameter versus a query parameter?">
+
+Path parameters identify a specific resource or a hierarchy (`/users/5/orders/9`) and are required. Query parameters are optional modifiers such as filtering, sorting, searching and pagination (`/orders?status=paid&page=2`).
+
+</QA>
+
+<QA q="Why does the order of routes matter?">
+
+FastAPI (Starlette) checks routes in the order they were declared and uses the first match. A generic route like `/users/{username}` declared before `/users/me` would capture "me", so specific routes must be declared first.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'GET /books/abc with book_id: int returns...',
+      options: ['200', '404', '422', '500'],
+      answer: 2,
+      why: 'Validation error: not an integer.',
+    },
+    {
+      q: 'How do you allow only "fiction" or "tech"?',
+      options: ['A list', 'An Enum type hint', 'A regex in the decorator', 'You cannot'],
+      answer: 1,
+      why: 'Enum values become the allowed choices.',
+    },
+    {
+      q: 'Capture a path with slashes like reports/2026/nov.pdf?',
+      options: ['{file_path}', '{file_path:path}', '{*file_path}', '{file_path:str}'],
+      answer: 1,
+      why: 'The :path converter.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Basic | `@app.get("/books/{book_id}")` + `book_id: int` |
+| Fixed choices | `class Category(str, Enum)` |
+| Limits | `Annotated[int, Path(gt=0, le=1000)]` |
+| String rules | `Path(min_length=3, pattern="^[a-z]+$")` |
+| Slashes | `{file_path:path}` |
+| Order | fixed paths (`/users/me`) before `/users/{username}` |
+
+</CheatSheet>

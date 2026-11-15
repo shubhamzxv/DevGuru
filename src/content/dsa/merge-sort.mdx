@@ -1,0 +1,222 @@
+---
+id: dsa-merge-sort
+title: Merge sort
+summary: Merge sort splits the list in half, sorts each half recursively and merges the two sorted halves with two pointers; it always runs in O(n log n), is stable, needs O(n) extra memory, and its merge step also solves problems like counting inversions and merging k sorted lists.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Sorting a **big pile of exam papers** with friends. Split the pile in two and hand each half to a friend; they split again and pass it on until everyone holds one paper (already "sorted"). Then pairs of people **merge** their sorted piles by repeatedly taking the smaller top paper, and the merged piles go back up until one sorted pile remains.
+
+</Analogy>
+
+## Simple explanation
+
+```text
+[38, 27, 43, 3, 9, 82, 10]
+split → [38, 27, 43]           [3, 9, 82, 10]
+split → [38] [27, 43]          [3, 9] [82, 10]
+...     single items are sorted
+merge → [27, 38, 43]           [3, 9, 10, 82]
+merge → [3, 9, 10, 27, 38, 43, 82]
+```
+
+**Divide and conquer**: divide (split in half), conquer (sort each half recursively), combine (merge).
+
+**Why O(n log n)**: there are about **log₂ n** levels of splitting, and each level merges **n** items in total.
+
+| Property | Merge sort |
+| --- | --- |
+| Time (best / average / worst) | **O(n log n)** always |
+| Extra space | O(n) for merging (+ O(log n) stack) |
+| Stable | **yes** (take from the left half on ties) |
+| Good for | linked lists (no random access needed), external sorting of huge files, guaranteed performance |
+
+Python's built-in **Timsort** is a merge-sort hybrid: it finds already-sorted runs and merges them, using insertion sort for small pieces.
+
+The **merge** step is reusable: merge two sorted arrays, merge k sorted lists (with a heap), count inversions (how far from sorted a list is).
+
+<Visual caption="Watch the halves get sorted and merged. Switch to quick sort to compare.">
+
+<SortVisualizer algorithm="merge" values={[38, 27, 43, 3, 9, 82, 10, 15]} />
+
+</Visual>
+
+## Code example
+
+```python
+def merge(left, right):
+    out, i, j = [], 0, 0
+    while i < len(left) and j < len(right):
+        if left[i] <= right[j]:          # <= keeps it stable
+            out.append(left[i]); i += 1
+        else:
+            out.append(right[j]); j += 1
+    out.extend(left[i:])
+    out.extend(right[j:])
+    return out
+
+def merge_sort(a, depth=0):
+    if len(a) <= 1:
+        return a
+    mid = len(a) // 2
+    left = merge_sort(a[:mid], depth + 1)
+    right = merge_sort(a[mid:], depth + 1)
+    merged = merge(left, right)
+    if depth <= 1:
+        print("  " * depth + f"merge {left} + {right} → {merged}")
+    return merged
+
+print(merge_sort([38, 27, 43, 3, 9, 82, 10]))
+
+def count_inversions(a):
+    """Pairs i < j with a[i] > a[j], counted during merging: O(n log n)."""
+    if len(a) <= 1:
+        return a, 0
+    mid = len(a) // 2
+    left, x = count_inversions(a[:mid])
+    right, y = count_inversions(a[mid:])
+    out, i, j, inv = [], 0, 0, x + y
+    while i < len(left) and j < len(right):
+        if left[i] <= right[j]:
+            out.append(left[i]); i += 1
+        else:
+            out.append(right[j]); j += 1
+            inv += len(left) - i         # right[j] is smaller than all remaining left items
+    out += left[i:] + right[j:]
+    return out, inv
+
+print(count_inversions([2, 4, 1, 3, 5])[1])
+```
+
+```output
+  merge [38] + [27, 43] → [27, 38, 43]
+  merge [3, 9] + [10, 82] → [3, 9, 10, 82]
+merge [27, 38, 43] + [3, 9, 10, 82] → [3, 9, 10, 27, 38, 43, 82]
+[3, 9, 10, 27, 38, 43, 82]
+3
+```
+
+<Playground kind="python">
+
+```python
+records = [("Asha", 30), ("Ravi", 25), ("Meera", 30), ("Kiran", 25)]
+
+# sorted() is stable: people with the same age keep their original order
+print(sorted(records, key=lambda r: r[1]))
+
+# Sort by two keys: age ascending, then name
+print(sorted(records, key=lambda r: (r[1], r[0])))
+
+# Try it: write merge_sort above and check it gives the same result as sorted() on random lists.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using < in the merge (breaks stability)">
+
+<Wrong>
+
+```python
+if left[i] < right[j]:        # on ties takes from the RIGHT first → equal items swap order
+```
+
+</Wrong>
+
+<Right>
+
+```python
+if left[i] <= right[j]:       # ties come from the left half first: stable
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Forgetting the leftovers">
+
+<Wrong>
+
+```python
+while i < len(left) and j < len(right):
+    ...
+return out                    # items left in one half are lost
+```
+
+</Wrong>
+
+<Right>
+
+```python
+out.extend(left[i:])
+out.extend(right[j:])
+return out
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain merge sort and its complexity.">
+
+Merge sort recursively splits the array into halves until single elements remain, then merges sorted halves by repeatedly taking the smaller front element. There are log n levels and each does O(n) merging work, so it is O(n log n) in every case, with O(n) extra space; it is stable.
+
+</QA>
+
+<QA q="Merge sort or quick sort?">
+
+Merge sort guarantees O(n log n), is stable and suits linked lists and external sorting, but needs O(n) extra memory. Quick sort is usually faster in practice for arrays due to in-place partitioning and cache locality, but its worst case is O(n²) without good pivots and it is not stable.
+
+</QA>
+
+<QA q="How would you count inversions in an array efficiently?">
+
+Modify merge sort: while merging, whenever an element from the right half is taken before remaining left elements, add the number of remaining left elements to the count, since each forms an inversion with it. Total O(n log n).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Worst-case time of merge sort?',
+      options: ['O(n)', 'O(n log n)', 'O(n²)', 'O(log n)'],
+      answer: 1,
+      why: 'Always the same.',
+    },
+    {
+      q: 'Extra memory of array merge sort?',
+      options: ['O(1)', 'O(log n)', 'O(n)', 'O(n²)'],
+      answer: 2,
+      why: 'Temporary arrays for merging.',
+    },
+    {
+      q: 'Is merge sort stable?',
+      options: ['Yes, with <= in merge', 'No', 'Only for integers', 'Only on linked lists'],
+      answer: 0,
+      why: 'Ties taken from the left.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Merge sort |
+| --- | --- |
+| Idea | split in half · sort halves · merge |
+| Time | O(n log n) best/avg/worst |
+| Space | O(n) |
+| Stable | yes (`<=`) |
+| Merge | two pointers + extend leftovers |
+| Extras | count inversions · merge k lists · linked lists |
+| Python | `sorted()` / `.sort()` = Timsort (merge-based, stable) |
+
+</CheatSheet>

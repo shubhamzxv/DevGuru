@@ -1,0 +1,192 @@
+---
+id: linux-users-and-groups
+title: Users and groups
+summary: Linux is multi-user; each user has a UID and a home folder, belongs to groups, and is stored in /etc/passwd and /etc/group; you manage them with useradd, usermod, groups, id and passwd.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+An office building: every employee has an **ID card** (user) and belongs to **departments** (groups). A door can say "only the Finance department". To give someone access you add them to the department instead of changing every door.
+
+</Analogy>
+
+## Simple explanation
+
+- **User**: a name + a number (**UID**) + a home folder + a shell. `root` is UID 0
+- **System users** (UID below 1000) run services: `www-data` (nginx), `postgres`, `nobody`. They usually cannot log in
+- **Group**: a set of users that share permissions. Each user has a **primary group** (same name as the user) plus **extra groups** such as `sudo` or `docker`
+
+Where it is stored:
+
+| File | One line looks like |
+| --- | --- |
+| `/etc/passwd` | `guru:x:1000:1000::/home/guru:/bin/bash` (name:x:UID:GID::home:shell) |
+| `/etc/shadow` | hashed passwords (root only) |
+| `/etc/group` | `docker:x:999:guru,priya` (group:x:GID:members) |
+
+Commands:
+
+| Command | Does |
+| --- | --- |
+| `whoami`, `id`, `groups` | who am I, my UID and groups |
+| `sudo useradd -m -s /bin/bash priya` | new user with home folder (`-m`) and Bash |
+| `sudo adduser priya` | friendlier interactive version (Debian/Ubuntu) |
+| `sudo passwd priya` | set a password |
+| `sudo usermod -aG docker priya` | **a**ppend to extra **G**roup |
+| `sudo groupadd developers` | new group |
+| `sudo userdel -r priya` | delete user and home |
+| `su - priya` / `sudo -iu priya` | switch to that user |
+
+Group membership applies at **login**: after `usermod -aG docker guru`, log out and in again (or `newgrp docker`) before `docker ps` works without sudo.
+
+A real use: a deploy user for your app.
+
+```bash
+sudo useradd -m -s /bin/bash deploy
+sudo usermod -aG www-data deploy
+sudo chown -R deploy:www-data /var/www/shop
+```
+
+## Code example
+
+```bash
+id
+sudo useradd -m -s /bin/bash priya
+sudo usermod -aG docker priya
+groups priya
+tail -1 /etc/passwd
+```
+
+```output
+uid=1000(guru) gid=1000(guru) groups=1000(guru),27(sudo),999(docker)
+priya : priya docker
+priya:x:1002:1002::/home/priya:/bin/bash
+```
+
+<Playground kind="terminal">
+
+```bash
+whoami
+id
+groups
+cat /etc/passwd
+useradd -m priya
+sudo useradd -m -s /bin/bash priya
+sudo passwd priya
+sudo groupadd developers
+sudo usermod -aG developers,docker priya
+groups priya
+id priya
+cat /etc/group
+ls /home
+```
+
+</Playground>
+
+`useradd` without sudo fails. After adding, `/etc/passwd`, `/etc/group` and `/home` show the new user.
+
+<Mistakes>
+
+<Mistake title="usermod -G without -a">
+
+<Wrong>
+
+```bash
+sudo usermod -G docker guru       # REPLACES guru's extra groups: guru loses sudo!
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+sudo usermod -aG docker guru      # appends
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Running the app as root">
+
+<Wrong>
+
+```text
+gunicorn started as root: a bug in the app gives the attacker the whole server.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Create a dedicated user (deploy or appuser) and run the service as that user (User= in the systemd unit).
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you add a user to a group?">
+
+`sudo usermod -aG groupname username` (the -a appends; without it -G replaces all supplementary groups), or `sudo gpasswd -a username groupname`. The user must log in again for the new group to take effect.
+
+</QA>
+
+<QA q="What is the difference between /etc/passwd and /etc/shadow?">
+
+/etc/passwd is world-readable and lists accounts with UID, GID, home directory and shell; the password field is just x. /etc/shadow, readable only by root, holds the hashed passwords and password ageing information.
+
+</QA>
+
+<QA q="What are system users?">
+
+Accounts with low UIDs created for services (www-data, postgres, nginx, mysql). They own the service's files and run its processes with limited rights, usually with no login shell (/usr/sbin/nologin), so a compromised service cannot do everything root can.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is root\'s UID?',
+      options: ['1', '0', '1000', '-1'],
+      answer: 1,
+      why: 'UID 0 = superuser.',
+    },
+    {
+      q: 'Add guru to the docker group safely?',
+      options: ['usermod -G docker guru', 'sudo usermod -aG docker guru', 'groupadd guru docker', 'chown docker guru'],
+      answer: 1,
+      why: '-a keeps the existing groups.',
+    },
+    {
+      q: 'Where are group memberships listed?',
+      options: ['/etc/passwd', '/etc/group', '/etc/hosts', '/var/log/group'],
+      answer: 1,
+      why: 'group:x:GID:members.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| Who am I | `whoami` · `id` · `groups` |
+| New user | `sudo useradd -m -s /bin/bash name` |
+| Password | `sudo passwd name` |
+| Add to group | `sudo usermod -aG group name` |
+| New group | `sudo groupadd name` |
+| Delete user | `sudo userdel -r name` |
+| Switch user | `su - name` · `sudo -iu name` |
+
+Files: `/etc/passwd` · `/etc/shadow` · `/etc/group`
+
+</CheatSheet>

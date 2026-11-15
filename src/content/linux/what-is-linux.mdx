@@ -1,0 +1,191 @@
+---
+id: linux-what-is-linux
+title: What is Linux?
+summary: Linux is a free, open-source operating system kernel; together with tools it forms distributions such as Ubuntu and Amazon Linux, which run most servers, clouds and containers.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A car has an **engine** and everything around it: seats, dashboard, radio. The engine alone does not get you to work.
+
+The **Linux kernel** is the engine: it talks to the hardware (CPU, memory, disk, network). A **distribution** (Ubuntu, Debian, Amazon Linux, Red Hat) is the complete car: the kernel plus the shell, commands, package manager and settings.
+
+</Analogy>
+
+## Simple explanation
+
+- **Kernel**: the core program that manages processes, memory, files, devices and the network. Created by Linus Torvalds in 1991, free and open source
+- **Shell**: the program that reads your commands, usually **Bash** (or zsh). The **terminal** is the window you type in
+- **Distribution (distro)**: kernel + GNU tools + package manager + defaults
+
+| Distro | Package manager | Where you meet it |
+| --- | --- | --- |
+| Ubuntu / Debian | `apt` | most tutorials, EC2, laptops, `python:3.12-slim` images |
+| Amazon Linux 2023 | `dnf` (`yum`) | default on AWS EC2 |
+| RHEL / Rocky / CentOS | `dnf` / `yum` | banks, big companies |
+| Alpine | `apk` | tiny Docker images |
+
+Why a backend developer must know Linux:
+
+- Almost every **server** and **cloud VM** runs Linux (EC2, DigitalOcean, GCP)
+- **Docker containers** are Linux processes
+- CI runners (GitHub Actions `ubuntu-latest`) are Linux
+- Debugging production means SSH, logs, processes, ports and permissions
+
+Key ideas you will see in every topic:
+
+1. **Everything is a file**: documents, folders, devices (`/dev/sda`), even process info (`/proc`)
+2. **Small tools joined with pipes**: `grep ERROR app.log | wc -l`
+3. **Users and permissions**: every file has an owner; `root` is the all-powerful admin
+4. **Case-sensitive**: `App.py` and `app.py` are different files
+5. **No drive letters**: one tree that starts at `/`
+
+The prompt tells you who and where you are:
+
+```text
+guru@devguru:~/app$
+ |      |      |   |
+user  machine folder $ = normal user (# = root)
+```
+
+## Code example
+
+```bash
+uname -a
+cat /etc/os-release
+whoami
+echo $SHELL
+```
+
+```output
+Linux devguru 6.8.0-48-generic #48-Ubuntu SMP x86_64 GNU/Linux
+NAME="Ubuntu"
+VERSION="24.04.1 LTS (Noble Numbat)"
+ID=ubuntu
+guru
+/bin/bash
+```
+
+<Playground kind="terminal">
+
+```bash
+whoami
+hostname
+uname -a
+cat /etc/os-release
+echo $SHELL
+uptime
+help
+```
+
+</Playground>
+
+`help` lists every command the simulator knows. Nothing you type here touches your real computer.
+
+<Mistakes>
+
+<Mistake title="Calling Ubuntu and Linux two different operating systems">
+
+<Wrong>
+
+```text
+"Our server runs Ubuntu, not Linux."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Our server runs Ubuntu, a Linux distribution."
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Ignoring capital letters">
+
+<Wrong>
+
+```bash
+cat Notes.txt
+# cat: Notes.txt: No such file or directory
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+cat notes.txt
+```
+
+</Right>
+
+Linux file names are case-sensitive, unlike Windows.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between Linux and a Linux distribution?">
+
+Linux is strictly the kernel, which manages hardware, processes, memory and files. A distribution packages the kernel with a shell, system tools, libraries, a package manager and default configuration, for example Ubuntu, Debian, Amazon Linux or Red Hat Enterprise Linux.
+
+</QA>
+
+<QA q="What is the difference between the kernel, the shell and the terminal?">
+
+The kernel is the core of the OS that talks to hardware. The shell (such as Bash) is a program that interprets the commands you type and starts other programs. The terminal is the window or device that shows text and sends your keystrokes to the shell.
+
+</QA>
+
+<QA q="Why is Linux used for servers?">
+
+It is free and open source, stable, secure with a strong permission model, light enough to run without a graphical desktop, easy to automate through the shell and scripts, and it is the native platform for containers and most cloud services.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which part talks directly to the hardware?',
+      options: ['The shell', 'The kernel', 'The terminal', 'The package manager'],
+      answer: 1,
+      why: 'The kernel manages CPU, memory, disks and devices.',
+    },
+    {
+      q: 'Default package manager on Ubuntu?',
+      options: ['yum', 'apt', 'brew', 'pip'],
+      answer: 1,
+      why: 'Debian and Ubuntu use apt.',
+    },
+    {
+      q: 'In guru@devguru:~/app$, what is ~?',
+      options: ['The root folder', 'Your home folder', 'A temp folder', 'The disk'],
+      answer: 1,
+      why: '~ is short for /home/guru.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Meaning |
+| --- | --- |
+| Kernel | core: hardware, processes, memory |
+| Shell | Bash: reads your commands |
+| Distro | Ubuntu, Debian, Amazon Linux, Alpine |
+| root | admin user (prompt ends with `#`) |
+| `~` | your home folder |
+| `/` | the top of the one file tree |
+
+`uname -a` · `cat /etc/os-release` · `whoami` · `hostname` · `uptime`
+
+</CheatSheet>

@@ -1,0 +1,200 @@
+---
+id: django-project-vs-app
+title: Project vs app
+summary: A Django project is the whole website with its settings and root URLs; apps are reusable feature packages (store, orders, accounts) with their own models, views, URLs and migrations, registered in INSTALLED_APPS.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **shopping mall** is the project: one building, one address, one security desk (settings). Each **shop** inside is an app: shoes, food court, electronics, each with its own staff and stock, and a shop could move to another mall.
+
+</Analogy>
+
+## Simple explanation
+
+```bash
+django-admin startproject config .     # project (the "config" package)
+python manage.py startapp store        # app
+python manage.py startapp orders       # another app
+```
+
+```text
+shop/
+├── manage.py                 # command-line entry point
+├── config/                   # the PROJECT package
+│   ├── settings.py           # all settings
+│   ├── urls.py               # root URLconf
+│   ├── wsgi.py / asgi.py     # entry points for servers (gunicorn, uvicorn)
+├── store/                    # an APP
+│   ├── models.py  views.py  urls.py  admin.py  apps.py  tests.py
+│   ├── migrations/
+│   └── templates/store/
+└── orders/                   # another APP
+```
+
+| | Project | App |
+| --- | --- | --- |
+| How many | one | many |
+| Contains | settings, root URLs, WSGI/ASGI | models, views, URLs, admin, migrations, templates for one feature |
+| Reusable | no | yes, ideally (django.contrib.auth is an app) |
+
+Register every app:
+
+```python
+# config/settings.py
+INSTALLED_APPS = [
+    "django.contrib.admin",
+    "django.contrib.auth",
+    ...
+    "rest_framework",       # third-party app
+    "store",                # your apps
+    "orders",
+]
+```
+
+Include its URLs:
+
+```python
+# config/urls.py
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("products/", include("store.urls")),
+    path("orders/", include("orders.urls")),
+]
+```
+
+How to split apps: by **business area** (accounts, catalog, orders, payments), each small enough to describe in one sentence. Avoid one giant `core` app and avoid circular dependencies between apps (orders may depend on catalog, not both ways).
+
+## Code example
+
+```bash
+python manage.py startapp store
+python manage.py makemigrations store
+```
+
+```output
+No installed app with label 'store'.
+```
+
+Forgot to add it to `INSTALLED_APPS`. After adding `"store"`:
+
+```output
+Migrations for 'store':
+  store/migrations/0001_initial.py
+    + Create model Category
+    + Create model Tag
+    + Create model Order
+    + Create model Product
+    + Create model OrderItem
+    + Create model Profile
+```
+
+<Playground kind="terminal">
+
+```bash
+mkdir -p shop/config shop/store/migrations shop/store/templates/store
+touch shop/manage.py shop/config/settings.py shop/config/urls.py shop/config/wsgi.py
+touch shop/store/models.py shop/store/views.py shop/store/urls.py shop/store/admin.py shop/store/apps.py
+tree shop
+```
+
+</Playground>
+
+The simulator only creates the files (it has no Python), but this is the exact shape `startproject` and `startapp` produce.
+
+<Mistakes>
+
+<Mistake title="Forgetting INSTALLED_APPS">
+
+<Wrong>
+
+```text
+Models in store/models.py but "store" not in INSTALLED_APPS: no migrations, no admin, templates not found.
+```
+
+</Wrong>
+
+<Right>
+
+```python
+INSTALLED_APPS = [..., "store"]
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="One app for everything">
+
+<Wrong>
+
+```text
+core/models.py with 40 models: users, products, orders, payments, blog, notifications...
+```
+
+</Wrong>
+
+<Right>
+
+```text
+accounts/, catalog/, orders/, payments/, notifications/: each with its own models, admin and tests.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a Django project and an app?">
+
+The project is the overall configuration and deployment unit: settings, root URL configuration and WSGI/ASGI entry points. Apps are Python packages implementing a specific feature with their own models, views, URLs, admin, templates and migrations; a project combines many apps listed in INSTALLED_APPS, and apps can be reused across projects.
+
+</QA>
+
+<QA q="How do you decide how to split a project into apps?">
+
+By cohesive business domains with clear responsibilities (accounts, catalog, orders, payments), keeping each small and focused, minimising and directing dependencies between them, and placing shared utilities in a small common module instead of a catch-all app.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where are all settings?',
+      options: ['In each app', 'The project settings.py', 'manage.py', 'models.py'],
+      answer: 1,
+      why: 'One settings module per project (or per environment).',
+    },
+    {
+      q: 'New app command?',
+      options: ['django-admin startproject', 'python manage.py startapp name', 'pip install app', 'python manage.py newapp'],
+      answer: 1,
+      why: 'startapp creates the package skeleton.',
+    },
+    {
+      q: 'Is django.contrib.auth a project or an app?',
+      options: ['Project', 'App', 'Middleware', 'Setting'],
+      answer: 1,
+      why: 'Built-in apps follow the same structure.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Code |
+| --- | --- |
+| Project | `django-admin startproject config .` |
+| App | `python manage.py startapp store` |
+| Register | `INSTALLED_APPS += ["store"]` |
+| App URLs | `path("products/", include("store.urls"))` |
+| App templates | `store/templates/store/*.html` |
+| Entry points | `config/wsgi.py` (gunicorn) · `config/asgi.py` (uvicorn/daphne) |
+
+</CheatSheet>

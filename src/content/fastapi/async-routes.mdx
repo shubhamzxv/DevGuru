@@ -1,0 +1,226 @@
+---
+id: fastapi-async-routes
+title: async def vs def routes
+summary: FastAPI runs async def routes on the event loop and plain def routes in a thread pool; use async def only when everything inside is awaitable (httpx, asyncpg, async SQLAlchemy), and def for blocking libraries, because a blocking call inside async def freezes every request.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A waiter in a restaurant. A good waiter takes an order, gives it to the kitchen, and **while the food cooks** serves other tables (async: `await`). A bad waiter stands at the kitchen door until the dish is ready (blocking), and every other table waits.
+
+`async def` gives you the good waiter, **but only if** you `await` the slow parts. If you call a blocking function inside, you get the bad waiter for **everyone**.
+
+</Analogy>
+
+## Simple explanation
+
+How FastAPI runs your function:
+
+| You write | FastAPI runs it | Good for |
+| --- | --- | --- |
+| `async def route()` | directly on the **event loop** (one thread) | awaitable I/O: `httpx.AsyncClient`, `asyncpg`, async SQLAlchemy, `aioredis`, `asyncio.sleep` |
+| `def route()` | in a **thread pool** (about 40 threads) | blocking libraries: `requests`, psycopg2, sync SQLAlchemy, file I/O, `time.sleep` |
+
+The golden rules:
+
+1. Inside `async def`, **never** call blocking code (`requests.get`, `time.sleep`, sync DB drivers). It freezes the event loop and every other request waits
+2. If your libraries are synchronous, just use **`def`**: FastAPI keeps the server responsive with the thread pool
+3. **CPU-heavy work** (image resizing, ML inference, big loops) blocks either way: move it to a process pool, a worker queue (Celery, RQ, Arq) or another service
+4. Need a blocking call inside an async route? `await run_in_threadpool(func, arg)` (from `fastapi.concurrency`) or `await asyncio.to_thread(func, arg)`
+
+Async shines for **many concurrent, I/O-bound** requests: calling other APIs, websockets, streaming. It does not make one slow query faster.
+
+Calling several APIs at once:
+
+```python
+import asyncio, httpx
+
+@app.get("/dashboard")
+async def dashboard():
+    async with httpx.AsyncClient(timeout=5) as client:
+        orders, stock = await asyncio.gather(
+            client.get("http://orders-service/orders/today"),
+            client.get("http://stock-service/low-stock"),
+        )
+    return {"orders": orders.json(), "low_stock": stock.json()}
+```
+
+Both calls wait at the same time: total time ≈ the slower one, not the sum.
+
+## Code example
+
+Three routes that each wait one second, called 10 times at the same moment:
+
+```python
+import asyncio, time
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/async-sleep")
+async def async_sleep():
+    await asyncio.sleep(1)       # non-blocking wait
+    return {"ok": True}
+
+@app.get("/sync-sleep")
+def sync_sleep():
+    time.sleep(1)                # blocking, but in the thread pool
+    return {"ok": True}
+
+@app.get("/bad-async")
+async def bad_async():
+    time.sleep(1)                # blocking ON the event loop
+    return {"ok": True}
+```
+
+```output
+/async-sleep  10 requests took 1.0s
+/sync-sleep   10 requests took 1.0s
+/bad-async    10 requests took 10.0s
+```
+
+The third route serves requests one by one: the classic async mistake.
+
+<Playground kind="none">
+
+```python
+# main.py  →  fastapi dev main.py
+# In another terminal, send 10 requests at once and time them:
+#   time (for i in $(seq 10); do curl -s localhost:8000/bad-async & done; wait)
+#   time (for i in $(seq 10); do curl -s localhost:8000/async-sleep & done; wait)
+import asyncio, time
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/async-sleep")
+async def async_sleep():
+    await asyncio.sleep(1)
+    return {"ok": True}
+
+@app.get("/bad-async")
+async def bad_async():
+    time.sleep(1)
+    return {"ok": True}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="requests inside async def">
+
+<Wrong>
+
+```python
+import requests
+
+@app.get("/weather")
+async def weather():
+    return requests.get("https://api.weather.example/today").json()   # blocks the event loop
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import httpx
+
+@app.get("/weather")
+async def weather():
+    async with httpx.AsyncClient() as client:
+        r = await client.get("https://api.weather.example/today")
+    return r.json()
+```
+
+</Right>
+
+Or keep `requests` and write `def weather():`.
+
+</Mistake>
+
+<Mistake title="Making everything async by habit">
+
+<Wrong>
+
+```python
+@app.get("/users")
+async def users(db: Session = Depends(get_db)):     # sync SQLAlchemy session inside async def
+    return db.query(User).all()
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.get("/users")
+def users(db: Session = Depends(get_db)):           # sync code → def
+    return db.query(User).all()
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="When should you use async def in FastAPI?">
+
+When the endpoint awaits non-blocking I/O, for example async HTTP clients, async database drivers, async Redis or websockets, especially with many concurrent requests. When the code uses blocking libraries, use plain def, which FastAPI runs in a thread pool; blocking calls inside async def stall the whole event loop.
+
+</QA>
+
+<QA q="What happens if you call time.sleep or requests.get inside an async route?">
+
+It blocks the event loop thread, so no other request on that worker can progress until it returns; throughput collapses to one request at a time. Use the async equivalent (asyncio.sleep, httpx.AsyncClient) or move the call to a thread with run_in_threadpool or asyncio.to_thread.
+
+</QA>
+
+<QA q="Does async make CPU-heavy work faster?">
+
+No. Async helps when waiting on I/O. CPU-bound work still occupies the thread (and the GIL); offload it to a process pool, a task queue such as Celery or a separate service, and scale with more worker processes.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A route uses the requests library. Best choice?',
+      options: ['async def', 'def', 'Either is fine', 'class'],
+      answer: 1,
+      why: 'Blocking code belongs in def (thread pool).',
+    },
+    {
+      q: 'Where does FastAPI run a plain def route?',
+      options: ['On the event loop', 'In a thread pool', 'In a new process', 'In the browser'],
+      answer: 1,
+      why: 'So blocking calls do not freeze the loop.',
+    },
+    {
+      q: 'Call two APIs at the same time in an async route?',
+      options: ['Two awaits in a row', 'asyncio.gather(...)', 'time.sleep', 'threading only'],
+      answer: 1,
+      why: 'gather runs the awaitables concurrently.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Situation | Use |
+| --- | --- |
+| Async libraries (httpx, asyncpg, async SQLAlchemy) | `async def` + `await` |
+| Sync libraries (requests, psycopg2, sync ORM) | `def` |
+| One blocking call in async code | `await run_in_threadpool(f, x)` · `await asyncio.to_thread(f, x)` |
+| Several I/O calls together | `await asyncio.gather(a(), b())` |
+| CPU-heavy work | worker queue / process pool |
+| Never in async def | `time.sleep`, `requests`, sync DB calls |
+
+</CheatSheet>

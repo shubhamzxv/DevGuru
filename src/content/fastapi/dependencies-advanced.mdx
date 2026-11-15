@@ -1,0 +1,264 @@
+---
+id: fastapi-dependencies-advanced
+title: Sub-dependencies, yield and database sessions
+summary: Dependencies can depend on other dependencies, are cached once per request, can be classes, and can use yield to run setup before and cleanup after the request, which is the standard way to open and close database sessions.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A hotel check-in: the **room key** depends on a **verified guest**, which depends on a **valid ID card**. Reception checks the ID once, even if three staff members need to know who you are. When you check out, housekeeping cleans the room **after** you leave, whatever happened during the stay. That last part is a dependency with **yield**.
+
+</Analogy>
+
+## Simple explanation
+
+**Sub-dependencies**: a dependency can itself use `Depends`:
+
+```python
+def get_current_user(db = Depends(get_db), token: str = Depends(oauth2_scheme)): ...
+def require_admin(user = Depends(get_current_user)): ...
+
+@app.get("/admin/stats")
+def stats(user = Depends(require_admin), db = Depends(get_db)): ...
+```
+
+FastAPI builds the tree: `get_db` → `get_current_user` → `require_admin` → endpoint.
+
+**Cached per request**: `get_db` appears twice in that tree but runs **once**; both receive the same session. (`Depends(get_db, use_cache=False)` to opt out.)
+
+**Dependencies with `yield`**: code before `yield` runs before the endpoint; code after runs after the response is ready, even on errors:
+
+```python
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db             # the endpoint uses db here
+        db.commit()          # success
+    except Exception:
+        db.rollback()        # an exception happened
+        raise
+    finally:
+        db.close()           # always
+```
+
+This is the standard SQLAlchemy pattern (many projects commit inside the endpoint instead and keep only `try/finally close` here).
+
+**Classes as dependencies**: `Depends()` with no argument uses the type hint:
+
+```python
+class Pagination:
+    def __init__(self, page: int = 1, size: int = 10):
+        self.skip = (page - 1) * size
+        self.limit = size
+
+@app.get("/items")
+def items(p: Pagination = Depends()): ...
+```
+
+**Where to attach them**
+
+| Level | Code | Use |
+| --- | --- | --- |
+| One endpoint | parameter `Depends(x)` | need the value |
+| One endpoint, no value | `dependencies=[Depends(verify_key)]` | checks only |
+| A router | `APIRouter(dependencies=[Depends(get_current_user)])` | protect a group |
+| Whole app | `FastAPI(dependencies=[...])` | global checks |
+
+**Testing**: `app.dependency_overrides[get_db] = get_test_db` swaps the real database for a test one.
+
+## Code example
+
+```python
+from fastapi import Depends, FastAPI, Header, HTTPException
+
+app = FastAPI()
+events = []
+
+class FakeSession:
+    def __init__(self):
+        self.open = True
+    def close(self):
+        self.open = False
+
+def get_db():
+    db = FakeSession()
+    events.append("open session")
+    try:
+        yield db
+        events.append("commit")
+    except Exception:
+        events.append("rollback")
+        raise
+    finally:
+        db.close()
+        events.append("close session")
+
+def get_current_user(db: FakeSession = Depends(get_db), authorization: str | None = Header(None)):
+    events.append("get_current_user (same session reused)")
+    if authorization != "abc123":
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {"username": "guru", "role": "admin"}
+
+def require_admin(user: dict = Depends(get_current_user)):
+    if user["role"] != "admin":
+        raise HTTPException(403, "Admins only")
+    return user
+
+@app.get("/admin/stats")
+def stats(user: dict = Depends(require_admin), db: FakeSession = Depends(get_db)):
+    events.append("endpoint runs")
+    return {"user": user["username"], "session_open": db.open}
+```
+
+```output
+GET /admin/stats  Authorization: abc123  -> 200 {"user": "guru", "session_open": true}
+events: ['open session', 'get_current_user (same session reused)', 'endpoint runs', 'commit', 'close session']
+
+GET /admin/stats  (no header)            -> 401 {"detail": "Not authenticated"}
+events: ['open session', 'get_current_user (same session reused)', 'rollback', 'close session']
+```
+
+One session per request (opened once, though two dependencies asked for it), closed in both cases, rolled back on the error.
+
+<Playground kind="none">
+
+```python
+# main.py with a real database: pip install "fastapi[standard]" sqlalchemy
+from fastapi import Depends, FastAPI
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session, sessionmaker
+
+engine = create_engine("sqlite:///./shop.db")
+SessionLocal = sessionmaker(bind=engine)
+app = FastAPI()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@app.get("/db-time")
+def db_time(db: Session = Depends(get_db)):
+    return {"now": db.execute(text("select datetime('now')")).scalar()}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="A global session shared by all requests">
+
+<Wrong>
+
+```python
+db = SessionLocal()           # module level: shared between concurrent requests, never closed
+
+@app.get("/users")
+def users():
+    return db.query(User).all()
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.get("/users")
+def users(db: Session = Depends(get_db)):     # one session per request, always closed
+    return db.query(User).all()
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="return instead of yield">
+
+<Wrong>
+
+```python
+def get_db():
+    db = SessionLocal()
+    return db              # nobody ever closes it: connection pool runs out
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do dependencies with yield work?">
+
+FastAPI runs the code up to `yield` before the endpoint and injects the yielded value. After the endpoint finishes (or raises), it resumes the generator: an exception is re-raised inside it so `except` can roll back, and `finally` always runs, which makes it ideal for opening and closing database sessions, files or locks.
+
+</QA>
+
+<QA q="If two dependencies use get_db, how many sessions are created?">
+
+One. FastAPI caches dependency results per request, so every place that depends on get_db in the same request receives the same value, unless `use_cache=False` is set.
+
+</QA>
+
+<QA q="How do you protect all routes of a router?">
+
+Pass the dependency in the router's `dependencies` list, for example `APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])`, so it runs for every route in the router without repeating it.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Code after yield in a dependency runs...',
+      options: ['Never', 'Before the endpoint', 'After the endpoint, even on errors (finally)', 'Only on success'],
+      answer: 2,
+      why: 'Use finally for cleanup.',
+    },
+    {
+      q: 'Same dependency used twice in one request runs...',
+      options: ['Twice', 'Once (cached)', 'Zero times', 'Depends on order'],
+      answer: 1,
+      why: 'Per-request cache.',
+    },
+    {
+      q: 'p: Pagination = Depends() uses...',
+      options: ['Nothing', 'The Pagination class as the dependency', 'A global', 'The body'],
+      answer: 1,
+      why: 'Depends() with no argument uses the type.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Chain | `def b(a = Depends(a_dep))` · `def endpoint(x = Depends(b))` |
+| Setup + cleanup | `try: yield db finally: db.close()` |
+| Class dependency | `p: Pagination = Depends()` |
+| Check only | `dependencies=[Depends(verify_key)]` |
+| Whole router | `APIRouter(dependencies=[Depends(get_current_user)])` |
+| No cache | `Depends(x, use_cache=False)` |
+| Tests | `app.dependency_overrides[get_db] = fake_db` |
+
+</CheatSheet>

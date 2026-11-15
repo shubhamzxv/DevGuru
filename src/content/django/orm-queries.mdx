@@ -1,0 +1,217 @@
+---
+id: django-orm-queries
+title: ORM queries (filter, get, exclude)
+summary: The Django ORM builds SQL from Python; filter and exclude return QuerySets of matching rows, get returns exactly one object (or raises DoesNotExist or MultipleObjectsReturned), and field lookups like __lt, __icontains, __in and __range plus double-underscore relations express the WHERE clause.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Asking a shop assistant in plain words: "Show me all books under 500 rupees that are in stock, cheapest first." The assistant (the ORM) turns that into the exact instructions for the store room (SQL) and brings back the items.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+Product.objects.all()                                  # every row
+Product.objects.filter(price__lt=500)                  # WHERE price < 500
+Product.objects.exclude(stock=0)                       # WHERE NOT stock = 0
+Product.objects.get(pk=7)                              # exactly one row
+Product.objects.filter(category__slug="books", stock__gt=0)   # AND + a join
+```
+
+**Field lookups** (`field__lookup=value`):
+
+| Lookup | SQL idea | Example |
+| --- | --- | --- |
+| `exact` (default), `iexact` | `=` | `name="USB Cable"` |
+| `contains`, `icontains` | `LIKE '%x%'` | `name__icontains="python"` |
+| `startswith`, `endswith` | `LIKE 'x%'` | |
+| `gt`, `gte`, `lt`, `lte` | `>`, `>=`, `<`, `<=` | `price__lte=500` |
+| `in` | `IN (...)` | `id__in=[1, 2, 3]` |
+| `range` | `BETWEEN` | `price__range=(400, 900)` |
+| `isnull` | `IS NULL` | `deleted_at__isnull=True` |
+| `year`, `month`, `date` | date parts | `created_at__year=2026` |
+
+**Getting results**
+
+| Method | Returns |
+| --- | --- |
+| `get(...)` | one object; `DoesNotExist` if none, `MultipleObjectsReturned` if many |
+| `first()` / `last()` | one object or `None` |
+| `count()`, `exists()` | number / bool (cheap SQL) |
+| `order_by("-price")` | sorted (`-` = descending) |
+| `[:10]` | `LIMIT 10` (slicing) |
+| `values("name", "price")` | dicts |
+| `values_list("name", flat=True)` | plain values |
+| `distinct()` | remove duplicates |
+
+**Creating and changing**
+
+```python
+Product.objects.create(name="Mouse", category=elec, price=399)
+Product.objects.get_or_create(name="Mouse", defaults={"price": 399, "category": elec})
+Product.objects.filter(stock=0).update(is_active=False)      # one UPDATE, no save() per row
+Product.objects.filter(is_active=False).delete()
+Product.objects.bulk_create([Product(...), Product(...)])    # one INSERT for many
+```
+
+In views use `get_object_or_404(Product, pk=pk)` instead of `get()` so a missing row is a 404, not a 500.
+
+QuerySets are **lazy** (no SQL until you iterate, slice, `list()`, `count()`...) and **chainable**: `qs.filter(...).exclude(...).order_by(...)`. Print `str(qs.query)` to see the SQL.
+
+## Code example
+
+```python
+>>> Product.objects.filter(price__lt=500)
+>>> Product.objects.filter(category__slug="books", stock__gt=0)
+>>> Product.objects.exclude(stock=0).values_list("name", flat=True)
+>>> Product.objects.get(name="Laptop")
+>>> Product.objects.get(category__slug="books")
+>>> Product.objects.order_by("-price")[:3].values_list("name", "price")
+>>> Product.objects.filter(stock=0).count(), Product.objects.filter(price__gt=5000).exists()
+>>> Product.objects.filter(price__range=(400, 900)).values_list("name", flat=True)
+>>> print(Product.objects.filter(price__lt=500).query)
+```
+
+```output
+<QuerySet [<Product: Clean Code (₹450.00)>, <Product: Rubik Cube (₹299.00)>, <Product: USB Cable (₹199.00)>]>
+<QuerySet [<Product: Clean Code (₹450.00)>, <Product: Django for APIs (₹650.00)>]>
+<QuerySet ['Clean Code', 'Django for APIs', 'Headphones', 'Rubik Cube', 'USB Cable']>
+store.models.Product.DoesNotExist: Product matching query does not exist.
+store.models.Product.MultipleObjectsReturned: get() returned more than one Product -- it returned 3!
+<QuerySet [('Keyboard', Decimal('2499.00')), ('Headphones', Decimal('1499.00')), ('Fluent Python', Decimal('899.00'))]>
+(2, False)
+<QuerySet ['Clean Code', 'Django for APIs', 'Fluent Python']>
+SELECT "store_product"."id", "store_product"."name", "store_product"."category_id", "store_product"."price", "store_product"."stock", "store_product"."is_active", "store_product"."created_at" FROM "store_product" WHERE "store_product"."price" < 500 ORDER BY "store_product"."name" ASC
+```
+
+<Playground kind="sql">
+
+```sql
+CREATE TABLE store_category (id INTEGER PRIMARY KEY, name TEXT, slug TEXT);
+CREATE TABLE store_product (id INTEGER PRIMARY KEY, name TEXT, price REAL, stock INTEGER, category_id INTEGER);
+INSERT INTO store_category VALUES (1, 'Books', 'books'), (2, 'Electronics', 'electronics'), (3, 'Toys', 'toys');
+INSERT INTO store_product VALUES
+  (1, 'Clean Code', 450, 12, 1), (2, 'Fluent Python', 899, 0, 1), (3, 'Django for APIs', 650, 5, 1),
+  (4, 'USB Cable', 199, 40, 2), (5, 'Headphones', 1499, 8, 2), (6, 'Keyboard', 2499, 0, 2), (7, 'Rubik Cube', 299, 20, 3);
+
+-- filter(price__lt=500)
+SELECT name, price FROM store_product WHERE price < 500 ORDER BY name;
+-- filter(category__slug="books", stock__gt=0)
+SELECT p.name FROM store_product p JOIN store_category c ON c.id = p.category_id WHERE c.slug = 'books' AND p.stock > 0 ORDER BY p.name;
+-- order_by("-price")[:3]
+SELECT name, price FROM store_product ORDER BY price DESC LIMIT 3;
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="get() where a missing row is normal">
+
+<Wrong>
+
+```python
+def product_detail(request, pk):
+    product = Product.objects.get(pk=pk)      # unknown id → DoesNotExist → 500 error page
+```
+
+</Wrong>
+
+<Right>
+
+```python
+product = get_object_or_404(Product, pk=pk)   # → 404
+product = Product.objects.filter(pk=pk).first()   # or None, when optional
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Filtering in Python instead of SQL">
+
+<Wrong>
+
+```python
+cheap = [p for p in Product.objects.all() if p.price < 500]     # loads every row into memory
+count = len(Product.objects.all())
+```
+
+</Wrong>
+
+<Right>
+
+```python
+cheap = Product.objects.filter(price__lt=500)
+count = Product.objects.count()
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between get() and filter()?">
+
+`get()` returns a single model instance and raises DoesNotExist if no row matches or MultipleObjectsReturned if more than one does. `filter()` returns a lazy QuerySet of zero or more rows that can be chained further. Use get for unique lookups (pk, unique fields) and filter for collections, or `filter().first()` when absence is acceptable.
+
+</QA>
+
+<QA q="Are QuerySets lazy?">
+
+Yes. Building and chaining a QuerySet runs no SQL; the query executes when the QuerySet is evaluated: iteration, slicing with a step, list(), len(), bool(), repr in the shell, or methods like count(), exists(), get(), first(). Results are cached on the QuerySet after evaluation.
+
+</QA>
+
+<QA q="How do you see the SQL Django runs?">
+
+`print(queryset.query)` for one QuerySet, `connection.queries` with DEBUG=True, `django-debug-toolbar` in development, `assertNumQueries` in tests, or database logging (`django.db.backends` logger).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Products with "python" anywhere in the name, any case?',
+      options: ['name="python"', 'name__icontains="python"', 'name__in="python"', 'name__startswith="python"'],
+      answer: 1,
+      why: 'icontains = case-insensitive LIKE.',
+    },
+    {
+      q: 'get() when two rows match raises...',
+      options: ['DoesNotExist', 'MultipleObjectsReturned', 'Nothing, returns the first', 'ValueError'],
+      answer: 1,
+      why: 'get must match exactly one row.',
+    },
+    {
+      q: 'Cheapest way to know if any row matches?',
+      options: ['len(qs) > 0', 'qs.exists()', 'list(qs)', 'qs.all()'],
+      answer: 1,
+      why: 'exists() runs a tiny LIMIT 1 query.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| All / matching / not | `.all()` · `.filter(a=1)` · `.exclude(a=1)` |
+| One | `.get(pk=1)` · `get_object_or_404(Model, pk=1)` · `.first()` |
+| Lookups | `__lt __gte __icontains __in __range __isnull __year` |
+| Across relations | `category__slug="books"` |
+| Sort / limit | `.order_by("-price")[:10]` |
+| Shapes | `.values("a", "b")` · `.values_list("a", flat=True)` |
+| Count / exists | `.count()` · `.exists()` |
+| Write | `.create()` · `.get_or_create()` · `.update()` · `.delete()` · `bulk_create()` |
+| SQL | `print(qs.query)` |
+
+</CheatSheet>

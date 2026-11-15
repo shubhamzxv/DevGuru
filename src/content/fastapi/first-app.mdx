@@ -1,0 +1,216 @@
+---
+id: fastapi-first-app
+title: First app and Uvicorn
+summary: A FastAPI app is an object created with FastAPI(); decorators such as @app.get("/") connect URLs to functions, and the app is served by Uvicorn with uvicorn main:app --reload or fastapi dev main.py.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Opening a small shop: the **building** is the `FastAPI()` app, each **counter** is a route (`/`, `/health`), the **staff member** at the counter is your function, and the **shop manager who opens the doors** every morning and lets customers in is **Uvicorn**, the server.
+
+</Analogy>
+
+## Simple explanation
+
+**1. Create a virtual environment and install**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate            # Windows: .venv\Scripts\activate
+pip install "fastapi[standard]"      # FastAPI + Uvicorn + useful extras
+```
+
+**2. Write `main.py`**
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI(title="Shop API", version="1.0.0")
+
+@app.get("/")
+def home():
+    return {"message": "Hello from FastAPI"}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+```
+
+- `app = FastAPI(...)`: the application object (title and version show in the docs)
+- `@app.get("/")`: a **path operation**: HTTP method + path → function. Also `@app.post`, `@app.put`, `@app.patch`, `@app.delete`
+- Return a dict, list, string or Pydantic model: FastAPI converts it to **JSON**
+
+**3. Run it**
+
+```bash
+fastapi dev main.py                       # development: auto-reload on save
+uvicorn main:app --reload                 # the same with Uvicorn directly
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4   # production-style
+```
+
+`main:app` means "the variable `app` in the module `main.py`". `--reload` restarts on code changes (only for development). `--host 0.0.0.0` makes it reachable from other machines and containers.
+
+**4. Try it**
+
+- `http://127.0.0.1:8000/` → JSON
+- `http://127.0.0.1:8000/docs` → interactive Swagger UI
+- `curl localhost:8000/health`
+
+Unknown paths get **404** automatically; a wrong method (POST to a GET route) gets **405**.
+
+## Code example
+
+```python
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+app = FastAPI(title="Shop API")
+
+@app.get("/")
+def home():
+    return {"message": "Hello from FastAPI"}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+client = TestClient(app)              # calls the app in-process, no server needed
+for path in ["/", "/health", "/nope"]:
+    r = client.get(path)
+    print(path, r.status_code, r.json())
+```
+
+```output
+/ 200 {'message': 'Hello from FastAPI'}
+/health 200 {'status': 'ok'}
+/nope 404 {'detail': 'Not Found'}
+```
+
+<Playground kind="none">
+
+```bash
+# In a terminal:
+mkdir shop-api && cd shop-api
+python3 -m venv .venv && source .venv/bin/activate
+pip install "fastapi[standard]"
+
+cat > main.py << 'EOF'
+from fastapi import FastAPI
+
+app = FastAPI(title="Shop API")
+
+@app.get("/")
+def home():
+    return {"message": "Hello from FastAPI"}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+EOF
+
+fastapi dev main.py
+# then: curl localhost:8000/health   and open http://127.0.0.1:8000/docs
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Wrong module:variable in the uvicorn command">
+
+<Wrong>
+
+```bash
+uvicorn main.py:app      # Error loading ASGI app. Could not import module "main.py"
+uvicorn main:application # the variable is called app
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+uvicorn main:app --reload
+uvicorn app.main:app      # if the file is app/main.py
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="--reload in production">
+
+<Wrong>
+
+```bash
+uvicorn main:app --reload --host 0.0.0.0     # on the server: watches files, one process, slower
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+# or: gunicorn main:app -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:8000
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you run a FastAPI application?">
+
+With an ASGI server: `uvicorn main:app --reload` in development (or the `fastapi dev` CLI), and in production `uvicorn main:app --host 0.0.0.0 --port 8000 --workers N`, or Gunicorn managing Uvicorn workers, usually behind nginx or a load balancer, or in a Docker container.
+
+</QA>
+
+<QA q="What is a path operation?">
+
+The combination of an HTTP method and a URL path handled by a function, declared with a decorator such as `@app.get("/items/{id}")`. FastAPI reads the function's parameters and type hints to know what to validate and how to document the endpoint.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In uvicorn main:app, what is app?',
+      options: ['The folder', 'The variable holding FastAPI()', 'The port', 'A package'],
+      answer: 1,
+      why: 'module:variable.',
+    },
+    {
+      q: 'Which flag restarts the server when code changes?',
+      options: ['--workers', '--reload', '--host', '--watch-only'],
+      answer: 1,
+      why: 'Development only.',
+    },
+    {
+      q: 'A GET request to a path that does not exist returns...',
+      options: ['200', '404', '405', '500'],
+      answer: 1,
+      why: 'FastAPI returns {"detail": "Not Found"}.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | Command / code |
+| --- | --- |
+| Install | `pip install "fastapi[standard]"` |
+| App | `app = FastAPI(title="Shop API")` |
+| Route | `@app.get("/")` · `post` · `put` · `patch` · `delete` |
+| Dev server | `fastapi dev main.py` · `uvicorn main:app --reload` |
+| Prod-style | `uvicorn main:app --host 0.0.0.0 --workers 4` |
+| Docs | `/docs` · `/redoc` |
+| Test quickly | `TestClient(app).get("/")` |
+
+</CheatSheet>

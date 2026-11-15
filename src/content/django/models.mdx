@@ -1,0 +1,212 @@
+---
+id: django-models
+title: Models
+summary: A Django model is a Python class that subclasses models.Model; each attribute is a database column, each instance is a row, Meta sets ordering, indexes and constraints, and methods like __str__ and properties keep data logic close to the data.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **register book** in a shop: printed columns (Name, Price, Stock), each line one product. The Django **model** is the design of the printed page; Django prints the actual book (creates the table) and lets you add and look up lines in Python.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+from django.db import models
+
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    category = models.ForeignKey("Category", on_delete=models.PROTECT, related_name="products")
+    price = models.DecimalField(max_digits=8, decimal_places=2)
+    stock = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        indexes = [models.Index(fields=["category", "price"])]
+
+    def __str__(self):
+        return f"{self.name} (₹{self.price})"
+
+    @property
+    def in_stock(self):
+        return self.stock > 0
+```
+
+- Table name: `<app>_<model>` → `store_product`
+- An automatic primary key `id` (`BigAutoField` by default)
+- Each field = a column with a type and options (`null`, `blank`, `default`, `unique`, `choices`, `db_index`)
+- `__str__` is what you see in the admin and shell, so always define it
+
+**Meta options**
+
+| Option | Example |
+| --- | --- |
+| `ordering` | `["-created_at"]` default sort |
+| `indexes` | `[models.Index(fields=["category", "price"])]` |
+| `constraints` | `[models.UniqueConstraint(fields=["order", "product"], name="one_line_per_product"), models.CheckConstraint(condition=Q(price__gt=0), name="price_positive")]` |
+| `verbose_name_plural` | `"categories"` |
+| `db_table` | custom table name |
+| `abstract = True` | a base class with shared fields (no table) |
+
+**Choices** with `TextChoices`:
+
+```python
+class Order(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PAID = "paid", "Paid"
+        SHIPPED = "shipped", "Shipped"
+
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+```
+
+After changing models: `makemigrations` then `migrate` (next topics).
+
+## Code example
+
+```python
+# python manage.py shell
+>>> from store.models import Category, Product
+>>> books = Category.objects.create(name="Books", slug="books")
+>>> p = Product.objects.create(name="Clean Code", category=books, price="450", stock=12)
+>>> p.id, p.in_stock
+>>> p
+>>> p.stock = 0
+>>> p.save(update_fields=["stock"])
+>>> Product.objects.get(pk=p.pk).in_stock
+>>> p.delete()
+```
+
+```output
+(1, True)
+<Product: Clean Code (₹450)>
+False
+(1, {'store.Product': 1})
+```
+
+`save()` runs an INSERT the first time and UPDATE after; `update_fields` updates only those columns.
+
+<Playground kind="sql">
+
+```sql
+-- What the model above becomes (from: python manage.py sqlmigrate store 0001)
+CREATE TABLE "store_category" ("id" integer NOT NULL PRIMARY KEY AUTOINCREMENT, "name" varchar(50) NOT NULL UNIQUE, "slug" varchar(50) NOT NULL UNIQUE);
+CREATE TABLE "store_product" ("id" integer NOT NULL PRIMARY KEY AUTOINCREMENT, "name" varchar(100) NOT NULL, "price" decimal NOT NULL, "stock" integer unsigned NOT NULL CHECK ("stock" >= 0), "is_active" bool NOT NULL, "created_at" datetime NOT NULL, "category_id" bigint NOT NULL REFERENCES "store_category" ("id"));
+CREATE INDEX "store_produ_categor_ca64c7_idx" ON "store_product" ("category_id", "price");
+
+INSERT INTO store_category (name, slug) VALUES ('Books', 'books');
+INSERT INTO store_product (name, price, stock, is_active, created_at, category_id) VALUES ('Clean Code', 450, 12, 1, '2026-11-15', 1);
+SELECT * FROM store_product;
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="FloatField for money">
+
+<Wrong>
+
+```python
+price = models.FloatField()        # 0.1 + 0.2 = 0.30000000000000004 in your invoices
+```
+
+</Wrong>
+
+<Right>
+
+```python
+price = models.DecimalField(max_digits=10, decimal_places=2)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Validation only in forms">
+
+<Wrong>
+
+```text
+"Price must be positive" checked only in one form; the API, admin and scripts can still save -5.
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Meta:
+    constraints = [models.CheckConstraint(condition=models.Q(price__gt=0), name="price_positive")]
+# plus clean() / validators for friendly messages
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a Django model?">
+
+A Python class subclassing django.db.models.Model that describes a database table: class attributes are fields mapped to columns with types and options, instances are rows, and the manager (`objects`) provides the query API. Meta configures ordering, indexes, constraints and naming; migrations turn model changes into schema changes.
+
+</QA>
+
+<QA q="What is the difference between null=True and blank=True?">
+
+`null=True` is a database setting: the column allows NULL. `blank=True` is a validation setting: forms and the admin allow the field to be empty. For text fields Django prefers empty strings, so usually `blank=True` without `null=True`; for optional dates, numbers or foreign keys use both.
+
+</QA>
+
+<QA q="What are abstract models?">
+
+Base classes with `class Meta: abstract = True` that define shared fields and methods (for example created_at/updated_at timestamps) but have no table of their own; child models inherit the fields into their own tables.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Best field for prices?',
+      options: ['FloatField', 'DecimalField', 'IntegerField always', 'CharField'],
+      answer: 1,
+      why: 'Exact decimal arithmetic.',
+    },
+    {
+      q: 'Table name of Product in app store?',
+      options: ['product', 'store_product', 'Products', 'store.Product'],
+      answer: 1,
+      why: '<app_label>_<model_name>.',
+    },
+    {
+      q: 'Allow empty in forms but not NULL in DB for a CharField?',
+      options: ['null=True', 'blank=True', 'default=None', 'unique=False'],
+      answer: 1,
+      why: 'blank is form validation.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Model | `class X(models.Model):` |
+| Text / number / money | `CharField(max_length=)` · `IntegerField()` · `DecimalField(max_digits=, decimal_places=)` |
+| Flags / dates | `BooleanField(default=)` · `DateTimeField(auto_now_add=True)` |
+| Choices | `class Status(models.TextChoices)` + `choices=Status.choices` |
+| Order / index | `Meta.ordering` · `Meta.indexes` |
+| Rules in DB | `Meta.constraints` (Unique, Check) |
+| Display | `def __str__(self)` |
+| Save | `obj.save()` · `save(update_fields=[...])` · `obj.delete()` |
+
+</CheatSheet>

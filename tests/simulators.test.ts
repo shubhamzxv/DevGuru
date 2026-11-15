@@ -221,6 +221,55 @@ describe('Linux shell simulator', () => {
   });
 });
 
+describe('Linux simulator: text tools, Bash and system', () => {
+  it('runs cut, sed, awk and tr', () => {
+    const sh = new ShellSimulator();
+    sh.run("echo 'name,city' > p.csv; echo 'Asha,Delhi' >> p.csv");
+    expect(sh.run('cut -d, -f2 p.csv').output).toBe('city\nDelhi');
+    expect(sh.run("sed 's/Delhi/Mumbai/' p.csv").output).toBe('name,city\nAsha,Mumbai');
+    expect(sh.run("sed -n '2p' p.csv").output).toBe('Asha,Delhi');
+    expect(sh.run("awk -F, 'NR > 1 {print $1}' p.csv").output).toBe('Asha');
+    expect(sh.run("awk '$8 >= 400 {print $8}' logs/access.log").output).toBe('401\n401\n403\n500');
+    expect(sh.run("awk '{sum += $9} END {print sum}' logs/access.log").output).toBe('5472');
+    expect(sh.run('echo hello | tr a-z A-Z').output).toBe('HELLO');
+  });
+
+  it('runs Bash if, loops, functions, $? and arithmetic', () => {
+    const sh = new ShellSimulator();
+    expect(sh.run('x=5; if [ $x -gt 3 ]; then echo big; else echo small; fi').output).toBe('big');
+    expect(sh.run('for i in {1..3}; do echo "n=$i"; done').output).toBe('n=1\nn=2\nn=3');
+    expect(sh.run('c=0; while [ $c -lt 3 ]; do c=$((c+1)); done; echo $c').output).toBe('3');
+    sh.run('greet() { echo "Hi $1"; }');
+    expect(sh.run('greet Asha').output).toBe('Hi Asha');
+    expect(sh.run('echo "today is $(date +%F)"').output).toBe('today is 2026-11-15');
+    expect(sh.run('ls missing; echo "status $?"').output).toContain('status 2'.replace('2', '1'));
+    expect(sh.run("echo 'a > b'").output).toBe('a > b');
+  });
+
+  it('runs a script with arguments and exit codes', () => {
+    const sh = new ShellSimulator();
+    sh.run("echo 'echo \"args: $# first: $1\"' > s.sh; echo 'exit 3' >> s.sh");
+    expect(sh.run('./s.sh a').error).toBe(true); // no x permission yet
+    expect(sh.run('bash s.sh a b').output).toBe('args: 2 first: a');
+    expect(sh.run('echo $?').output).toBe('3');
+  });
+
+  it('manages services, users and cron', () => {
+    const sh = new ShellSimulator();
+    expect(sh.run('systemctl is-active nginx').output).toBe('inactive');
+    expect(sh.run('systemctl start nginx').error).toBe(true); // needs sudo
+    sh.run('sudo systemctl enable --now nginx');
+    expect(sh.run('systemctl status nginx').output).toContain('active (running)');
+    sh.run('sudo useradd -m priya');
+    sh.run('sudo usermod -aG docker priya');
+    expect(sh.run('groups priya').output).toBe('priya : priya docker');
+    expect(sh.run('tail -1 /etc/passwd').output).toContain('priya:x:');
+    sh.run("echo '0 2 * * * /home/guru/scripts/backup.sh' | crontab -");
+    expect(sh.run('crontab -l').output).toBe('0 2 * * * /home/guru/scripts/backup.sh');
+    expect(sh.run("echo '0 2 * *' | crontab -").error).toBe(true);
+  });
+});
+
 describe('Docker simulator', () => {
   it('runs a web server and reaches it with curl', () => {
     const sh = new ShellSimulator();

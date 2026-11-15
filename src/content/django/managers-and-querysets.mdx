@@ -1,0 +1,215 @@
+---
+id: django-managers-and-querysets
+title: Managers and QuerySets
+summary: A manager (objects) is the gateway from a model to the database; custom QuerySet methods give reusable, chainable filters like Product.objects.in_stock().cheaper_than(500), custom managers can change the default rows, and QuerySets are lazy and cached.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A library desk: the **manager** is the librarian you always go through (`Product.objects`). A **custom manager or QuerySet** is training that librarian with shortcuts: "the usual in-stock list", "only active books", so nobody repeats the same long instructions.
+
+</Analogy>
+
+## Simple explanation
+
+Every model has a default manager, `objects`, which creates QuerySets: `Product.objects.filter(...)`.
+
+**Custom QuerySet methods** (chainable, the preferred way):
+
+```python
+class ProductQuerySet(models.QuerySet):
+    def in_stock(self):
+        return self.filter(stock__gt=0)
+
+    def cheaper_than(self, amount):
+        return self.filter(price__lt=amount)
+
+class Product(models.Model):
+    ...
+    objects = ProductQuerySet.as_manager()
+```
+
+```python
+Product.objects.in_stock().cheaper_than(500).order_by("price")
+category.products.in_stock()             # also works on related managers
+```
+
+**Custom manager** that changes the default set:
+
+```python
+class ActiveProductManager(models.Manager):
+    def get_queryset(self):
+        return super().get_queryset().filter(is_active=True)
+
+class Product(models.Model):
+    objects = ProductQuerySet.as_manager()    # first manager = default (admin, related lookups)
+    active = ActiveProductManager()            # Product.active.all() → only active rows
+```
+
+Keep `objects` as the unfiltered default: Django uses the first manager for related lookups and the admin, and hiding rows there causes surprises. Common uses: soft delete (`deleted_at__isnull=True`), multi-tenant filtering, published-only content.
+
+**QuerySet behaviour to know**
+
+- **Lazy**: building `qs.filter().exclude().order_by()` runs no SQL
+- **Evaluated** by iterating, `list()`, `len()`, `bool()`, slicing with a step, `repr`
+- **Cached** after evaluation: iterating the same QuerySet twice runs one query; but `qs.filter(...)` creates a new QuerySet (new query)
+- `count()`, `exists()`, `first()` run their own small queries
+- Large results: `.iterator(chunk_size=2000)` streams without caching
+
+## Code example
+
+```python
+>>> Product.objects.count(), Product.active.count()
+>>> Product.objects.in_stock().cheaper_than(500).values_list("name", flat=True)
+
+>>> qs = Product.objects.filter(price__lt=500)
+>>> with CaptureQueriesContext(connection) as ctx:
+...     qs2 = qs.filter(stock__gt=0).order_by("price")
+>>> len(ctx)                      # building a QuerySet
+
+>>> with CaptureQueriesContext(connection) as ctx:
+...     names = [p.name for p in qs2]
+...     names_again = [p.name for p in qs2]
+>>> len(ctx)                      # iterating twice
+```
+
+```output
+(7, 6)
+<QuerySet ['Clean Code', 'Rubik Cube', 'USB Cable']>
+0
+1
+```
+
+The inactive Keyboard is hidden by `Product.active`; building QuerySets is free; the second loop used the cache.
+
+<Playground kind="none">
+
+```python
+# store/models.py: a soft-delete pattern with a custom QuerySet and manager
+from django.db import models
+from django.utils import timezone
+
+class SoftDeleteQuerySet(models.QuerySet):
+    def alive(self):
+        return self.filter(deleted_at__isnull=True)
+
+    def delete(self):                         # bulk "delete" = mark as deleted
+        return self.update(deleted_at=timezone.now())
+
+class Review(models.Model):
+    text = models.TextField()
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    objects = SoftDeleteQuerySet.as_manager()
+
+# Review.objects.alive()        → visible reviews
+# Review.objects.filter(...).delete()  → sets deleted_at instead of removing rows
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Filtering the default manager">
+
+<Wrong>
+
+```python
+class Product(models.Model):
+    objects = ActiveProductManager()      # admin and order.items' products hide inactive rows → confusing bugs
+```
+
+</Wrong>
+
+<Right>
+
+```python
+objects = ProductQuerySet.as_manager()   # default: all rows
+active = ActiveProductManager()          # explicit when you want only active
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Copy-pasting the same filters">
+
+<Wrong>
+
+```python
+Product.objects.filter(is_active=True, stock__gt=0)    # in 14 views, with small differences
+```
+
+</Wrong>
+
+<Right>
+
+```python
+Product.objects.in_stock()           # one named, tested method
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a Django manager?">
+
+The interface through which database query operations are provided to a model; `Model.objects` by default. Custom managers can add methods or override `get_queryset()` to change the base set of rows; the first manager defined is the default used by the admin and related lookups.
+
+</QA>
+
+<QA q="Custom manager methods or custom QuerySet methods?">
+
+Custom QuerySet methods, attached with `QuerySet.as_manager()` or `Manager.from_queryset()`, because they are chainable (`Product.objects.in_stock().cheaper_than(500)`) and also available on related managers; manager-only methods cannot be chained after filter().
+
+</QA>
+
+<QA q="When does a QuerySet hit the database?">
+
+When it is evaluated: iteration, list(), len(), bool() checks, repr in the shell, pickling, slicing with a step, or calling methods that return values such as get(), count(), exists(), first(), aggregate(). Evaluated QuerySets cache their results; chaining creates new, unevaluated QuerySets.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Make Product.objects.in_stock().cheaper_than(500) possible?',
+      options: ['A model method', 'A custom QuerySet with as_manager()', 'A signal', 'Middleware'],
+      answer: 1,
+      why: 'QuerySet methods chain.',
+    },
+    {
+      q: 'Does qs.filter(...).order_by(...) run SQL immediately?',
+      options: ['Yes', 'No, QuerySets are lazy', 'Only order_by', 'Only in DEBUG'],
+      answer: 1,
+      why: 'SQL runs when evaluated.',
+    },
+    {
+      q: 'Which manager does the admin use?',
+      options: ['The last one', 'The first (default) one', 'active', 'None'],
+      answer: 1,
+      why: 'Keep the default unfiltered.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Chainable filters | `class XQuerySet(models.QuerySet): def in_stock(self): ...` |
+| Attach | `objects = XQuerySet.as_manager()` |
+| Default subset | `class Active(models.Manager): def get_queryset(self): ...` |
+| Use | `Product.objects.in_stock()` · `Product.active.all()` |
+| Stream | `.iterator(chunk_size=2000)` |
+
+Lazy · cached after evaluation · first manager = default
+
+</CheatSheet>

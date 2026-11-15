@@ -1,0 +1,212 @@
+---
+id: django-static-and-media
+title: Static and media files
+summary: Static files (CSS, JS, images you ship) are collected with collectstatic into STATIC_ROOT and served by nginx, WhiteNoise or S3/CloudFront; media files (user uploads) are saved under MEDIA_ROOT or in S3 via django-storages, and Django should not serve either in production.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A restaurant has two kinds of things: the **menu cards, plates and decorations** it bought itself (static: same for everyone, prepared before opening) and the **photos customers leave on the wall** (media: arrive during the day, different every time). They are stored and handled differently.
+
+</Analogy>
+
+## Simple explanation
+
+| | Static | Media |
+| --- | --- | --- |
+| What | CSS, JS, logos, fonts you write | files users upload: avatars, product photos, invoices |
+| When | at deploy time | at runtime |
+| Settings | `STATIC_URL`, `STATICFILES_DIRS`, `STATIC_ROOT` | `MEDIA_URL`, `MEDIA_ROOT` |
+| Model field | — | `FileField`, `ImageField(upload_to="products/")` |
+| Prod serving | nginx / WhiteNoise / S3 + CloudFront | S3 (django-storages) + CloudFront, or nginx |
+
+**Static**
+
+```python
+# settings.py
+STATIC_URL = "/static/"
+STATICFILES_DIRS = [BASE_DIR / "static"]        # project-wide files (apps also have app/static/app/...)
+STATIC_ROOT = BASE_DIR / "staticfiles"          # where collectstatic copies everything
+```
+
+```html
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/site.css' %}">
+```
+
+```bash
+python manage.py collectstatic --noinput       # copies all static files (and the admin's) into STATIC_ROOT
+```
+
+In development `runserver` serves static files automatically (with DEBUG=True). In production: nginx `location /static/ { alias /app/staticfiles/; }`, or **WhiteNoise** middleware (simple, works in containers), or upload to **S3** and serve through **CloudFront**. Use hashed file names (`ManifestStaticFilesStorage`) so browsers can cache forever.
+
+**Media**
+
+```python
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+class Product(models.Model):
+    image = models.ImageField(upload_to="products/%Y/%m/", blank=True)   # needs Pillow
+```
+
+```html
+<form method="post" enctype="multipart/form-data">{% csrf_token %}{{ form.as_p }}</form>
+<img src="{{ product.image.url }}">
+```
+
+```python
+form = ProductForm(request.POST, request.FILES)       # files come in request.FILES
+```
+
+On servers with several instances or containers, local disk is not shared and disappears: store media in **S3** with `django-storages`:
+
+```python
+STORAGES = {
+    "default": {"BACKEND": "storages.backends.s3.S3Storage"},              # media → S3
+    "staticfiles": {"BACKEND": "storages.backends.s3.S3Storage"},          # optional: static → S3
+}
+AWS_STORAGE_BUCKET_NAME = "shop-media"
+AWS_S3_REGION_NAME = "ap-south-1"
+```
+
+Validate uploads (size, type), never trust the file name, and keep private files (invoices) private with signed URLs.
+
+## Code example
+
+```bash
+python manage.py collectstatic --noinput
+ls staticfiles
+```
+
+```output
+130 static files copied to '/app/staticfiles'.
+admin  css  img
+```
+
+```output
+Upload "headphones.jpg" through the product form →
+  stored at  media/products/2026/11/headphones.jpg
+  product.image.url  →  /media/products/2026/11/headphones.jpg
+  with S3 storage    →  https://shop-media.s3.ap-south-1.amazonaws.com/products/2026/11/headphones.jpg
+```
+
+<Playground kind="terminal">
+
+```bash
+mkdir -p static/css staticfiles media/products
+echo "body { font-family: sans-serif; }" > static/css/site.css
+cp -r static/css staticfiles/
+ls -R staticfiles
+touch media/products/headphones.jpg
+find media -type f
+du -sh staticfiles media
+```
+
+</Playground>
+
+The simulator copies files by hand; `collectstatic` does the same copy for every app plus the admin.
+
+<Mistakes>
+
+<Mistake title="Uploads on the container's disk">
+
+<Wrong>
+
+```text
+MEDIA_ROOT inside the container on ECS: product images vanish on every deploy, and each task has different files.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+django-storages + S3 (and CloudFront); the containers stay stateless.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Missing enctype on upload forms">
+
+<Wrong>
+
+```html
+<form method="post">{% csrf_token %}{{ form.as_p }}</form>     <!-- request.FILES is empty -->
+```
+
+</Wrong>
+
+<Right>
+
+```html
+<form method="post" enctype="multipart/form-data">{% csrf_token %}{{ form.as_p }}</form>
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between static and media files?">
+
+Static files are assets that are part of the code (CSS, JavaScript, images), gathered with collectstatic and served by a web server, WhiteNoise or a CDN. Media files are user-uploaded content saved at runtime through FileField/ImageField to MEDIA_ROOT or object storage like S3. Both should be served outside Django's view layer in production.
+
+</QA>
+
+<QA q="What does collectstatic do?">
+
+It copies static files from every app's static folder and STATICFILES_DIRS into STATIC_ROOT (or uploads them to the configured storage such as S3), optionally with hashed names for cache busting, so one location can be served by nginx, WhiteNoise or a CDN.
+
+</QA>
+
+<QA q="How do you handle file uploads in a scalable deployment?">
+
+Store them in object storage (S3 via django-storages) rather than local disk, serve through CloudFront, validate size and content type, generate unique paths, keep private files private with presigned URLs, and for large files let the browser upload directly to S3 with presigned POST URLs.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A user\'s profile photo is...',
+      options: ['Static', 'Media', 'A template', 'A migration'],
+      answer: 1,
+      why: 'Uploaded at runtime.',
+    },
+    {
+      q: 'Which command gathers static files for production?',
+      options: ['makemigrations', 'collectstatic', 'runserver', 'startapp'],
+      answer: 1,
+      why: 'Into STATIC_ROOT or S3.',
+    },
+    {
+      q: 'Upload form needs...',
+      options: ['method="get"', 'enctype="multipart/form-data"', 'csrf_exempt', 'JavaScript'],
+      answer: 1,
+      why: 'Otherwise files are not sent.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Static URL / root | `STATIC_URL = "/static/"` · `STATIC_ROOT = BASE_DIR / "staticfiles"` |
+| In templates | `{% load static %}` · `{% static 'css/site.css' %}` |
+| Gather | `python manage.py collectstatic --noinput` |
+| Serve (simple) | WhiteNoise middleware |
+| Media | `MEDIA_URL`, `MEDIA_ROOT`, `ImageField(upload_to=...)` |
+| Upload form | `enctype="multipart/form-data"` + `request.FILES` |
+| Cloud | django-storages + S3 + CloudFront |
+
+</CheatSheet>

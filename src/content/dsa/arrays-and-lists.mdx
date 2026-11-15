@@ -1,0 +1,219 @@
+---
+id: dsa-arrays-and-lists
+title: Arrays and lists
+summary: A Python list is a dynamic array; reading or writing by index and appending at the end are O(1), while inserting, deleting or searching in the middle are O(n) because items must shift or be scanned; common interview techniques are in-place updates, reversing, rotating and building results in one pass.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **row of numbered lockers**. Opening locker 37 is instant: you walk straight to it (**index access, O(1)**). Adding a new locker at the end is easy. But squeezing a new locker in at position 3 means moving every locker after it one place to the right (**insert, O(n)**). When the row is full, the school builds a longer row and moves everything over (resizing), which happens rarely enough that appending stays cheap on average.
+
+</Analogy>
+
+## Simple explanation
+
+A **list** stores references in one continuous block of memory, so position `i` is found by arithmetic.
+
+| Operation | Example | Time |
+| --- | --- | --- |
+| Read / write by index | `a[i]`, `a[i] = x` | **O(1)** |
+| Append / pop at the end | `a.append(x)`, `a.pop()` | **O(1)** amortized |
+| Insert / delete at the front or middle | `a.insert(0, x)`, `a.pop(0)`, `del a[i]` | **O(n)** |
+| Search | `x in a`, `a.index(x)` | **O(n)** |
+| Slice | `a[i:j]` | O(j − i) (copy) |
+| Sort | `a.sort()` | O(n log n) |
+| Length | `len(a)` | O(1) |
+
+Need fast adds/removes at **both ends**? Use `collections.deque`. Need fast membership tests? Use a `set`.
+
+**Interview techniques with arrays**
+
+- **One pass with variables**: max, min, running best (Kadane's algorithm for maximum subarray)
+- **In-place with a write pointer**: remove items / move zeros without a new list
+- **Reverse with two pointers**, rotate with three reversals
+- **Index as information**: when values are in 1..n, use them as positions
+- 2-D grids: `grid[row][col]`; create with `[[0] * cols for _ in range(rows)]` (not `[[0] * cols] * rows`)
+
+## Code example
+
+```python
+def move_zeros(a):
+    """Move zeros to the end in place, keeping order: O(n) time, O(1) space."""
+    write = 0
+    for x in a:
+        if x != 0:
+            a[write] = x
+            write += 1
+    for i in range(write, len(a)):
+        a[i] = 0
+    return a
+
+def max_subarray(a):
+    """Kadane: best sum of a contiguous part, O(n)."""
+    best = current = a[0]
+    for x in a[1:]:
+        current = max(x, current + x)     # extend the run or start fresh here
+        best = max(best, current)
+    return best
+
+def rotate_right(a, k):
+    """Rotate in place by k using three reversals."""
+    k %= len(a)
+    a.reverse()
+    a[:k] = reversed(a[:k])
+    a[k:] = reversed(a[k:])
+    return a
+
+print(move_zeros([0, 1, 0, 3, 12]))
+print(max_subarray([-2, 1, -3, 4, -1, 2, 1, -5, 4]))
+print(rotate_right([1, 2, 3, 4, 5, 6, 7], 3))
+
+grid = [[0] * 3 for _ in range(2)]
+grid[0][1] = 5
+print(grid)
+bad = [[0] * 3] * 2
+bad[0][1] = 5
+print(bad)          # both rows changed: they are the SAME list
+```
+
+```output
+[1, 3, 12, 0, 0]
+6
+[5, 6, 7, 1, 2, 3, 4]
+[[0, 5, 0], [0, 0, 0]]
+[[0, 5, 0], [0, 5, 0]]
+```
+
+<Playground kind="python">
+
+```python
+import time
+
+n = 50_000
+a = []
+t = time.perf_counter()
+for i in range(n):
+    a.append(i)                 # O(1) each
+print(f"append x{n}:    {time.perf_counter() - t:.4f} s")
+
+b = []
+t = time.perf_counter()
+for i in range(n):
+    b.insert(0, i)              # O(n) each: shifts everything
+print(f"insert(0) x{n}: {time.perf_counter() - t:.4f} s")
+
+# Try it: replace b with collections.deque() and use appendleft().
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Removing items while looping over the same list">
+
+<Wrong>
+
+```python
+nums = [1, 2, 2, 3]
+for x in nums:
+    if x == 2:
+        nums.remove(x)     # skips the next item → [1, 2, 3]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+nums = [x for x in nums if x != 2]     # build a new list (or loop backwards over indexes)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Using a list as a queue">
+
+<Wrong>
+
+```python
+queue = [1, 2, 3]
+first = queue.pop(0)       # O(n) every time
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from collections import deque
+queue = deque([1, 2, 3])
+first = queue.popleft()    # O(1)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Why is appending to a Python list O(1) but inserting at the front O(n)?">
+
+A list is a dynamic array. Appending writes into spare capacity at the end; when it is full, the list allocates a bigger block (about 1.125× plus a little) and copies, which is rare, so appends are amortized O(1). Inserting at index 0 must shift every existing element one position right, which is O(n).
+
+</QA>
+
+<QA q="How do you find the maximum sum of a contiguous subarray?">
+
+Kadane's algorithm: scan once keeping the best sum of a subarray ending at the current position (either extend the previous run or start fresh at this element) and the overall best. O(n) time, O(1) space.
+
+</QA>
+
+<QA q="What is the difference between an array and a linked list?">
+
+Arrays store elements contiguously, giving O(1) index access and good cache use but O(n) inserts/deletes in the middle. Linked lists store nodes with pointers, giving O(1) insert/delete once you have the node but O(n) access by position and extra memory per node.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: '`a.pop(0)` on a list of n items is...',
+      options: ['O(1)', 'O(log n)', 'O(n)', 'O(n²)'],
+      answer: 2,
+      why: 'All remaining items shift left.',
+    },
+    {
+      q: 'Correct way to create a 3×3 grid of zeros?',
+      options: ['[[0]*3]*3', '[[0]*3 for _ in range(3)]', '[0]*9', 'list(3, 3)'],
+      answer: 1,
+      why: 'The first creates 3 references to one row.',
+    },
+    {
+      q: 'Kadane’s algorithm runs in...',
+      options: ['O(n²)', 'O(n log n)', 'O(n)', 'O(1)'],
+      answer: 2,
+      why: 'Single pass.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Operation | Time |
+| --- | --- |
+| `a[i]`, `a[i] = x`, `len(a)` | O(1) |
+| `append`, `pop()` | O(1) amortized |
+| `insert(i)`, `pop(i)`, `del a[i]`, `remove(x)` | O(n) |
+| `x in a`, `index(x)`, `count(x)` | O(n) |
+| `a[i:j]` | O(j − i) |
+| `sort()` | O(n log n) |
+
+Patterns: write pointer · Kadane · reverse/rotate · grid `[[0]*c for _ in range(r)]` · deque for queues
+
+</CheatSheet>

@@ -1,0 +1,206 @@
+---
+id: django-templates
+title: Templates
+summary: Django templates render HTML with {{ variables }}, {% tags %} such as for, if, url and csrf_token, and filters such as date, floatformat and default; template inheritance with extends and block keeps layouts in one place, and output is auto-escaped against XSS.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **wedding card template** at a print shop: the design and fixed text are printed for everyone; only the blanks change: "Dear ______, you are invited on ______". The view fills the blanks (context), the template decides how it looks.
+
+</Analogy>
+
+## Simple explanation
+
+Three kinds of syntax:
+
+| Syntax | Purpose | Example |
+| --- | --- | --- |
+| `{{ ... }}` | output a variable | `{{ product.name }}`, `{{ product.category.name }}` |
+| `{% ... %}` | logic tags | `{% for %}`, `{% if %}`, `{% url %}`, `{% csrf_token %}` |
+| `\|filter` | transform a value | `{{ product.price\|floatformat:0 }}` |
+
+Dots look up attributes, dict keys, list indexes and call methods without arguments.
+
+**Useful tags**: `{% for x in list %} ... {% empty %} ... {% endfor %}`, `{% if a and not b %}`, `{% url 'store:product-detail' p.pk %}`, `{% csrf_token %}` (in every POST form), `{% include "partials/card.html" %}`, `{% with total=order.total %}`, `{% load static %}` + `{% static 'css/site.css' %}`.
+
+**Useful filters**: `date:"d M Y"`, `floatformat:2`, `default:"—"`, `length`, `pluralize`, `upper`, `title`, `truncatechars:40`, `linebreaks`, `intcomma` (humanize), `safe` (careful!).
+
+**Inheritance**: one base layout, pages fill blocks:
+
+```html
+<!-- store/templates/store/base.html -->
+<!doctype html>
+<html>
+<head><title>{% block title %}Shop{% endblock %}</title></head>
+<body>
+  <nav>{% if user.is_authenticated %}Hi {{ user.username }}{% else %}<a href="/accounts/login/">Log in</a>{% endif %}</nav>
+  {% block content %}{% endblock %}
+</body>
+</html>
+```
+
+```html
+<!-- store/templates/store/product_list.html -->
+{% extends "store/base.html" %}
+{% block title %}Products{% endblock %}
+{% block content %}
+<ul>
+{% for product in products %}
+  <li><a href="{% url 'store:product-detail' product.pk %}">{{ product.name }}</a>
+      ₹{{ product.price|floatformat:0 }}{% if product.stock == 0 %} <b>out of stock</b>{% endif %}</li>
+{% empty %}
+  <li>No products found.</li>
+{% endfor %}
+</ul>
+{% endblock %}
+```
+
+Where templates live: `app/templates/app/name.html` (the extra `app/` folder avoids name clashes) or a project-wide folder in `TEMPLATES["DIRS"]`. `user`, `request`, `messages` and `perms` are available through context processors.
+
+**Auto-escaping**: `{{ comment }}` turns `<script>` into `&lt;script&gt;`, protecting against XSS. Only use `|safe` or `mark_safe` for HTML you created yourself.
+
+Keep logic out of templates: compute values and run queries in the view.
+
+## Code example
+
+```python
+from django.template import Context, Template
+
+t = Template('{{ name|title }} has {{ items|length }} item{{ items|length|pluralize }}; '
+             '{{ bio|default:"no bio" }}; {{ html }}')
+print(t.render(Context({"name": "asha verma", "items": [1, 2], "bio": "",
+                        "html": "<script>alert(1)</script>"})))
+```
+
+```output
+Asha Verma has 2 items; no bio; &lt;script&gt;alert(1)&lt;/script&gt;
+```
+
+The script tag was escaped automatically, so it shows as text instead of running.
+
+<Playground kind="none">
+
+```html
+<!-- store/templates/store/order_detail.html -->
+{% extends "store/base.html" %}
+{% load humanize %}
+{% block title %}Order #{{ order.pk }}{% endblock %}
+{% block content %}
+  <h1>Order #{{ order.pk }} <small>{{ order.get_status_display }}</small></h1>
+  <p>Placed on {{ order.created_at|date:"d M Y, H:i" }}</p>
+  <table>
+    {% for item in order.items.all %}
+      <tr><td>{{ item.product.name }}</td><td>× {{ item.quantity }}</td><td>₹{{ item.price|intcomma }}</td></tr>
+    {% endfor %}
+  </table>
+  {% if perms.store.change_order %}<a href="{% url 'store:order-edit' order.pk %}">Edit</a>{% endif %}
+{% endblock %}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="|safe on user content">
+
+<Wrong>
+
+```html
+{{ review.text|safe }}       <!-- a review containing <script> runs in every visitor's browser -->
+```
+
+</Wrong>
+
+<Right>
+
+```html
+{{ review.text|linebreaks }} <!-- escaped, with line breaks -->
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Forgetting csrf_token">
+
+<Wrong>
+
+```html
+<form method="post">{{ form.as_p }}<button>Save</button></form>     <!-- 403 CSRF verification failed -->
+```
+
+</Wrong>
+
+<Right>
+
+```html
+<form method="post">{% csrf_token %}{{ form.as_p }}<button>Save</button></form>
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does template inheritance work?">
+
+A base template defines the page skeleton with named `{% block %}` sections; child templates start with `{% extends "base.html" %}` and override only the blocks they need (title, content, scripts), optionally including the parent's content with `{{ block.super }}`. Shared fragments can be added with `{% include %}`.
+
+</QA>
+
+<QA q="How does Django protect templates against XSS?">
+
+Variables are HTML-escaped by default, converting characters like < > & ' " to entities. Escaping is disabled only explicitly with the safe filter, mark_safe or autoescape off, which should be used only for trusted HTML; sanitize user HTML with a library like bleach if it must be allowed.
+
+</QA>
+
+<QA q="What are context processors?">
+
+Functions listed in TEMPLATES OPTIONS that add variables to every template rendered with a request, such as `user`, `request`, `messages` and `perms`; you can write your own for site-wide values like the cart count.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Loop over products in a template?',
+      options: ['{{ for p in products }}', '{% for p in products %}...{% endfor %}', '<for p in products>', '{% loop %}'],
+      answer: 1,
+      why: 'Tags use {% %}.',
+    },
+    {
+      q: 'Show a default when bio is empty?',
+      options: ['{{ bio or "none" }}', '{{ bio|default:"none" }}', '{% default bio %}', '{{ bio.none }}'],
+      answer: 1,
+      why: 'The default filter.',
+    },
+    {
+      q: 'User input with <script> is rendered with {{ text }}. Result?',
+      options: ['Script runs', 'Escaped and shown as text', 'Template error', 'Removed silently'],
+      answer: 1,
+      why: 'Auto-escaping.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Syntax |
+| --- | --- |
+| Variable | `{{ product.name }}` |
+| Filter | `{{ price\|floatformat:0 }}` · `{{ d\|date:"d M Y" }}` · `{{ x\|default:"—" }}` |
+| Loop | `{% for p in products %}...{% empty %}...{% endfor %}` |
+| If | `{% if user.is_authenticated %}...{% else %}...{% endif %}` |
+| URL | `{% url 'store:product-detail' p.pk %}` |
+| Layout | `{% extends "base.html" %}` · `{% block content %}{% endblock %}` |
+| Static | `{% load static %}` · `{% static 'css/site.css' %}` |
+| Forms | `{% csrf_token %}` |
+
+</CheatSheet>

@@ -1,0 +1,191 @@
+---
+id: linux-package-managers
+title: Installing software (apt, yum)
+summary: Package managers install, update and remove software from trusted repositories; Ubuntu and Debian use apt, Amazon Linux and RHEL use dnf or yum, Alpine uses apk.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The **Play Store** on your phone: you search an app, tap install, and it downloads from a trusted store, installs everything it needs, and later offers updates. You do not download random .exe files from websites.
+
+**apt** (Ubuntu) and **dnf/yum** (Amazon Linux) are the Play Store of a Linux server.
+
+</Analogy>
+
+## Simple explanation
+
+| Task | Ubuntu / Debian (`apt`) | Amazon Linux / RHEL (`dnf` or `yum`) | Alpine (`apk`) |
+| --- | --- | --- | --- |
+| Refresh the package list | `sudo apt update` | (automatic) `sudo dnf check-update` | `apk update` |
+| Install | `sudo apt install -y nginx` | `sudo dnf install -y nginx` | `apk add nginx` |
+| Upgrade everything | `sudo apt upgrade -y` | `sudo dnf upgrade -y` | `apk upgrade` |
+| Remove | `sudo apt remove nginx` | `sudo dnf remove nginx` | `apk del nginx` |
+| Search | `apt search redis` | `dnf search redis` | `apk search redis` |
+| Info | `apt show nginx` | `dnf info nginx` | |
+| Installed? | `apt list --installed \| grep nginx` | `dnf list installed nginx` | |
+
+Remember:
+
+- `apt update` only refreshes the **list** of available versions; `apt upgrade` actually **installs** newer versions. Run update before install
+- `-y` answers yes automatically (scripts, Dockerfiles)
+- Packages come from **repositories** listed in `/etc/apt/sources.list.d/`; dependencies are installed automatically
+- Language packages use their own managers: `pip` (Python), `npm` (Node). Use them **inside a virtualenv / project**, not with sudo
+- `snap` and manually downloaded `.deb` files (`sudo apt install ./file.deb`) also exist
+
+A typical EC2 setup for a Python web app:
+
+```bash
+sudo apt update
+sudo apt install -y python3-venv python3-pip nginx git
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+In a Dockerfile, keep it in one layer and clean up:
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends libpq5 \
+ && rm -rf /var/lib/apt/lists/*
+```
+
+## Code example
+
+```bash
+apt install nginx
+sudo apt update
+sudo apt install -y nginx
+which nginx
+```
+
+```output
+E: Could not open lock file /var/lib/dpkg/lock-frontend - open (13: Permission denied)
+E: are you root?
+Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease
+Reading package lists... Done
+Reading package lists... Done
+Setting up nginx ...
+/usr/bin/nginx
+```
+
+<Playground kind="terminal">
+
+```bash
+which nginx
+apt install nginx
+sudo apt update
+sudo apt install -y nginx htop
+which nginx
+which htop
+sudo systemctl enable --now nginx
+systemctl status nginx
+curl localhost
+```
+
+</Playground>
+
+`curl localhost` gets no answer here because the simulator's nginx has no site; on a real server you would see the nginx welcome page.
+
+<Mistakes>
+
+<Mistake title="Installing without apt update">
+
+<Wrong>
+
+```bash
+sudo apt install -y nginx    # on a fresh server: "Unable to locate package" or old 404 links
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+sudo apt update && sudo apt install -y nginx
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="sudo pip install on the system Python">
+
+<Wrong>
+
+```bash
+sudo pip install django       # "externally-managed-environment" error on new Ubuntu, or breaks system tools
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate && pip install django
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between apt update and apt upgrade?">
+
+`apt update` downloads the latest package lists from the repositories so apt knows which versions exist. `apt upgrade` installs newer versions of the packages already installed. You normally run update first, then install or upgrade.
+
+</QA>
+
+<QA q="How do you install software on Amazon Linux versus Ubuntu?">
+
+Ubuntu and Debian use apt (`sudo apt update && sudo apt install -y pkg`). Amazon Linux 2023 and RHEL-based systems use dnf (yum on older versions): `sudo dnf install -y pkg`. Package names sometimes differ (for example httpd versus apache2).
+
+</QA>
+
+<QA q="Why use a virtual environment instead of system pip?">
+
+It isolates each project's Python packages and versions, avoids breaking OS tools that depend on the system Python, needs no root, and makes the environment reproducible from requirements.txt; modern Ubuntu even blocks system-wide pip installs (PEP 668).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Package manager on Amazon Linux 2023?',
+      options: ['apt', 'dnf', 'apk', 'brew'],
+      answer: 1,
+      why: 'RHEL family: dnf (yum).',
+    },
+    {
+      q: 'Which command only refreshes the list of packages?',
+      options: ['apt upgrade', 'apt update', 'apt install', 'apt remove'],
+      answer: 1,
+      why: 'update = refresh lists; upgrade = install newer versions.',
+    },
+    {
+      q: 'Why -y in scripts?',
+      options: ['Faster download', 'Answer yes to prompts automatically', 'Install youngest version', 'Use yum'],
+      answer: 1,
+      why: 'No one is there to type Y.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | apt | dnf / yum |
+| --- | --- | --- |
+| Refresh | `sudo apt update` | `sudo dnf check-update` |
+| Install | `sudo apt install -y pkg` | `sudo dnf install -y pkg` |
+| Upgrade all | `sudo apt upgrade -y` | `sudo dnf upgrade -y` |
+| Remove | `sudo apt remove pkg` | `sudo dnf remove pkg` |
+| Search | `apt search x` | `dnf search x` |
+
+Python packages: `python3 -m venv .venv` → `pip install -r requirements.txt` (no sudo)
+
+</CheatSheet>

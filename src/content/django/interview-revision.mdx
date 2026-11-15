@@ -1,0 +1,222 @@
+---
+id: django-interview-revision
+title: Django interview revision
+summary: A one-page revision of the Django and DRF questions asked most in interviews, with short answers, scenario questions and a cheat sheet.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The night before the exam: the formula sheet and the past papers. This page is both for Django and Django REST Framework.
+
+</Analogy>
+
+## Simple explanation
+
+**The 24 answers to know**
+
+| Question | Short answer |
+| --- | --- |
+| What is Django | batteries-included framework: ORM, migrations, admin, auth, templates, security |
+| MVT | Model (data) · View (logic) · Template (HTML); URLconf + Django act as controller |
+| Project vs app | settings/root URLs vs reusable feature package in INSTALLED_APPS |
+| Request flow | server → WSGI/ASGI → middleware → URL resolver → view → response → middleware reversed |
+| null vs blank | DB allows NULL vs form allows empty |
+| FK / O2O / M2M | many→one · one↔one · many↔many (through table) |
+| on_delete | CASCADE · PROTECT · SET_NULL · SET_DEFAULT · RESTRICT · DO_NOTHING |
+| makemigrations vs migrate | write migration files vs apply them |
+| get vs filter | one object (DoesNotExist / MultipleObjectsReturned) vs QuerySet |
+| QuerySets lazy? | yes; evaluated on iteration/list/len/slice-with-step; cached |
+| Q / F | OR/AND/NOT conditions · column value in DB, atomic updates |
+| aggregate vs annotate | dict for whole set vs value per row (GROUP BY) |
+| N+1 | `select_related` (FK, JOIN) · `prefetch_related` (reverse/M2M, extra query) |
+| Managers | `objects`; custom QuerySet methods for chainable filters |
+| FBV vs CBV | explicit functions vs classes + generic views + mixins |
+| Forms | `is_valid()` → `cleaned_data`; `clean_<field>`, `clean()` |
+| Auth | User + hashed passwords, `authenticate/login/logout`, session, `@login_required` |
+| Permissions | add/change/delete/view per model, groups, `has_perm`; object level via queryset/guardian |
+| Middleware | hooks around every request; order matters (session before auth) |
+| Signals | post_save etc.; not fired by `update()`/`bulk_create()`; prefer explicit services |
+| DRF serializer | model ↔ JSON + validation (`validate_<field>`, `validate`) |
+| ViewSet + router | CRUD actions in one class + generated URLs; `@action` |
+| DRF auth vs permissions | who are you (Session/Token/JWT) vs may you (IsAuthenticated, custom) |
+| Security | CSRF token, auto-escaping, parameterised ORM, X-Frame-Options, `check --deploy` |
+
+**Scenario questions: say the steps**
+
+- "**A page is slow**": django-debug-toolbar → query count (N+1 → `select_related`/`prefetch_related`), missing indexes (`EXPLAIN`), `only()`/`values()`, pagination, caching with Redis, move heavy work to Celery
+- "**Prevent overselling stock**": `filter(pk=id, stock__gte=qty).update(stock=F("stock") - qty)` + check rows updated, or `select_for_update()` in `transaction.atomic()`, plus a CHECK constraint
+- "**Users must only see their own orders**": `get_queryset()` filtered by `request.user` (404 for others), owner set in `perform_create`, object permission class, tests for it
+- "**Send an email after an order**": Celery task with the order id, `transaction.on_commit`, retries, idempotent
+- "**Add a field to a big table**": nullable/default → deploy → backfill in batches → NOT NULL; `sqlmigrate` to review; migrate as a deploy step
+- "**Design the API for a shop**": ModelSerializers, ViewSets + router, JWT/Token auth, `IsAuthenticated` default, pagination, django-filter/search/ordering, throttling, drf-spectacular docs
+- "**Deploy it**": DEBUG off, env vars/Secrets Manager, Gunicorn behind Nginx/ALB, collectstatic → S3/CloudFront, RDS, Redis, migrations, `check --deploy`, CI tests
+
+## Code example
+
+The order flow that interviewers love, in one service function:
+
+```python
+from django.db import transaction
+from django.db.models import F
+
+class OutOfStock(Exception):
+    pass
+
+@transaction.atomic
+def place_order(user, cart: dict[int, int]) -> Order:
+    order = Order.objects.create(customer=user, status=Order.Status.PENDING)
+    products = Product.objects.in_bulk(cart.keys())                      # 1 query for all products
+    items = []
+    for product_id, qty in cart.items():
+        updated = Product.objects.filter(pk=product_id, stock__gte=qty).update(stock=F("stock") - qty)
+        if not updated:
+            raise OutOfStock(products[product_id].name)                  # rolls back everything
+        items.append(OrderItem(order=order, product=products[product_id], quantity=qty,
+                               price=products[product_id].price))
+    OrderItem.objects.bulk_create(items)                                 # 1 INSERT for all lines
+    transaction.on_commit(lambda: send_order_email.delay(order.pk))      # only if committed
+    return order
+```
+
+```output
+place_order(asha, {1: 1, 4: 2})   → Order #4 (pending); stock: Clean Code 12 → 11, USB Cable 40 → 38; email queued after commit
+place_order(asha, {2: 1})         → OutOfStock("Fluent Python"); no order row, no stock change (atomic rollback)
+```
+
+<Playground kind="sql">
+
+```sql
+CREATE TABLE product (id INTEGER PRIMARY KEY, name TEXT, stock INTEGER CHECK (stock >= 0));
+INSERT INTO product VALUES (1, 'Clean Code', 12), (2, 'Fluent Python', 0), (4, 'USB Cable', 40);
+
+-- The atomic, conditional stock update used by place_order
+UPDATE product SET stock = stock - 2 WHERE id = 4 AND stock >= 2;
+SELECT changes() AS rows_updated;          -- 1 → OK
+UPDATE product SET stock = stock - 1 WHERE id = 2 AND stock >= 1;
+SELECT changes() AS rows_updated;          -- 0 → out of stock, roll back
+SELECT * FROM product;
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Answering without trade-offs or examples">
+
+<Wrong>
+
+```text
+Q: "select_related or prefetch_related?"   A: "select_related is faster."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"select_related for forward FK/one-to-one: one JOIN. prefetch_related for reverse FK and M2M:
+ one extra IN query per relation. In my orders API I used select_related('customer') and
+ prefetch_related('items__product'), which took the list from 9 queries to 3."
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Not connecting answers to your project">
+
+<Wrong>
+
+```text
+"I know Django ORM and DRF."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"In TrendVista I built the Django backend: product and order models with PROTECT/CASCADE choices,
+ DRF ViewSets with JWT auth and per-user querysets, Celery for order emails, Redis caching for the
+ catalogue, and deployment with Gunicorn behind Nginx."
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain the Django request-response cycle.">
+
+The web server hands the request to Gunicorn/Uvicorn, which calls Django's WSGI/ASGI handler; Django builds an HttpRequest, runs middleware in order (security, sessions, CSRF, authentication), resolves the URL to a view with its parameters, the view uses models/forms/serializers/templates and returns an HttpResponse, which passes back through middleware in reverse before going to the client.
+
+</QA>
+
+<QA q="How do you optimise Django ORM performance?">
+
+Measure query counts and slow queries first, then use select_related/prefetch_related against N+1, only/defer/values to fetch less, annotate/aggregate to compute in SQL, bulk_create/bulk_update/update for batch writes, indexes and constraints in Meta, pagination, iterator() for big exports, caching for hot data, and assertNumQueries in tests to prevent regressions.
+
+</QA>
+
+<QA q="How does DRF handle authentication, permissions and throttling?">
+
+For each request APIView runs authentication classes (Session, Token, JWT) to set request.user, then permission classes (has_permission, and has_object_permission when get_object is called), then throttles; failures become 401, 403 or 429 responses. Defaults are set in REST_FRAMEWORK and can be overridden per view or action.
+
+</QA>
+
+<QA q="What are Django's main security protections?">
+
+CSRF middleware with tokens, auto-escaping in templates against XSS, parameterised ORM queries against SQL injection, clickjacking protection, strong password hashing, secure session handling, and deployment settings for HTTPS, HSTS and secure cookies checked by `manage.py check --deploy`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'order.items in a loop over orders. Fix?',
+      options: ['select_related("items")', 'prefetch_related("items")', 'only("items")', 'distinct()'],
+      answer: 1,
+      why: 'Reverse FK → prefetch.',
+    },
+    {
+      q: 'Atomic stock decrement?',
+      options: ['p.stock -= 1; p.save()', 'update(stock=F("stock") - 1)', 'A signal', 'cache.decr only'],
+      answer: 1,
+      why: 'Done by the database in one UPDATE.',
+    },
+    {
+      q: 'Signals on Product.objects.filter(...).update(...)?',
+      options: ['post_save fires', 'No save signals fire', 'pre_save only', 'm2m_changed'],
+      answer: 1,
+      why: 'update() bypasses save().',
+    },
+    {
+      q: 'User sees another user\'s order by changing the id. Name?',
+      options: ['XSS', 'CSRF', 'IDOR', 'SQL injection'],
+      answer: 2,
+      why: 'Fix with per-user querysets.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Area | Remember |
+| --- | --- |
+| Models | `ForeignKey(..., on_delete=PROTECT, related_name=...)` · `Meta.indexes/constraints` |
+| Migrations | `makemigrations` → `migrate` · `sqlmigrate` · data migrations with `RunPython` |
+| ORM | `filter/exclude/get` · `Q` · `F` · `annotate/aggregate` · `select_related/prefetch_related` |
+| Views | FBV + decorators · CBV + mixins · `get_object_or_404` |
+| Templates | `{% extends %}` · `{% url %}` · `{% csrf_token %}` · auto-escape |
+| Auth | `create_user` · `login_required` · permissions/groups · custom User early |
+| DRF | ModelSerializer · ViewSet + router · `get_queryset` · `perform_create` · permissions |
+| Perf | debug toolbar · `assertNumQueries` · Redis cache · Celery |
+| Deploy | Gunicorn + Nginx · env vars · collectstatic · RDS · `check --deploy` |
+
+</CheatSheet>

@@ -1,0 +1,216 @@
+---
+id: aws-cloudwatch
+title: CloudWatch
+summary: CloudWatch collects metrics from AWS services and your apps, stores logs in log groups you can search with Logs Insights, raises alarms that notify SNS or trigger scaling when a metric crosses a threshold, and shows dashboards; X-Ray and Application Signals add request tracing.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The **dashboard and warning lights of a car**. Metrics are the gauges (speed, fuel, temperature), logs are the trip recorder that writes down everything that happened, and alarms are the warning lights that beep when the engine is too hot for too long, so you can stop before it breaks.
+
+</Analogy>
+
+## Simple explanation
+
+**Three pillars**
+
+| Pillar | CloudWatch feature | Example |
+| --- | --- | --- |
+| **Metrics** | numbers over time, by namespace + dimensions | `AWS/EC2 CPUUtilization`, `AWS/ApplicationELB TargetResponseTime`, custom `Shop/CheckoutLatency` |
+| **Logs** | log groups → log streams → events | `/ecs/shop-api`, `/aws/lambda/order-total` |
+| **Traces** | X-Ray / Application Signals | where a slow request spent its time |
+
+**Metrics**: AWS services publish automatically (EC2 basic every 5 min, detailed every 1 min). Memory and disk on EC2 need the **CloudWatch agent**. Publish your own with `put_metric_data` or, cheaper and simpler, **Embedded Metric Format** (EMF) JSON log lines. Statistics: Average, Sum, Minimum, Maximum, SampleCount, **percentiles (p90, p99)**.
+
+**Logs**: set **retention** (default is forever = growing cost), search with **Logs Insights** queries, create **metric filters** (count `ERROR` lines → metric → alarm), subscriptions to Lambda/Firehose/OpenSearch. Log **JSON** so fields are queryable.
+
+**Alarms**: metric + statistic + period + threshold + evaluation periods (e.g. "average over 1 minute > 800 ms in 2 of 3 minutes"). States: `OK`, `ALARM`, `INSUFFICIENT_DATA`. Actions: notify **SNS**, Auto Scaling policies, EC2 actions (reboot/recover). **Composite alarms** combine alarms to reduce noise; **anomaly detection** learns normal patterns.
+
+**What to alarm on for a web app**: ALB 5xx count and p99 latency, unhealthy hosts, RDS CPU / free storage / connections, SQS age of oldest message and DLQ depth, Lambda errors and throttles, billing (Budgets).
+
+Also: dashboards, **Synthetics canaries** (scripted checks of your site), **RUM** (real user monitoring), Container Insights, Contributor Insights.
+
+## Code example
+
+```python
+import boto3, time
+
+cw = boto3.client("cloudwatch", region_name="ap-south-1")
+for v in [120, 180, 950, 1300]:
+    cw.put_metric_data(Namespace="Shop", MetricData=[{"MetricName": "CheckoutLatency", "Unit": "Milliseconds",
+                       "Value": v, "Dimensions": [{"Name": "Env", "Value": "prod"}]}])
+print("metrics:", [m["MetricName"] for m in cw.list_metrics(Namespace="Shop")["Metrics"]])
+
+cw.put_metric_alarm(AlarmName="checkout-slow", Namespace="Shop", MetricName="CheckoutLatency",
+    Dimensions=[{"Name": "Env", "Value": "prod"}], Statistic="Average", Period=60,
+    EvaluationPeriods=3, DatapointsToAlarm=2, Threshold=800, ComparisonOperator="GreaterThanThreshold",
+    TreatMissingData="notBreaching", AlarmActions=["arn:aws:sns:ap-south-1:123456789012:ops-alerts"])
+a = cw.describe_alarms(AlarmNames=["checkout-slow"])["MetricAlarms"][0]
+print("alarm:", a["AlarmName"], a["Threshold"], a["ComparisonOperator"])
+
+logs = boto3.client("logs", region_name="ap-south-1")
+logs.put_retention_policy(logGroupName="/ecs/shop-api", retentionInDays=30)
+ev = logs.filter_log_events(logGroupName="/ecs/shop-api", filterPattern="ERROR")["events"]
+print("errors:", [e["message"] for e in ev])
+```
+
+```output
+metrics: ['CheckoutLatency']
+alarm: checkout-slow 800.0 GreaterThanThreshold
+errors: ['{"level":"ERROR","path":"/payments","status":500,"ms":1210,"error":"gateway timeout"}']
+```
+
+(Run against a mock of AWS, with three JSON log lines written to the group first.) A Logs Insights query for the slowest endpoints:
+
+```text
+fields path, ms
+| filter level = "INFO" or level = "ERROR"
+| stats avg(ms) as avg_ms, pct(ms, 99) as p99, count(*) as hits by path
+| sort p99 desc
+| limit 10
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "app", "label": "App (ECS / Lambda)", "icon": "🖥️", "col": 0, "row": 1, "info": "Writes JSON logs to stdout and custom metrics (EMF).", "example": "{\"level\":\"ERROR\",\"path\":\"/payments\",\"ms\":1210}" },
+    { "id": "aws", "label": "AWS services", "icon": "☁️", "col": 0, "row": 0, "info": "ALB, RDS, SQS, Lambda publish metrics automatically.", "example": "HTTPCode_Target_5XX_Count" },
+    { "id": "logs", "label": "Log group /ecs/shop-api", "icon": "📜", "col": 1, "row": 2, "info": "Retention 30 days. Searched with Logs Insights; a metric filter counts ERROR lines.", "example": "ErrorCount metric" },
+    { "id": "metrics", "label": "Metrics", "icon": "📈", "col": 1, "row": 0, "info": "Time series by namespace and dimensions; percentiles for latency.", "example": "Shop/CheckoutLatency p99" },
+    { "id": "alarm", "label": "Alarm checkout-slow", "icon": "🚨", "col": 2, "row": 1, "info": "Average > 800 ms in 2 of 3 one-minute periods → ALARM.", "example": "OK → ALARM" },
+    { "id": "sns", "label": "SNS ops-alerts", "icon": "📣", "col": 3, "row": 0, "info": "Emails / SMS / Slack via Lambda for the on-call person.", "example": "\"checkout-slow is in ALARM\"" },
+    { "id": "asg", "label": "Auto Scaling", "icon": "📈", "col": 3, "row": 2, "info": "Alarms can also add capacity.", "example": "+2 tasks" }
+  ],
+  "edges": [
+    ["aws", "metrics"],
+    ["app", "metrics", "EMF"],
+    ["app", "logs", "stdout"],
+    ["logs", "metrics", "metric filter"],
+    ["metrics", "alarm"],
+    ["alarm", "sns", "notify"],
+    ["alarm", "asg", "scale"]
+  ],
+  "flows": [
+    {
+      "name": "Payment gateway slows down",
+      "steps": [
+        ["app", "Checkout calls take 1,200 ms; ERROR lines appear."],
+        ["metrics", "CheckoutLatency average rises above 800."],
+        ["alarm", "2 of 3 minutes breach: state ALARM."],
+        ["sns", "On-call gets a message."],
+        ["logs", "Logs Insights shows /payments errors: gateway timeout."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Logs kept forever, unstructured">
+
+<Wrong>
+
+```text
+Log groups with "Never expire" and lines like "something failed!!" → high cost, impossible to query.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Retention per group (14–90 days, archive to S3 if needed) and JSON logs with level, path, status, ms, request id.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Alarming on every blip">
+
+<Wrong>
+
+```text
+Alarm when one datapoint > threshold → pages at 3 AM for a single slow request; the team starts ignoring alarms.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+M-of-N datapoints, percentiles, composite alarms, and alarms on user impact (5xx rate, p99, queue age).
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is CloudWatch used for?">
+
+Monitoring and observability on AWS: collecting metrics from AWS services and applications, storing and querying logs, alarms that notify or take actions such as scaling, dashboards, synthetic canaries, real-user monitoring and, with X-Ray/Application Signals, distributed tracing.
+
+</QA>
+
+<QA q="How would you monitor memory usage of EC2 instances?">
+
+EC2 does not publish memory metrics by default because they come from inside the OS. Install the CloudWatch agent (configured via SSM Parameter Store) to publish memory and disk metrics, then create alarms on them.
+
+</QA>
+
+<QA q="How do you get alerted when the application logs errors?">
+
+Create a metric filter on the log group that matches error lines (e.g. level = ERROR in JSON logs) and increments a metric, then put an alarm on that metric with an SNS action; or use Logs Insights-based alarms / anomaly detection.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'EC2 memory usage needs...',
+      options: ['Nothing, it is default', 'The CloudWatch agent', 'An ALB', 'VPC Flow Logs'],
+      answer: 1,
+      why: 'Collected from inside the OS.',
+    },
+    {
+      q: 'Search many log streams with a query language?',
+      options: ['Logs Insights', 'CloudTrail', 'Route 53', 'Trusted Advisor'],
+      answer: 0,
+      why: 'fields / filter / stats / sort.',
+    },
+    {
+      q: 'Default log retention?',
+      options: ['1 day', '30 days', 'Never expire', '1 year'],
+      answer: 2,
+      why: 'Set retention yourself.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Feature |
+| --- | --- |
+| Service metrics | automatic (`AWS/EC2`, `AWS/ApplicationELB`, `AWS/RDS`, `AWS/SQS`, `AWS/Lambda`) |
+| Custom metric | `put_metric_data` · EMF log lines |
+| EC2 memory/disk | CloudWatch agent |
+| Logs | log groups · retention · JSON lines |
+| Query logs | Logs Insights |
+| Errors → alarm | metric filter + alarm |
+| Alarm | M of N datapoints · SNS / scaling actions · composite |
+| Tracing | X-Ray / Application Signals |
+| Who did what | CloudTrail (API audit, not CloudWatch) |
+
+</CheatSheet>

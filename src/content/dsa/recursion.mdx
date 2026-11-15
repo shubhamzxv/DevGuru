@@ -1,0 +1,234 @@
+---
+id: dsa-recursion
+title: Recursion
+summary: A recursive function solves a problem by calling itself on a smaller version until it reaches a base case; every call waits on the call stack, so depth costs memory, overlapping subproblems can be memoized, and trees, divide and conquer and backtracking are naturally recursive.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+**Russian nesting dolls**. To find the smallest doll, you open the doll in front of you and do the same thing to the doll inside, until you reach one that does not open (the **base case**). Then you close them back up one by one (the calls **return** in reverse order).
+
+</Analogy>
+
+## Simple explanation
+
+Every recursive function needs:
+
+1. **Base case**: the smallest input you answer directly (stops the recursion)
+2. **Recursive case**: call yourself on a **smaller** input and combine the result
+3. **Trust**: assume the call on the smaller input works (the "leap of faith")
+
+```python
+def factorial(n):
+    if n <= 1:            # base case
+        return 1
+    return n * factorial(n - 1)   # smaller problem
+```
+
+**The call stack**: each call gets a frame that waits until the inner call returns. `factorial(4)` → `factorial(3)` → `factorial(2)` → `factorial(1)` returns 1, then 2, 6, 24 come back. Depth n = **O(n) space**. Python's default limit is about **1000** frames (`RecursionError`).
+
+**Shapes of recursion**
+
+| Shape | Example | Time |
+| --- | --- | --- |
+| Linear (one call, n − 1) | factorial, sum of list, linked list | O(n) |
+| Halving (one call, n / 2) | binary search, fast power | O(log n) |
+| Divide and conquer (two calls, n / 2, then combine) | merge sort | O(n log n) |
+| Branching (two calls, n − 1 and n − 2) | naive Fibonacci | O(2ⁿ) — memoize! |
+| Tree recursion | tree height, traversals | O(n) |
+
+**Memoization**: cache results of calls with the same arguments (`functools.cache`) when subproblems repeat → this is top-down dynamic programming.
+
+Recursion vs loop: anything recursive can be written with a loop and an explicit stack; prefer recursion when the structure is recursive (trees, nested data) and the depth is small.
+
+## Code example
+
+```python
+from functools import cache
+
+def factorial(n, depth=0):
+    print("  " * depth + f"factorial({n})")
+    if n <= 1:
+        return 1
+    result = n * factorial(n - 1, depth + 1)
+    print("  " * depth + f"→ {result}")
+    return result
+
+factorial(4)
+
+def power(x, n):                 # O(log n): x^n = (x^(n/2))^2
+    if n == 0:
+        return 1
+    half = power(x, n // 2)
+    return half * half * (x if n % 2 else 1)
+
+def flatten(data):               # nested lists: naturally recursive
+    out = []
+    for item in data:
+        out.extend(flatten(item) if isinstance(item, list) else [item])
+    return out
+
+@cache
+def ways_to_climb(n):            # 1 or 2 steps at a time
+    if n <= 2:
+        return n
+    return ways_to_climb(n - 1) + ways_to_climb(n - 2)
+
+print(power(2, 10), power(3, 5))
+print(flatten([1, [2, [3, 4], 5], [[6]]]))
+print(ways_to_climb(10), ways_to_climb(50))
+
+import sys
+print("recursion limit:", sys.getrecursionlimit())
+```
+
+```output
+factorial(4)
+  factorial(3)
+    factorial(2)
+      factorial(1)
+    → 2
+  → 6
+→ 24
+1024 243
+[1, 2, 3, 4, 5, 6]
+89 20365011074
+recursion limit: 1000
+```
+
+<Playground kind="python">
+
+```python
+def sum_digits(n):
+    if n < 10:                    # base case
+        return n
+    return n % 10 + sum_digits(n // 10)
+
+def is_palindrome(s):
+    if len(s) <= 1:
+        return True
+    return s[0] == s[-1] and is_palindrome(s[1:-1])
+
+print(sum_digits(98765))          # 35
+print(is_palindrome("racecar"), is_palindrome("python"))
+
+# Try it: press "Step through" on sum_digits to watch the calls stack up and return.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="No base case (or one that is never reached)">
+
+<Wrong>
+
+```python
+def countdown(n):
+    print(n)
+    countdown(n - 1)          # never stops → RecursionError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def countdown(n):
+    if n < 0:
+        return
+    print(n)
+    countdown(n - 1)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Exponential recursion without memo">
+
+<Wrong>
+
+```python
+def fib(n):
+    return n if n < 2 else fib(n - 1) + fib(n - 2)    # fib(40) takes ages: ~2^n calls
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from functools import cache
+
+@cache
+def fib(n):
+    return n if n < 2 else fib(n - 1) + fib(n - 2)    # each n computed once: O(n)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the parts of a recursive function?">
+
+A base case that returns directly for the smallest input and stops the recursion, and a recursive case that calls the function on a smaller input and combines the result. Without a reachable base case the recursion never ends and overflows the stack.
+
+</QA>
+
+<QA q="What is the space complexity of recursion?">
+
+Each active call keeps a stack frame, so space is at least proportional to the maximum depth: O(n) for linear recursion, O(log n) for halving, O(h) for a tree of height h. Python limits depth to about 1000 by default.
+
+</QA>
+
+<QA q="When should you avoid recursion in Python?">
+
+When the depth can be large (long linked lists, deep chains) because Python has no tail-call optimisation and raises RecursionError, or when an iterative solution is equally clear. Convert to a loop with an explicit stack, or memoize when subproblems repeat.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What stops a recursion?',
+      options: ['The return type', 'A base case', 'A global variable', 'A try block'],
+      answer: 1,
+      why: 'It answers the smallest input directly.',
+    },
+    {
+      q: 'Naive recursive Fibonacci is...',
+      options: ['O(n)', 'O(n log n)', 'O(2ⁿ)', 'O(1)'],
+      answer: 2,
+      why: 'Two branches per call, repeated work.',
+    },
+    {
+      q: 'Fix repeated subproblems with...',
+      options: ['A bigger recursion limit', 'Memoization', 'Global variables', 'Sorting'],
+      answer: 1,
+      why: '@cache / lru_cache.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Base case | smallest input, return directly |
+| Recursive case | smaller input + combine |
+| Space | O(depth) stack |
+| Python limit | ~1000 (`sys.getrecursionlimit()`) |
+| Repeats | `@functools.cache` |
+| Halving | O(log n) (binary search, fast power) |
+| Two halves + merge | O(n log n) |
+| Deep input | loop + explicit stack |
+
+</CheatSheet>

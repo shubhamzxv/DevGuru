@@ -1,0 +1,243 @@
+---
+id: fastapi-routers
+title: APIRouter and project structure
+summary: APIRouter groups related endpoints in their own module with a shared prefix, tags and dependencies, and app.include_router mounts them; larger projects split code into routers, schemas, models, services and core settings.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A big hospital does not have one giant room. It has **departments**: cardiology, radiology, pharmacy, each with its own door sign (prefix), staff and rules, all under one building (the app). **APIRouter** is a department.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+# app/routers/users.py
+from fastapi import APIRouter
+
+router = APIRouter(prefix="/users", tags=["users"])
+
+@router.get("/")
+def list_users(): ...
+
+@router.get("/{user_id}")
+def get_user(user_id: int): ...
+```
+
+```python
+# app/main.py
+from fastapi import FastAPI
+from app.routers import orders, users
+
+app = FastAPI(title="Shop API")
+app.include_router(users.router)
+app.include_router(orders.router, prefix="/api/v1")    # extra prefix when mounting
+```
+
+Router options:
+
+| Option | Effect |
+| --- | --- |
+| `prefix="/users"` | every path starts with it |
+| `tags=["users"]` | groups the endpoints in `/docs` |
+| `dependencies=[Depends(get_current_user)]` | runs for every route of the router (auth for a whole section) |
+| `responses={404: {"description": "Not found"}}` | documented extra responses |
+
+**A common project layout**
+
+```text
+shop-api/
+├── app/
+│   ├── main.py              # create app, include routers, middleware
+│   ├── core/
+│   │   ├── config.py        # Settings (pydantic-settings, env vars)
+│   │   └── security.py      # password hashing, JWT
+│   ├── db.py                # engine, SessionLocal, get_db
+│   ├── models/              # SQLAlchemy tables: user.py, order.py
+│   ├── schemas/             # Pydantic In/Out models: user.py, order.py
+│   ├── services/            # business logic: order_service.py
+│   ├── routers/             # HTTP layer: users.py, orders.py, auth.py
+│   └── dependencies.py      # get_current_user, pagination
+├── tests/
+├── alembic/                 # migrations
+├── Dockerfile
+└── requirements.txt
+```
+
+The idea: **routers** handle HTTP (parse, status codes), **services** hold business rules, **models** talk to the database, **schemas** define the API contract. Run with `uvicorn app.main:app`.
+
+Versioning: mount routers under `/api/v1`; later add `/api/v2` routers without breaking old clients.
+
+## Code example
+
+```python
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
+
+users = APIRouter(prefix="/users", tags=["users"])
+
+@users.get("/")
+def list_users():
+    return [{"id": 1, "name": "Asha"}]
+
+@users.get("/{user_id}")
+def get_user(user_id: int):
+    return {"id": user_id}
+
+def verify_key(x_api_key: str | None = None):
+    if x_api_key != "secret":
+        raise HTTPException(403, "Bad key")
+
+admin = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(verify_key)])
+
+@admin.get("/stats")
+def stats():
+    return {"orders": 42}
+
+app = FastAPI()
+app.include_router(users)
+app.include_router(admin, prefix="/api/v1")
+```
+
+```output
+GET /users/                              -> 200 [{"id": 1, "name": "Asha"}]
+GET /users/7                             -> 200 {"id": 7}
+GET /api/v1/admin/stats                  -> 403 {"detail": "Bad key"}
+GET /api/v1/admin/stats?x_api_key=secret -> 200 {"orders": 42}
+```
+
+The admin check is written once on the router and protects every admin route.
+
+<Playground kind="none">
+
+```bash
+# Create the structure and run it:
+mkdir -p app/routers && touch app/__init__.py app/routers/__init__.py
+
+cat > app/routers/books.py << 'EOF'
+from fastapi import APIRouter
+
+router = APIRouter(prefix="/books", tags=["books"])
+
+@router.get("/")
+def list_books():
+    return [{"id": 1, "title": "Clean Code"}]
+EOF
+
+cat > app/main.py << 'EOF'
+from fastapi import FastAPI
+from app.routers import books
+
+app = FastAPI(title="Shop API")
+app.include_router(books.router, prefix="/api/v1")
+EOF
+
+uvicorn app.main:app --reload      # GET /api/v1/books/ ; docs grouped by tag at /docs
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Everything in one 2,000-line main.py">
+
+<Wrong>
+
+```text
+main.py: models, schemas, 60 endpoints, settings, helpers, all together.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+routers/ per area, schemas/ and models/ separate, services/ for business logic, core/config.py for settings.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Circular imports between routers and main">
+
+<Wrong>
+
+```python
+# routers/users.py
+from app.main import app        # main imports users, users imports main → ImportError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+# routers/users.py only creates `router`; main.py imports routers. Shared things live in db.py, dependencies.py, core/.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you structure a large FastAPI project?">
+
+Split by layer and feature: an `app` package with main.py (app creation, middleware, include_router), core (settings, security), db (engine and session dependency), models (SQLAlchemy), schemas (Pydantic), services (business logic), routers (one APIRouter per area with prefix and tags) and shared dependencies, plus tests and Alembic migrations.
+
+</QA>
+
+<QA q="What is APIRouter?">
+
+A mini application for grouping path operations. It supports a prefix, tags, shared dependencies and responses, and is mounted onto the main app with `include_router`, optionally under another prefix such as /api/v1.
+
+</QA>
+
+<QA q="How do you version an API in FastAPI?">
+
+Mount routers under versioned prefixes (`/api/v1`, `/api/v2`), keeping old versions until clients migrate; alternatively use headers or separate sub-applications. Shared services and models stay common while the HTTP layer changes.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Router prefix="/users" + include_router(..., prefix="/api/v1") + @router.get("/{id}") gives...',
+      options: ['/users/{id}', '/api/v1/users/{id}', '/api/v1/{id}', '/v1/{id}/users'],
+      answer: 1,
+      why: 'Prefixes stack.',
+    },
+    {
+      q: 'Protect every route in a router?',
+      options: ['Copy Depends into each', 'APIRouter(dependencies=[Depends(auth)])', 'Middleware only', 'tags=["auth"]'],
+      answer: 1,
+      why: 'Router-level dependencies.',
+    },
+    {
+      q: 'What do tags change?',
+      options: ['URLs', 'Grouping in the docs', 'Security', 'Speed'],
+      answer: 1,
+      why: 'Swagger UI sections.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Router | `router = APIRouter(prefix="/users", tags=["users"])` |
+| Route | `@router.get("/{id}")` |
+| Mount | `app.include_router(users.router, prefix="/api/v1")` |
+| Protect group | `APIRouter(dependencies=[Depends(get_current_user)])` |
+| Run package app | `uvicorn app.main:app` |
+
+Layers: routers (HTTP) → services (rules) → models (DB) · schemas (API contract) · core (settings, security)
+
+</CheatSheet>

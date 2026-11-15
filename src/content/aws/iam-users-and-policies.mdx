@@ -1,0 +1,234 @@
+---
+id: aws-iam-users-and-policies
+title: IAM users, groups and policies
+summary: IAM controls who can do what in an AWS account; identities (users, groups, roles) get permissions from JSON policies with Effect, Action, Resource and optional Condition, everything is denied by default, an explicit Deny always wins, and least privilege plus MFA are the rules.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+An office **access card system**. Every employee (user) has a card; teams (groups) get access rules ("Finance can open the records room"); each rule says **allow or deny**, **which doors** (resources) and **what action** (enter, open the safe). Doors stay locked unless a rule opens them, and a "deny" sign beats any "allow".
+
+</Analogy>
+
+## Simple explanation
+
+**Identities**
+
+| Identity | What | Use |
+| --- | --- | --- |
+| **Root user** | the email that created the account, can do everything | only for a few account tasks; MFA, no access keys |
+| **IAM user** | a person or app with long-lived credentials (password, access keys) | legacy; prefer IAM Identity Center for people |
+| **Group** | a set of users sharing policies | `developers`, `admins`, `read-only` |
+| **Role** | an identity **assumed** temporarily (next topic) | EC2, Lambda, CI, cross-account |
+
+**Policies** are JSON documents:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadWriteShopMedia",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": "arn:aws:s3:::shop-media/*",
+      "Condition": {"Bool": {"aws:SecureTransport": "true"}}
+    }
+  ]
+}
+```
+
+| Element | Meaning |
+| --- | --- |
+| `Effect` | `Allow` or `Deny` |
+| `Action` | API calls: `s3:GetObject`, `ec2:StartInstances`, `dynamodb:*` |
+| `Resource` | ARNs the actions apply to |
+| `Condition` | extra rules: IP range, MFA present, tags, time, HTTPS |
+| `Principal` | who (only in resource-based policies such as bucket policies) |
+
+**ARN** format: `arn:aws:service:region:account-id:resource` (S3 and IAM omit region/account).
+
+**Policy types**: AWS managed (`ReadOnlyAccess`, `AmazonS3ReadOnlyAccess`), customer managed (your own, reusable, versioned), inline (embedded in one identity), resource-based (bucket policy, SQS queue policy), permission boundaries and SCPs (organisation-wide guardrails).
+
+**Evaluation logic**: default **deny** → any explicit **Deny** wins → otherwise an **Allow** is needed (from the identity or resource policy, within boundaries/SCPs).
+
+Best practices: least privilege (start small, use **IAM Access Analyzer** to tighten), groups not per-user policies, **MFA** everywhere, no root access keys, rotate or avoid access keys (roles and SSO), review with the credential report.
+
+## Code example
+
+```python
+import json, boto3
+
+iam = boto3.client("iam")
+policy = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow",
+          "Action": ["s3:GetObject", "s3:PutObject"], "Resource": "arn:aws:s3:::shop-media/*"}]}
+
+p = iam.create_policy(PolicyName="ShopMediaReadWrite", PolicyDocument=json.dumps(policy))["Policy"]
+iam.create_group(GroupName="developers")
+iam.attach_group_policy(GroupName="developers", PolicyArn=p["Arn"])
+user = iam.create_user(UserName="priya")["User"]
+iam.add_user_to_group(GroupName="developers", UserName="priya")
+
+print("policy:", p["Arn"])
+print("user:", user["Arn"])
+print("groups of priya:", [g["GroupName"] for g in iam.list_groups_for_user(UserName="priya")["Groups"]])
+print("attached to developers:", [a["PolicyName"] for a in iam.list_attached_group_policies(GroupName="developers")["AttachedPolicies"]])
+```
+
+```output
+policy: arn:aws:iam::123456789012:policy/ShopMediaReadWrite
+user: arn:aws:iam::123456789012:user/priya
+groups of priya: ['developers']
+attached to developers: ['ShopMediaReadWrite']
+```
+
+Priya can now read and write objects in `shop-media`, and nothing else: no `s3:DeleteObject`, no other bucket, no EC2.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "priya", "label": "IAM user: priya", "icon": "👩‍💻", "col": 0, "row": 0, "info": "A developer. Has no policies of her own.", "example": "Signs in with password + MFA." },
+    { "id": "ravi", "label": "IAM user: ravi", "icon": "👨‍💻", "col": 0, "row": 2, "info": "Another developer in the same group.", "example": "Gets the same permissions automatically." },
+    { "id": "group", "label": "Group: developers", "icon": "👥", "col": 1, "row": 1, "info": "Permissions are attached to the group, not to each person.", "example": "Add or remove people in one place." },
+    { "id": "policy", "label": "Policy: ShopMediaReadWrite", "icon": "📜", "col": 2, "row": 1, "info": "Allow s3:GetObject and s3:PutObject on arn:aws:s3:::shop-media/*.", "example": "No DeleteObject, no other buckets." },
+    { "id": "bucket", "label": "S3: shop-media", "icon": "🪣", "col": 3, "row": 0, "info": "The resource. Requests are checked against all applicable policies.", "example": "GET products/7.jpg → allowed" },
+    { "id": "deny", "label": "Explicit Deny / default deny", "icon": "⛔", "col": 3, "row": 2, "info": "Anything not allowed is denied; an explicit Deny beats any Allow.", "example": "s3:DeleteObject → AccessDenied" }
+  ],
+  "edges": [
+    ["priya", "group", "member"],
+    ["ravi", "group", "member"],
+    ["group", "policy", "attached"],
+    ["policy", "bucket", "Allow Get/Put"],
+    ["policy", "deny", "everything else"]
+  ],
+  "flows": [
+    {
+      "name": "Priya uploads a product photo",
+      "steps": [
+        ["priya", "aws s3 cp headphones.jpg s3://shop-media/products/"],
+        ["group", "IAM collects the policies from her groups."],
+        ["policy", "s3:PutObject on shop-media/* is allowed."],
+        ["bucket", "Upload succeeds."]
+      ]
+    },
+    {
+      "name": "Priya tries to delete",
+      "steps": [
+        ["priya", "aws s3 rm s3://shop-media/products/headphones.jpg"],
+        ["policy", "No statement allows s3:DeleteObject."],
+        ["deny", "Default deny: AccessDenied."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="AdministratorAccess for everyone">
+
+<Wrong>
+
+```json
+{"Effect": "Allow", "Action": "*", "Resource": "*"}
+```
+
+</Wrong>
+
+<Right>
+
+```json
+{"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": "arn:aws:s3:::shop-media/*"}
+```
+
+</Right>
+
+Least privilege limits the damage of a leaked password or key.
+
+</Mistake>
+
+<Mistake title="Access keys in code or Git">
+
+<Wrong>
+
+```python
+boto3.client("s3", aws_access_key_id="AKIA...", aws_secret_access_key="wJal...")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+boto3.client("s3")    # credentials from an IAM role (EC2, Lambda, ECS) or SSO profile, never in code
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is IAM?">
+
+AWS Identity and Access Management: the global service that defines identities (root, users, groups, roles) and their permissions through JSON policies, and authenticates and authorises every AWS API call. It is free and central to security.
+
+</QA>
+
+<QA q="How does AWS evaluate permissions?">
+
+Everything starts as implicitly denied. AWS gathers all applicable policies (identity-based, resource-based, permission boundaries, SCPs, session policies). If any explicit Deny matches, the request is denied; otherwise it needs at least one Allow, and every boundary layer must also allow it.
+
+</QA>
+
+<QA q="What is the principle of least privilege and how do you apply it in AWS?">
+
+Granting only the permissions needed for a task. In AWS: specific actions and resource ARNs instead of wildcards, conditions where possible, roles with temporary credentials, separate roles per service, reviewing unused permissions with IAM Access Analyzer and last-accessed data, and permission boundaries or SCPs as guardrails.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A request matches an Allow and an explicit Deny. Result?',
+      options: ['Allowed', 'Denied', 'Random', 'Depends on order'],
+      answer: 1,
+      why: 'Explicit Deny always wins.',
+    },
+    {
+      q: 'Best way to give 10 developers the same permissions?',
+      options: ['Inline policy on each', 'A group with an attached policy', 'Share one user', 'Root user'],
+      answer: 1,
+      why: 'Manage permissions in one place.',
+    },
+    {
+      q: 'Which policy element lists API calls like s3:GetObject?',
+      options: ['Resource', 'Action', 'Effect', 'Principal'],
+      answer: 1,
+      why: 'Action = what can be done.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Concept | Remember |
+| --- | --- |
+| Root | MFA, no access keys, rarely used |
+| Users / groups | people (prefer IAM Identity Center); permissions on groups |
+| Policy | `Effect` · `Action` · `Resource` · `Condition` (· `Principal` in resource policies) |
+| Evaluation | default deny → explicit Deny wins → needs an Allow |
+| Types | AWS managed · customer managed · inline · resource-based · boundaries · SCPs |
+| ARN | `arn:aws:service:region:account:resource` |
+| Tools | Access Analyzer · credential report · policy simulator |
+
+</CheatSheet>

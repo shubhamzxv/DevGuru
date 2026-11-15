@@ -1,0 +1,234 @@
+---
+id: fastapi-pydantic-models
+title: Pydantic models
+summary: A Pydantic model is a class with typed fields that validates and converts data when it is created; it supports defaults, optional and nested models, and converts to dicts or JSON with model_dump and model_dump_json.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **bank form** with printed boxes: "Name", "Age (number)", "Date of birth (DD-MM-YYYY)". The clerk does not accept the form until every box has the right kind of value. A **Pydantic model** is that printed form; creating the object is the clerk checking it.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+from datetime import date
+from pydantic import BaseModel
+
+class Address(BaseModel):
+    city: str
+    pincode: str
+
+class Customer(BaseModel):
+    name: str                       # required
+    age: int                        # required, converted from "29"
+    tags: list[str] = []            # optional with default
+    address: Address | None = None  # optional nested model
+    joined: date                    # "2026-11-15" → date object
+```
+
+What happens when you create one:
+
+- **Validation**: wrong or missing values raise `ValidationError` listing **every** problem
+- **Conversion (coercion)**: `"29"` → `29`, `"2026-11-15"` → `date(2026, 11, 15)`, a dict → `Address`
+- You get a normal object: `customer.address.city`
+
+Main methods (Pydantic v2):
+
+| Method | Does |
+| --- | --- |
+| `Customer(**data)` / `Customer.model_validate(data)` | build and validate |
+| `Customer.model_validate_json(text)` | from a JSON string |
+| `c.model_dump()` | to a dict (`exclude_unset=True`, `exclude={"password"}`, `by_alias=True`) |
+| `c.model_dump_json()` | to a JSON string (dates become strings) |
+| `c.model_copy(update={...})` | a changed copy |
+| `Customer.model_json_schema()` | JSON Schema (FastAPI uses it for the docs) |
+
+Config with `model_config = ConfigDict(...)`:
+
+- `from_attributes=True`: build from ORM objects (SQLAlchemy rows), see "Response models"
+- `extra="forbid"`: reject unknown fields
+- `str_strip_whitespace=True`, `frozen=True` (immutable)
+
+In FastAPI the same model is used for the **request body**, **response model** and docs, so the contract is defined once. Pydantic v1 names (`.dict()`, `.parse_obj()`, `orm_mode`) are replaced in v2 by `model_dump()`, `model_validate()`, `from_attributes`.
+
+## Code example
+
+```python
+from datetime import date
+from pydantic import BaseModel, ValidationError
+
+class Address(BaseModel):
+    city: str
+    pincode: str
+
+class Customer(BaseModel):
+    name: str
+    age: int
+    tags: list[str] = []
+    address: Address | None = None
+    joined: date
+
+c1 = Customer(name="Asha", age="29", joined="2026-11-15",
+              address={"city": "Delhi", "pincode": "110075"})
+print(c1)
+print(c1.model_dump())
+print(c1.model_dump_json())
+
+try:
+    Customer(name="Ravi", age="twenty", joined="yesterday")
+except ValidationError as e:
+    print(e.error_count(), "errors:", [(x["loc"], x["type"]) for x in e.errors()])
+
+print(c1.model_copy(update={"age": 30}).age)
+```
+
+```output
+name='Asha' age=29 tags=[] address=Address(city='Delhi', pincode='110075') joined=datetime.date(2026, 11, 15)
+{'name': 'Asha', 'age': 29, 'tags': [], 'address': {'city': 'Delhi', 'pincode': '110075'}, 'joined': datetime.date(2026, 11, 15)}
+{"name":"Asha","age":29,"tags":[],"address":{"city":"Delhi","pincode":"110075"},"joined":"2026-11-15"}
+2 errors: [(('age',), 'int_parsing'), (('joined',), 'date_from_datetime_parsing')]
+30
+```
+
+Both errors are reported together, not one at a time.
+
+<Playground kind="python">
+
+```python
+# Pydantic runs in your browser: press Run (the first run downloads it)
+from datetime import date
+from pydantic import BaseModel, ValidationError
+
+class Customer(BaseModel):
+    name: str
+    age: int
+    joined: date
+    tags: list[str] = []
+
+c = Customer(name="Asha", age="29", joined="2026-11-15")
+print(c.age + 1, c.joined.year)
+print(c.model_dump_json())
+
+try:
+    Customer(name="Ravi", age="twenty", joined="2026-13-40")
+except ValidationError as e:
+    for err in e.errors():
+        print(err["loc"], err["msg"])
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Mutable default shared between objects?">
+
+<Wrong>
+
+```python
+# Worry: "tags: list[str] = [] shares one list like in a normal Python class"
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Customer(BaseModel):
+    tags: list[str] = []                       # fine: Pydantic copies defaults per instance
+    created: list[str] = Field(default_factory=list)   # also fine, and needed for dynamic defaults
+```
+
+</Right>
+
+Pydantic models are safe here; plain classes and function defaults are not.
+
+</Mistake>
+
+<Mistake title="Pydantic v1 code in a v2 project">
+
+<Wrong>
+
+```python
+user.dict()
+User.parse_obj(data)
+class Config: orm_mode = True
+```
+
+</Wrong>
+
+<Right>
+
+```python
+user.model_dump()
+User.model_validate(data)
+model_config = ConfigDict(from_attributes=True)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Pydantic and how does FastAPI use it?">
+
+A data validation library: you declare fields with type hints on a BaseModel subclass and it validates and converts input, raising ValidationError with all problems. FastAPI uses models to parse and validate request bodies, to filter and serialise responses (response_model), and to generate the OpenAPI/JSON Schema for the docs.
+
+</QA>
+
+<QA q="What changed between Pydantic v1 and v2?">
+
+v2 has a core written in Rust (much faster), renamed methods (`model_dump`, `model_validate`, `model_dump_json`, `model_copy`), `model_config = ConfigDict(...)` instead of the inner Config class, `from_attributes` instead of `orm_mode`, and `field_validator`/`model_validator` instead of `validator`/`root_validator`.
+
+</QA>
+
+<QA q="What is the difference between model_dump() and model_dump_json()?">
+
+`model_dump()` returns a Python dict (dates stay date objects, nested models become dicts), while `model_dump_json()` returns a JSON string with everything converted to JSON-compatible values. Both accept include, exclude, exclude_unset and by_alias.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Customer(age="29") with age: int gives...',
+      options: ['Error', 'age = 29 (int)', 'age = "29"', 'None'],
+      answer: 1,
+      why: 'Pydantic converts compatible values.',
+    },
+    {
+      q: 'Convert a model to a dict in Pydantic v2?',
+      options: ['.dict()', '.model_dump()', '.to_dict()', 'dict.model()'],
+      answer: 1,
+      why: '.dict() is the v1 name.',
+    },
+    {
+      q: 'Reject unknown fields?',
+      options: ['extra="forbid"', 'strict=None', 'frozen=True', 'orm_mode'],
+      answer: 0,
+      why: 'model_config = ConfigDict(extra="forbid").',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Model | `class X(BaseModel): name: str; age: int = 0` |
+| Optional | `note: str \| None = None` |
+| Nested | `address: Address` · `items: list[Item]` |
+| Build | `X(**d)` · `X.model_validate(d)` · `X.model_validate_json(s)` |
+| Export | `x.model_dump()` · `x.model_dump_json()` · `exclude_unset=True` |
+| Copy | `x.model_copy(update={...})` |
+| Config | `model_config = ConfigDict(from_attributes=True, extra="forbid")` |
+| Errors | `except ValidationError as e: e.errors()` |
+
+</CheatSheet>

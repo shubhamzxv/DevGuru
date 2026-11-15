@@ -1,0 +1,220 @@
+---
+id: dsa-hashing
+title: Hashing (dict and set)
+summary: Dicts and sets are hash tables that store keys by their hash, giving O(1) average lookup, insert and delete; they power the most common interview speed-ups such as two-sum, counting, grouping, deduplication and caching, as long as keys are hashable.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **coat check counter**. You hand over your coat and get token **#47**; the attendant hangs it on hook 47. To get it back, they go straight to hook 47 — no searching through every coat. The hash function turns a key (your name, a number) into a hook number. If two coats get the same hook (a **collision**), the attendant has a small rule for where the second one goes.
+
+</Analogy>
+
+## Simple explanation
+
+| Structure | Stores | Average time | Use |
+| --- | --- | --- | --- |
+| **dict** | key → value | get/set/delete/`in`: **O(1)** | counts, lookups, grouping, memo |
+| **set** | unique keys | add/remove/`in`: **O(1)** | seen-before, dedupe, set maths |
+| `Counter` | key → count | O(1) per update | frequencies, top-k with `most_common` |
+| `defaultdict(list)` | key → list | O(1) | grouping without key checks |
+
+Worst case is O(n) when many keys collide, but Python's hashing makes that rare in practice.
+
+**Hashable keys**: immutable values — `int`, `str`, `tuple` of hashables, `frozenset`. Lists, dicts and sets **cannot** be keys (use `tuple(lst)`).
+
+Dicts keep **insertion order** (Python 3.7+). Sets have no order.
+
+**The hashing pattern in interviews**: "Have I seen this before?" / "How many times?" / "What is it paired with?" → use a dict/set and turn an O(n²) search into O(n).
+
+| Problem | Hash idea |
+| --- | --- |
+| Two-sum | dict value → index; look up `target - x` |
+| Contains duplicate | set |
+| First repeated / non-repeated | Counter |
+| Group anagrams | dict sorted-letters → list |
+| Longest consecutive sequence | set, start only at sequence starts |
+| Subarray sum = k | dict of prefix sums → counts |
+| Top-k frequent | Counter + `most_common(k)` or heap |
+
+## Code example
+
+```python
+from collections import Counter
+
+def two_sum(nums, target):
+    seen = {}                                   # value -> index
+    for i, x in enumerate(nums):
+        if target - x in seen:
+            return [seen[target - x], i]
+        seen[x] = i
+    return None
+
+def longest_consecutive(nums):
+    s = set(nums)
+    best = 0
+    for x in s:
+        if x - 1 not in s:                      # only start counting at the beginning of a run
+            length = 1
+            while x + length in s:
+                length += 1
+            best = max(best, length)
+    return best
+
+def top_k_frequent(nums, k):
+    return [x for x, _ in Counter(nums).most_common(k)]
+
+print(two_sum([2, 7, 11, 15], 9))
+print(longest_consecutive([100, 4, 200, 1, 3, 2]))
+print(top_k_frequent([1, 1, 1, 2, 2, 3], 2))
+print({1, 2, 3} & {2, 3, 4}, {1, 2} | {5}, {1, 2, 3} - {2})
+
+try:
+    d = {[1, 2]: "x"}
+except TypeError as e:
+    print("TypeError:", e)
+print({(1, 2): "x"})
+```
+
+```output
+[0, 1]
+4
+[1, 2]
+{2, 3} {1, 2, 5} {1, 3}
+TypeError: unhashable type: 'list'
+{(1, 2): 'x'}
+```
+
+<Playground kind="python">
+
+```python
+import time
+
+n = 20_000
+data = list(range(n))
+as_set = set(data)
+probes = range(n - 1000, n)
+
+t = time.perf_counter()
+hits = sum(1 for p in probes if p in data)       # list: O(n) per lookup
+print(f"list lookups: {time.perf_counter() - t:.4f} s, hits={hits}")
+
+t = time.perf_counter()
+hits = sum(1 for p in probes if p in as_set)     # set: O(1) per lookup
+print(f"set lookups:  {time.perf_counter() - t:.6f} s, hits={hits}")
+
+# Try it: print(hash("apple"), hash((1, 2))) — and hash([1, 2]).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Checking a key before every update">
+
+<Wrong>
+
+```python
+counts = {}
+for w in words:
+    if w in counts:
+        counts[w] += 1
+    else:
+        counts[w] = 1
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from collections import Counter
+counts = Counter(words)             # or counts[w] = counts.get(w, 0) + 1
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Using a list as a key">
+
+<Wrong>
+
+```python
+cache[[r, c]] = value               # TypeError: unhashable type: 'list'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+cache[(r, c)] = value               # tuples are hashable
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does a hash table give O(1) lookups?">
+
+A hash function turns the key into an integer that maps to a slot in an array; lookup computes the hash and goes straight to that slot. Collisions are handled by probing (Python) or chaining. The table resizes when it gets too full, keeping the average cost constant; the worst case with many collisions is O(n).
+
+</QA>
+
+<QA q="Solve two-sum in O(n).">
+
+Walk through the array keeping a dict from value to index; for each element x check whether target − x is already in the dict, returning both indices if so, otherwise store x. One pass, O(n) time and O(n) space.
+
+</QA>
+
+<QA q="Why can't a list be a dictionary key?">
+
+Keys must be hashable, meaning their hash never changes while stored. Lists are mutable, so their contents (and hash) could change and the item would be lost in the wrong slot. Use an immutable tuple instead.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Average time of `x in my_set`?',
+      options: ['O(1)', 'O(log n)', 'O(n)', 'O(n²)'],
+      answer: 0,
+      why: 'Hash lookup.',
+    },
+    {
+      q: 'Which can be a dict key?',
+      options: ['[1, 2]', '{1, 2}', '(1, 2)', '{"a": 1}'],
+      answer: 2,
+      why: 'Tuples of hashables are hashable.',
+    },
+    {
+      q: 'Two-sum with a dict takes...',
+      options: ['O(n²)', 'O(n log n)', 'O(n)', 'O(1)'],
+      answer: 2,
+      why: 'One pass with O(1) lookups.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Tool |
+| --- | --- |
+| seen before? | `set` |
+| value → info | `dict` · `d.get(k, default)` |
+| counts | `Counter` · `most_common(k)` |
+| grouping | `defaultdict(list)` |
+| set maths | `&` `|` `-` `^` |
+| tuple key | `d[(r, c)]` |
+| Time | O(1) average · O(n) worst |
+| Keys | immutable / hashable only |
+
+</CheatSheet>

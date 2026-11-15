@@ -1,0 +1,219 @@
+---
+id: django-deployment
+title: Deployment basics (Gunicorn, Nginx, env vars)
+summary: In production Django runs under Gunicorn (WSGI) or Uvicorn (ASGI) behind Nginx or a load balancer, reads settings from environment variables, serves static files via collectstatic with Nginx, WhiteNoise or S3, runs migrations as a deploy step, and is commonly hosted on EC2, ECS or Elastic Beanstalk with RDS for the database.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Moving a home kitchen into a restaurant: you need several cooks working at once (**Gunicorn workers**), a front desk that greets guests and hands out the menu cards directly (**Nginx**: HTTPS and static files), the recipe secrets kept in a locked drawer (**environment variables**), and the pantry in a proper store room (**RDS**), not under the sink.
+
+</Analogy>
+
+## Simple explanation
+
+```text
+Browser ─HTTPS─> Nginx / ALB ──> Gunicorn (3–9 workers) ──> Django ──> PostgreSQL (RDS)
+                   │                                          └──> Redis (cache, Celery broker)
+                   └── /static/  served directly (or S3 + CloudFront)
+```
+
+**1. Settings from the environment** (`DEBUG=False`, `SECRET_KEY`, `ALLOWED_HOSTS`, `DATABASE_URL`, secure cookies): see Settings and Security.
+
+**2. Gunicorn**
+
+```bash
+pip install gunicorn
+gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 3 --timeout 60 --access-logfile -
+```
+
+Workers ≈ `2 × CPU cores + 1`. For async views or websockets: `uvicorn config.asgi:application` or Gunicorn with Uvicorn workers.
+
+**3. Static files**
+
+```bash
+python manage.py collectstatic --noinput
+```
+
+**4. Nginx** in front:
+
+```text
+server {
+    listen 80;
+    server_name shop.example.com;
+    location /static/ { alias /home/deploy/shop/staticfiles/; }
+    location /media/  { alias /home/deploy/shop/media/; }
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+HTTPS with Let's Encrypt (`certbot --nginx`) or at the AWS load balancer (ACM certificate).
+
+**5. Keep it running**: a systemd unit for Gunicorn (`Restart=always`, see Linux → Services), or a container with a restart policy / orchestrator.
+
+**6. Deploy steps**, in order: pull code / new image → install requirements → `migrate` (once) → `collectstatic` → restart Gunicorn (graceful: `systemctl reload` sends HUP) → health check.
+
+**Where on AWS**
+
+| Option | Notes |
+| --- | --- |
+| EC2 + Nginx + Gunicorn + systemd | classic, full control |
+| **ECS Fargate** + ALB (Docker image) | containers, autoscaling, workers as a second service |
+| Elastic Beanstalk | managed EC2 with Django platform |
+| App Runner | simplest container hosting |
+| Database | **RDS PostgreSQL** (Multi-AZ, backups), media on **S3**, Redis on **ElastiCache**, secrets in **Secrets Manager** |
+
+## Code example
+
+```bash
+DJANGO_SETTINGS_MODULE=config.settings.prod python manage.py check --deploy
+python manage.py migrate --noinput
+python manage.py collectstatic --noinput
+gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 3
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/products/health/
+```
+
+```output
+System check identified no issues (0 silenced).
+Operations to perform:
+  Apply all migrations: admin, auth, authtoken, contenttypes, sessions, store
+Running migrations:
+  No migrations to apply.
+130 static files copied to '/home/deploy/shop/staticfiles'.
+[INFO] Starting gunicorn 23.0.0
+[INFO] Listening at: http://127.0.0.1:8000 (4211)
+[INFO] Booting worker with pid: 4212
+[INFO] Booting worker with pid: 4213
+[INFO] Booting worker with pid: 4214
+200
+```
+
+<Playground kind="terminal">
+
+```bash
+cat /etc/nginx/nginx.conf
+sudo systemctl enable --now nginx
+systemctl status shop-api
+journalctl -u shop-api -n 5
+ss -tulpn
+cd ~/app && cat Dockerfile
+docker build -t shop:1.0 .
+docker run -d --name web -p 8000:8000 -e DJANGO_DEBUG=false shop:1.0
+curl localhost:8000
+```
+
+</Playground>
+
+Both styles in one session: nginx + a systemd-managed app server, and the same app as a container.
+
+<Mistakes>
+
+<Mistake title="runserver or DEBUG=True in production">
+
+<Wrong>
+
+```bash
+DEBUG=True python manage.py runserver 0.0.0.0:80
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 3    # behind nginx, DEBUG=False
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Missing proxy headers behind a load balancer">
+
+<Wrong>
+
+```text
+SECURE_SSL_REDIRECT=True behind an ALB that talks HTTP to the app → infinite redirect loop;
+request.is_secure() is always False.
+```
+
+</Wrong>
+
+<Right>
+
+```python
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True   # if the proxy sets it
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you deploy a Django application?">
+
+Configure production settings from environment variables (DEBUG off, secrets, allowed hosts, secure cookies), run it with Gunicorn (or Uvicorn for ASGI) managed by systemd or a container platform, put Nginx or a load balancer in front for HTTPS and static files, collect static files to Nginx/WhiteNoise/S3, use a managed database like RDS, run migrations as a deploy step, and add logging, monitoring and health checks.
+
+</QA>
+
+<QA q="Why put Nginx in front of Gunicorn?">
+
+Nginx efficiently handles many slow client connections, TLS termination, buffering, compression, serving static and media files and simple rate limiting, so Gunicorn workers spend their time only on Python requests; Gunicorn is not designed to face the internet directly.
+
+</QA>
+
+<QA q="How many Gunicorn workers should you run?">
+
+A common starting point is 2 × CPU cores + 1 sync workers, then tune by measuring memory per worker and latency; I/O-heavy apps may use threads (gthread) or async workers, and in containers the orchestrator can scale replicas instead of adding workers.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which runs Django in production (WSGI)?',
+      options: ['runserver', 'Gunicorn', 'Celery', 'collectstatic'],
+      answer: 1,
+      why: 'runserver is development only.',
+    },
+    {
+      q: 'Who should serve /static/?',
+      options: ['Django views', 'Nginx / WhiteNoise / S3', 'Celery', 'The database'],
+      answer: 1,
+      why: 'Keep workers free for Python requests.',
+    },
+    {
+      q: 'Starting worker count for 2 cores?',
+      options: ['1', '5', '50', '200'],
+      answer: 1,
+      why: '2 × 2 + 1 = 5.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | Command / setting |
+| --- | --- |
+| Check | `python manage.py check --deploy` |
+| Migrate | `python manage.py migrate --noinput` |
+| Static | `python manage.py collectstatic --noinput` |
+| App server | `gunicorn config.wsgi:application -b 127.0.0.1:8000 -w 3` |
+| ASGI | `uvicorn config.asgi:application` |
+| Proxy | Nginx `proxy_pass` + `X-Forwarded-Proto` |
+| Behind LB | `SECURE_PROXY_SSL_HEADER` |
+| AWS | EC2 · ECS Fargate · Beanstalk + RDS + S3 + ElastiCache |
+
+</CheatSheet>

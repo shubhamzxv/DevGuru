@@ -1,0 +1,171 @@
+---
+id: linux-viewing-files
+title: Viewing files (cat, less, head, tail)
+summary: cat prints a whole file, less lets you scroll and search a big one, head and tail show the first or last lines, and tail -f follows a log as new lines are written.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Reading a newspaper: **cat** spreads every page on the floor at once. **less** lets you turn the pages one by one and search. **head** reads only the headline section; **tail** reads the last page. **tail -f** is a live ticker: new news appears as it happens.
+
+</Analogy>
+
+## Simple explanation
+
+| Command | Use |
+| --- | --- |
+| `cat file` | print the whole file (small files) |
+| `cat -n file` | with line numbers |
+| `cat a b > c` | join files |
+| `less file` | scroll a big file: arrows/space to move, `/word` search, `n` next, `G` end, `q` quit |
+| `head file` | first 10 lines; `head -n 20 file` or `head -20` |
+| `tail file` | last 10 lines; `tail -n 50 file` |
+| `tail -f app.log` | keep printing new lines as they arrive (Ctrl+C to stop) |
+| `tail -F app.log` | like -f but survives log rotation |
+| `wc -l file` | count lines |
+
+On servers you will type `tail -f` all the time while reproducing a bug: one terminal follows the log, another sends the request.
+
+Combine with other tools:
+
+```bash
+tail -n 100 /var/log/nginx/access.log | grep " 500 "
+head -1 data.csv                 # just the header row
+journalctl -u shop-api -f        # tail -f for systemd services
+```
+
+Do not `cat` a 2 GB log: it floods the terminal. Use `less`, `tail` or `grep`.
+
+## Code example
+
+```bash
+head -3 logs/app.log
+tail -2 logs/app.log
+wc -l logs/app.log
+```
+
+```output
+2026-11-15 09:00:01 INFO  Server started on port 8000
+2026-11-15 09:00:05 INFO  GET / 200 12ms
+2026-11-15 09:01:10 WARN  Slow query: 950ms
+2026-11-15 09:05:17 ERROR Payment service timeout
+2026-11-15 09:06:00 INFO  GET /health 200 2ms
+7 logs/app.log
+```
+
+<Playground kind="terminal">
+
+```bash
+cat notes.txt
+cat -n notes.txt
+head -3 logs/app.log
+tail -2 logs/app.log
+tail -n 3 logs/access.log
+wc -l logs/access.log
+tail -f logs/app.log
+less logs/access.log
+```
+
+</Playground>
+
+In a real terminal `tail -f` and `less` keep the screen until you press Ctrl+C or q; the simulator prints and returns.
+
+<Mistakes>
+
+<Mistake title="cat on a huge file">
+
+<Wrong>
+
+```bash
+cat /var/log/nginx/access.log      # millions of lines scroll past
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+tail -n 200 /var/log/nginx/access.log
+less /var/log/nginx/access.log
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Useless use of cat">
+
+<Wrong>
+
+```bash
+cat app.log | grep ERROR | wc -l
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+grep -c ERROR app.log
+```
+
+</Right>
+
+Most tools read files directly; it works either way, but shorter is clearer.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you watch a log file in real time?">
+
+`tail -f /path/to/log` (or `tail -F` to keep following across log rotation), often combined with grep, for example `tail -f app.log | grep ERROR`. For systemd services, `journalctl -u <service> -f`.
+
+</QA>
+
+<QA q="How do you view a very large file?">
+
+With `less`, which loads it page by page and supports searching with `/`, or by looking at parts with `head`, `tail`, `sed -n '1000,1100p'` or filtering with `grep`, instead of printing it all with cat.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Show the last 50 lines of app.log?',
+      options: ['head -50 app.log', 'tail -n 50 app.log', 'cat -50 app.log', 'less -50'],
+      answer: 1,
+      why: 'tail shows the end of a file.',
+    },
+    {
+      q: 'Follow new log lines live?',
+      options: ['tail -f', 'head -f', 'cat -f', 'less -n'],
+      answer: 0,
+      why: '-f = follow.',
+    },
+    {
+      q: 'In less, how do you search for "timeout"?',
+      options: ['Ctrl+F timeout', '/timeout', 'grep timeout', ':find timeout'],
+      answer: 1,
+      why: '/ starts a search, n jumps to the next hit.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Command |
+| --- | --- |
+| Whole small file | `cat f` · `cat -n f` |
+| Scroll big file | `less f` (`/word`, `n`, `G`, `q`) |
+| Start / end | `head -n 20 f` · `tail -n 50 f` |
+| Live log | `tail -f f` · `tail -F f` |
+| Service log | `journalctl -u name -f` |
+| Count lines | `wc -l f` |
+
+</CheatSheet>

@@ -1,0 +1,193 @@
+---
+id: linux-networking-commands
+title: Networking (curl, ping, ports)
+summary: ping checks that a host answers, curl sends HTTP requests, ss shows which ports are listening, ip shows addresses, and dig or nslookup check DNS; together they debug "the site is not reachable".
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+When a parcel does not arrive, you check step by step: is the address right (**DNS**)? Is the road open (**ping**)? Is the shop's door open (**port listening**)? Does the shop answer when you knock (**curl**)? Each command checks one link of the chain.
+
+</Analogy>
+
+## Simple explanation
+
+| Command | Checks | Example |
+| --- | --- | --- |
+| `ip a` (or `ifconfig`) | this machine's IP addresses | `ip a` |
+| `ping host` | the host answers (ICMP) | `ping -c 3 google.com` |
+| `dig host` / `nslookup host` | DNS: name → IP | `dig +short api.shop.com` |
+| `curl URL` | HTTP request and response | `curl -i localhost:8000/health` |
+| `ss -tulpn` (or `netstat -tulpn`) | which ports are listening, by which process | `sudo ss -tulpn` |
+| `nc -zv host port` | can I open a TCP connection to that port? | `nc -zv db.internal 5432` |
+| `traceroute host` | the route hop by hop | |
+| `wget URL` | download a file | |
+
+**curl** in depth (you will use it constantly to test APIs):
+
+```bash
+curl localhost:8000                          # GET, prints the body
+curl -i localhost:8000/health                # include response headers
+curl -I https://shop.com                     # headers only (HEAD)
+curl -X POST localhost:8000/orders \
+     -H "Content-Type: application/json" \
+     -d '{"product_id": 7, "qty": 2}'
+curl -H "Authorization: Bearer $TOKEN" localhost:8000/me
+curl -L http://shop.com                      # follow redirects
+curl -o page.html https://shop.com           # save to file
+curl -s -w "%{http_code} %{time_total}\n" -o /dev/null https://shop.com   # status and timing
+```
+
+**Ports**: a service **listens** on a port. In `ss` output, `0.0.0.0:8000` means reachable from any network; `127.0.0.1:8000` means **only from this machine** (behind nginx, that is what you want).
+
+Debugging "site not reachable", in order:
+
+1. DNS: `dig +short shop.com` gives the right IP?
+2. Network: `ping` the server (some clouds block ICMP, so also try 3)
+3. Port: on the server `sudo ss -tulpn | grep :80`; from outside `nc -zv server 80`
+4. Firewall: security group / `ufw status` allows the port?
+5. App: `curl -i localhost:8000` on the server, then check logs
+
+## Code example
+
+```bash
+ip a
+ss -tulpn
+curl -i localhost:8000
+```
+
+```output
+2: eth0: <BROADCAST,MULTICAST,UP> mtu 1500
+    inet 172.31.5.20/20 brd 172.31.15.255 scope global eth0
+Netid State  Local Address:Port   Process
+tcp   LISTEN 0.0.0.0:22           users:(("sshd"))
+tcp   LISTEN 0.0.0.0:8000         users:(("gunicorn"))
+tcp   LISTEN 127.0.0.1:9000       users:(("python3"))
+curl: (7) Failed to connect to localhost port 8000: Connection refused
+```
+
+<Playground kind="terminal">
+
+```bash
+ip a
+ping -c 2 google.com
+ss -tulpn
+sudo systemctl start nginx
+ss -tulpn
+docker run -d --name web -p 8080:80 nginx
+ss -tulpn
+curl localhost:8080
+curl -i localhost:8080
+curl localhost:5000
+wget https://example.com/file.zip
+```
+
+</Playground>
+
+After starting nginx and a container, `ss` shows ports 80 and 8080 listening. Nothing listens on 5000, so curl is refused.
+
+<Mistakes>
+
+<Mistake title="Assuming ping failure means the server is down">
+
+<Wrong>
+
+```text
+ping times out, so "the EC2 instance is dead".
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Many security groups block ICMP. Test the real port: nc -zv server 443 or curl -I https://server
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="App listening on 127.0.0.1 when it must be reachable">
+
+<Wrong>
+
+```bash
+python3 manage.py runserver          # 127.0.0.1:8000: other machines cannot reach it
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+python3 manage.py runserver 0.0.0.0:8000     # or keep 127.0.0.1 and put nginx in front
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you check which process is using a port?">
+
+`sudo ss -tulpn | grep :8000` (or `sudo lsof -i :8000`, or the older `netstat -tulpn`). It shows the listening address, port and the process name and PID.
+
+</QA>
+
+<QA q="A website is not reachable. How do you troubleshoot?">
+
+Work through the layers: resolve DNS (`dig`), check basic reachability (`ping`, `traceroute`), check the port is open from outside (`nc -zv` or `curl -v`), check firewalls and security groups, then on the server check the service is listening on the right address (`ss -tulpn`), test locally with `curl localhost`, and read the web server and application logs.
+
+</QA>
+
+<QA q="How do you send a POST request with JSON using curl?">
+
+`curl -X POST https://api/x -H "Content-Type: application/json" -d '{"key": "value"}'`, adding `-H "Authorization: Bearer <token>"` for authenticated APIs and `-i` or `-v` to see response headers.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command lists listening ports?',
+      options: ['ping', 'ss -tulpn', 'curl', 'dig'],
+      answer: 1,
+      why: 'ss shows sockets; -l listening, -p process.',
+    },
+    {
+      q: '127.0.0.1:8000 in ss means...',
+      options: ['Open to the internet', 'Only reachable from this machine', 'Port closed', 'IPv6 only'],
+      answer: 1,
+      why: 'Loopback address.',
+    },
+    {
+      q: 'Show response headers with curl?',
+      options: ['curl -h', 'curl -i', 'curl -o', 'curl -d'],
+      answer: 1,
+      why: '-i includes headers; -I fetches headers only.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Command |
+| --- | --- |
+| My IP | `ip a` |
+| Host answers? | `ping -c 3 host` |
+| DNS | `dig +short host` · `nslookup host` |
+| Port open? | `nc -zv host 443` |
+| Who listens | `sudo ss -tulpn` |
+| HTTP | `curl -i url` · `-I` · `-L` · `-o file` |
+| POST JSON | `curl -X POST url -H "Content-Type: application/json" -d '{...}'` |
+| Status code only | `curl -s -o /dev/null -w "%{http_code}" url` |
+| Download | `wget url` · `curl -O url` |
+
+</CheatSheet>

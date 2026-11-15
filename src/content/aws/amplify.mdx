@@ -1,0 +1,230 @@
+---
+id: aws-amplify
+title: Amplify Hosting
+summary: AWS Amplify Hosting connects to a Git repository and builds and deploys a frontend (React, Vite, Next.js) on every push, serving it through a managed CDN with HTTPS, custom domains, branch environments, pull-request previews, redirects and environment variables, with no S3 or CloudFront setup of your own.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **printing press with a delivery service included**. You hand over your manuscript (Git repository) once. Every time you edit it (push), the press prints a new edition (build) and delivers it to every bookshop in the world (CDN). Draft chapters (other branches, pull requests) get their own preview copies for reviewers.
+
+</Analogy>
+
+## Simple explanation
+
+**What Amplify Hosting does for you**
+
+| Feature | Detail |
+| --- | --- |
+| CI/CD | connect GitHub/GitLab/Bitbucket/CodeCommit; build on push |
+| Hosting | global CDN, HTTPS, atomic deploys, instant rollback to a previous build |
+| Branches | `main` → production, `dev` → `dev.xxxx.amplifyapp.com` |
+| PR previews | a temporary URL per pull request |
+| Custom domain | `shop.example.com` with a free certificate (Route 53 or other DNS) |
+| Rewrites/redirects | SPA fallback, `www` → apex, `/old` → `/new` |
+| Env variables | per branch, e.g. `VITE_API_URL` |
+| SSR | Next.js server rendering supported |
+| Access control | password-protect a branch |
+
+**Build settings** live in `amplify.yml` (or the console):
+
+```yaml
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci
+    build:
+      commands:
+        - npm run build
+  artifacts:
+    baseDirectory: dist
+    files:
+      - "**/*"
+  cache:
+    paths:
+      - node_modules/**/*
+```
+
+**SPA rewrite** (React Router): source `</^[^.]+$|\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp)$)([^.]+$)/>` → target `/index.html`, type `200 (Rewrite)`.
+
+**Amplify Hosting vs S3 + CloudFront**
+
+| | Amplify Hosting | S3 + CloudFront (DIY) |
+| --- | --- | --- |
+| Setup | minutes | more steps (bucket, OAC, distribution, cert, CI) |
+| CI/CD, previews | built in | build yourself (GitHub Actions) |
+| Control | less (headers via custom headers file) | full (behaviors, WAF, functions, policies) |
+| Cost | build minutes + hosting | usually very low |
+
+The wider "Amplify" also has a backend framework (Gen 2: auth with Cognito, data with AppSync/DynamoDB, storage) and UI libraries; Hosting can be used alone.
+
+## Code example
+
+```bash
+# Create an app connected to GitHub and deploy the main branch (one-time; the console wizard does the same)
+aws amplify create-app --name shop-frontend --repository https://github.com/shubham/shop-frontend \
+  --access-token "$GITHUB_TOKEN" --platform WEB
+aws amplify create-branch --app-id d1a2b3c4d5e6f7 --branch-name main --stage PRODUCTION
+aws amplify start-job --app-id d1a2b3c4d5e6f7 --branch-name main --job-type RELEASE
+aws amplify list-jobs --app-id d1a2b3c4d5e6f7 --branch-name main --max-items 1 \
+  --query "jobSummaries[0].{id:jobId,status:status,commit:commitId}"
+```
+
+```output
+{
+    "id": "1",
+    "status": "SUCCEED",
+    "commit": "7c8d9e0"
+}
+```
+
+The site is live at `https://main.d1a2b3c4d5e6f7.amplifyapp.com`; after that, every `git push` to `main` starts a new job automatically.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "dev", "label": "Developer", "icon": "🧑‍💻", "col": 0, "row": 1, "info": "Pushes to GitHub or opens a pull request.", "example": "git push origin main" },
+    { "id": "gh", "label": "GitHub repo", "icon": "🐙", "col": 1, "row": 1, "info": "Amplify is connected through a GitHub App and gets a webhook on every push.", "example": "shop-frontend" },
+    { "id": "build", "label": "Amplify build", "icon": "🛠️", "col": 2, "row": 0, "info": "Runs amplify.yml: npm ci, npm run build; env vars per branch.", "example": "VITE_API_URL=https://api.shop.example.com" },
+    { "id": "preview", "label": "PR preview", "icon": "👀", "col": 2, "row": 2, "info": "Each pull request gets its own URL for review; removed when merged/closed.", "example": "pr-12.d1a2b3c4d5e6f7.amplifyapp.com" },
+    { "id": "cdn", "label": "Amplify CDN + HTTPS", "icon": "🌍", "col": 3, "row": 1, "info": "Atomic deploy: users switch to the new build at once; roll back with one click.", "example": "shop.example.com" }
+  ],
+  "edges": [
+    ["dev", "gh", "push / PR"],
+    ["gh", "build", "webhook"],
+    ["gh", "preview", "PR"],
+    ["build", "cdn", "deploy"]
+  ],
+  "flows": [
+    {
+      "name": "Release",
+      "steps": [
+        ["dev", "Merge a feature into main."],
+        ["gh", "GitHub notifies Amplify."],
+        ["build", "Install, build, upload dist/."],
+        ["cdn", "New version live worldwide in a few minutes."]
+      ]
+    },
+    {
+      "name": "Review a change",
+      "steps": [
+        ["dev", "Open pull request #12."],
+        ["preview", "Reviewers test it at its own URL before merging."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Wrong output folder">
+
+<Wrong>
+
+```yaml
+artifacts:
+  baseDirectory: build      # Vite outputs to dist/ → deploy succeeds but shows an error page
+```
+
+</Wrong>
+
+<Right>
+
+```yaml
+artifacts:
+  baseDirectory: dist       # match your tool: Vite dist/, Create React App build/, Next.js .next
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Secrets in frontend environment variables">
+
+<Wrong>
+
+```text
+VITE_STRIPE_SECRET_KEY=sk_live_... → bundled into public JavaScript for everyone to read.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Only public values (API URL, publishable keys) in frontend env vars; secrets stay on the backend.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is AWS Amplify Hosting?">
+
+A managed service that connects to a Git repository, builds a web frontend on each push using build settings, and serves it from a global CDN with HTTPS, custom domains, branch deployments, pull-request previews, redirects, environment variables and rollbacks, including SSR support for frameworks like Next.js.
+
+</QA>
+
+<QA q="When would you choose S3 + CloudFront instead of Amplify Hosting?">
+
+When you need full control over CloudFront behaviors, cache policies, WAF, edge functions, multiple origins or infrastructure defined in your own IaC and CI pipeline, or want to minimise cost at scale. Amplify is faster to set up and includes CI/CD and previews.
+
+</QA>
+
+<QA q="How do you make client-side routes work on a static host?">
+
+Configure a rewrite so any path that is not a real file returns index.html with status 200 (Amplify rewrite rule, or CloudFront custom error responses / a CloudFront Function), letting the SPA router handle the URL.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where are Amplify build commands defined?',
+      options: ['package.json only', 'amplify.yml', 'Route 53', 'IAM'],
+      answer: 1,
+      why: 'Or the console build settings.',
+    },
+    {
+      q: 'A URL to review each pull request?',
+      options: ['PR previews', 'Read replicas', 'Snapshots', 'Invalidations'],
+      answer: 0,
+      why: 'Built into Amplify Hosting.',
+    },
+    {
+      q: 'Which is safe in a frontend env variable?',
+      options: ['Database password', 'Public API URL', 'AWS secret key', 'Stripe secret key'],
+      answer: 1,
+      why: 'Everything in the bundle is public.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | How |
+| --- | --- |
+| Connect repo | console wizard / `aws amplify create-app` |
+| Build config | `amplify.yml` (preBuild, build, artifacts.baseDirectory) |
+| Vite output | `dist` |
+| Branch env | `create-branch` + env vars per branch |
+| PR previews | enable in app settings |
+| Domain | custom domain + automatic certificate |
+| SPA | rewrite → `/index.html` (200) |
+| Roll back | redeploy an earlier build |
+
+</CheatSheet>

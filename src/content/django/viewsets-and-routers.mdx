@@ -1,0 +1,196 @@
+---
+id: django-viewsets-and-routers
+title: ViewSets and routers
+summary: A ViewSet groups the list, create, retrieve, update, partial_update and destroy actions for one resource in a single class, and a router generates all the URL patterns for it; @action adds custom endpoints such as POST /products/7/restock/.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **department store counter** that handles everything about one product family: show all, show one, add, change, remove, plus "restock". The **router** is the signboard that automatically lists all those services with the right door numbers, so you do not paint each sign by hand.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+from rest_framework import viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+class ProductViewSet(viewsets.ModelViewSet):
+    queryset = Product.objects.select_related("category").order_by("id")
+    serializer_class = ProductSerializer
+    permission_classes = [IsAdminOrReadOnly]
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
+    def restock(self, request, pk=None):
+        product = self.get_object()                     # 404 + permission checks included
+        product.stock += int(request.data.get("amount", 10))
+        product.save(update_fields=["stock"])
+        return Response({"id": product.id, "stock": product.stock})
+
+class OrderViewSet(viewsets.ReadOnlyModelViewSet):      # list + retrieve only
+    serializer_class = OrderSerializer
+    permission_classes = [permissions.IsAuthenticated, IsOwnerOrStaff]
+
+    def get_queryset(self):
+        qs = Order.objects.select_related("customer").prefetch_related("items__product")
+        return qs if self.request.user.is_staff else qs.filter(customer=self.request.user)
+```
+
+```python
+from rest_framework.routers import DefaultRouter
+
+router = DefaultRouter()
+router.register("products", ProductViewSet, basename="product")
+router.register("orders", OrderViewSet, basename="order")
+urlpatterns = [path("api/", include(router.urls))]
+```
+
+Generated routes:
+
+| URL | GET | POST | PUT / PATCH | DELETE |
+| --- | --- | --- | --- | --- |
+| `/api/products/` | list | create | | |
+| `/api/products/{pk}/` | retrieve | | update / partial_update | destroy |
+| `/api/products/{pk}/restock/` | | restock (`@action(detail=True)`) | | |
+| `/api/` | API root (DefaultRouter) | | | |
+
+ViewSet types: `ModelViewSet` (all six actions), `ReadOnlyModelViewSet` (list, retrieve), `GenericViewSet` + chosen mixins, `ViewSet` (write each action yourself).
+
+`self.action` tells you which action is running, handy for `get_serializer_class()` or `get_permissions()`. `@action(detail=False)` makes collection-level endpoints like `/products/featured/`.
+
+**Generic views vs ViewSets**: ViewSets + routers mean less code and consistent URLs for standard resources; generic views are clearer for one-off endpoints.
+
+## Code example
+
+```output
+GET    /api/products/                          → 200 {"count": 7, "next": ".../api/products/?page=2", "results": [3 products]}
+POST   /api/products/  (anonymous)             → 401 {"detail": "Authentication credentials were not provided."}
+POST   /api/products/  (admin token)           → 201 {"id": 8, "name": "Mouse", "price": "399.00", ...}
+PATCH  /api/products/8/ {"price": "349"}       → 200 price "349.00"
+POST   /api/products/8/restock/ {"amount": 20} → 200 {"id": 8, "stock": 25}
+DELETE /api/products/8/                        → 204
+GET    /api/orders/  (asha's token)            → 200 {"count": 2, ...} only her orders
+GET    /api/orders/3/ (asha asks for ravi's)   → 404 {"detail": "No Order matches the given query."}
+
+router.urls includes: ^products/$  ^products/(?P<pk>[^/.]+)/$  ^products/(?P<pk>[^/.]+)/restock/$  ^orders/$  ^orders/(?P<pk>[^/.]+)/$ ...
+```
+
+<Playground kind="http">
+
+```http
+DELETE /books/1
+```
+
+</Playground>
+
+The mock API supports the same verbs a `ModelViewSet` exposes: try `GET /books`, `POST /books`, `PATCH /books/2` and `DELETE /books/1`.
+
+<Mistakes>
+
+<Mistake title="ModelViewSet when the API should be read-only">
+
+<Wrong>
+
+```python
+class CategoryViewSet(viewsets.ModelViewSet):     # POST/PUT/DELETE exposed to every client by accident
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
+    ...
+# or GenericViewSet + only the mixins you need
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Custom action without get_object()">
+
+<Wrong>
+
+```python
+@action(detail=True, methods=["post"])
+def restock(self, request, pk=None):
+    product = Product.objects.get(pk=pk)    # skips get_queryset filtering, 404 handling and object permissions
+```
+
+</Wrong>
+
+<Right>
+
+```python
+product = self.get_object()
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a ViewSet and how does a router work?">
+
+A ViewSet is a class that bundles the actions for a resource (list, create, retrieve, update, partial_update, destroy and custom @action methods) instead of handling HTTP methods directly. A router inspects registered ViewSets and generates URL patterns mapping paths and methods to those actions, plus an API root with DefaultRouter.
+
+</QA>
+
+<QA q="How do you add a custom endpoint to a ViewSet?">
+
+Decorate a method with `@action(detail=True or False, methods=[...])`; the router creates `/resource/{pk}/<name>/` or `/resource/<name>/`. Inside, use `self.get_object()` for detail actions so lookups, 404s and object permissions apply; you can set per-action permission_classes and serializer_class.
+
+</QA>
+
+<QA q="ViewSets or generic views?">
+
+ViewSets with routers for standard CRUD resources: less code, consistent URLs. Generic views or APIView for endpoints that do not map to a resource, such as login, search across models, reports or webhooks, where explicit URLs read more clearly.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which ViewSet gives only list and retrieve?',
+      options: ['ModelViewSet', 'ReadOnlyModelViewSet', 'ViewSet', 'GenericAPIView'],
+      answer: 1,
+      why: 'Read-only actions.',
+    },
+    {
+      q: 'POST /api/products/7/restock/ comes from...',
+      options: ['@action(detail=True, methods=["post"])', 'perform_create', 'A signal', 'A router setting'],
+      answer: 0,
+      why: 'detail=True puts it under one object.',
+    },
+    {
+      q: 'PATCH maps to which action?',
+      options: ['update', 'partial_update', 'create', 'destroy'],
+      answer: 1,
+      why: 'PUT = update, PATCH = partial_update.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Full CRUD | `class X(viewsets.ModelViewSet): queryset = ...; serializer_class = ...` |
+| Read-only | `viewsets.ReadOnlyModelViewSet` |
+| URLs | `router = DefaultRouter(); router.register("products", ProductViewSet, basename="product")` |
+| Include | `path("api/", include(router.urls))` |
+| Custom endpoint | `@action(detail=True, methods=["post"])` |
+| Current action | `self.action` (`"list"`, `"retrieve"`, `"restock"`...) |
+| Object | `self.get_object()` |
+
+</CheatSheet>

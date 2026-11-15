@@ -1,0 +1,207 @@
+---
+id: django-signals
+title: Signals
+summary: Signals let decoupled code react to events such as a model being saved (pre_save, post_save, post_delete) or a user logging in; receivers are connected with @receiver in a signals module imported in AppConfig.ready, and should stay small because hidden side effects are hard to follow.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **doorbell** connected to several things: when it rings, the light turns on, the camera records and your phone gets a notification. The doorbell does not know about them; they subscribed to "doorbell rang". A Django **signal** is the doorbell; **receivers** are the subscribers.
+
+</Analogy>
+
+## Simple explanation
+
+Common built-in signals:
+
+| Signal | Fires |
+| --- | --- |
+| `pre_save` / `post_save` | before / after `model.save()` (`created=True` on insert) |
+| `pre_delete` / `post_delete` | around `model.delete()` |
+| `m2m_changed` | ManyToMany add/remove |
+| `user_logged_in`, `user_logged_out`, `user_login_failed` | auth events |
+| `request_started`, `request_finished` | per request |
+
+**Connecting a receiver**
+
+```python
+# store/signals.py
+from django.contrib.auth.models import User
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from .models import Profile
+
+@receiver(post_save, sender=User)
+def create_profile(sender, instance, created, **kwargs):
+    if created:
+        Profile.objects.get_or_create(user=instance)
+```
+
+```python
+# store/apps.py
+class StoreConfig(AppConfig):
+    name = "store"
+
+    def ready(self):
+        from . import signals  # noqa: F401   (importing connects the receivers)
+```
+
+Custom signals: `order_paid = Signal()` and `order_paid.send(sender=Order, order=order)`.
+
+**Important limits**:
+
+- `QuerySet.update()`, `bulk_create()`, `bulk_update()` and raw SQL **do not** send `pre_save`/`post_save`
+- Receivers run **synchronously** in the same transaction: a slow receiver slows the request; a failing one breaks the save
+- For work after commit (emails, Celery tasks) use `transaction.on_commit(lambda: send_email.delay(order.id))`
+
+**When not to use signals**: logic within your own app is usually clearer as an explicit call (`OrderService.mark_paid()` that also sends the email). Signals shine for **decoupling**: reacting to models from other apps or third-party packages (create a profile when django.contrib.auth creates a user, invalidate caches, audit logs).
+
+## Code example
+
+```python
+>>> u = User.objects.create_user("priya", "priya@example.com", "s3cretpass")
+>>> Profile.objects.filter(user=u).exists(), u.profile
+>>> User.objects.filter(username="priya").update(first_name="Priya")    # no post_save here
+>>> User.objects.bulk_create([User(username="bulk1")])
+>>> Profile.objects.filter(user__username="bulk1").exists()
+```
+
+```output
+(True, <Profile: Profile of priya>)
+1
+[<User: bulk1>]
+False
+```
+
+The profile appeared without any code in the signup view; `bulk_create` skipped the signal, so `bulk1` has no profile.
+
+<Playground kind="none">
+
+```python
+# orders/signals.py — invalidate a cache and email after the transaction commits
+from django.core.cache import cache
+from django.db import transaction
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+
+from .models import Order
+from .tasks import send_order_email          # a Celery task
+
+@receiver(post_save, sender=Order)
+def order_saved(sender, instance, created, **kwargs):
+    cache.delete(f"user:{instance.customer_id}:orders")          # cheap and safe inside the save
+    if created:
+        transaction.on_commit(lambda: send_order_email.delay(instance.pk))   # only if the order really saved
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Business logic hidden in signals">
+
+<Wrong>
+
+```text
+post_save on Order charges the card, reduces stock, sends 3 emails and calls the courier API.
+Nobody reading the checkout view knows any of it happens.
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def place_order(user, cart):                 # explicit service function
+    order = create_order(user, cart)
+    reserve_stock(order)
+    transaction.on_commit(lambda: send_order_email.delay(order.pk))
+    return order
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Receivers that never connect">
+
+<Wrong>
+
+```text
+signals.py exists but is never imported, so the receivers never run (and nobody notices).
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def ready(self):
+    from . import signals  # noqa: F401
+# and the app is listed as "store" (or "store.apps.StoreConfig") in INSTALLED_APPS
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are Django signals and when would you use them?">
+
+An observer mechanism: senders dispatch signals such as post_save, and connected receivers run in response. They are useful for decoupled reactions to events from other apps (creating a profile when a user is created, cache invalidation, audit logging). For logic inside your own domain, explicit service calls are usually clearer and easier to test.
+
+</QA>
+
+<QA q="Do signals fire on bulk operations?">
+
+No. `QuerySet.update()`, `bulk_create()`, `bulk_update()` and raw SQL bypass model save/delete, so pre_save/post_save do not fire (delete() on a QuerySet does send pre/post_delete for each object it loads). Code that relies on signals must account for this.
+
+</QA>
+
+<QA q="Are signals asynchronous?">
+
+No, receivers run synchronously in the same thread and usually the same database transaction as the sender, so they add latency and an exception can break the operation. Offload slow work with transaction.on_commit plus a task queue such as Celery.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Create a Profile whenever a User is created?',
+      options: ['pre_delete', 'post_save with created=True', 'request_started', 'm2m_changed'],
+      answer: 1,
+      why: 'post_save and check created.',
+    },
+    {
+      q: 'Where should signals be imported so they connect?',
+      options: ['settings.py', 'AppConfig.ready()', 'urls.py', 'admin.py'],
+      answer: 1,
+      why: 'ready() runs once at startup.',
+    },
+    {
+      q: 'Does QuerySet.update() send post_save?',
+      options: ['Yes', 'No', 'Only in DEBUG', 'Only for one row'],
+      answer: 1,
+      why: 'It is a single SQL UPDATE.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Receiver | `@receiver(post_save, sender=User)` |
+| Args | `sender, instance, created, **kwargs` |
+| Connect | `AppConfig.ready(): from . import signals` |
+| Custom signal | `order_paid = Signal()` · `order_paid.send(sender=Order, order=o)` |
+| After commit | `transaction.on_commit(lambda: task.delay(id))` |
+| Not fired by | `update()` · `bulk_create()` · `bulk_update()` · raw SQL |
+
+</CheatSheet>

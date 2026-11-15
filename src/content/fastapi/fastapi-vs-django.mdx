@@ -1,0 +1,197 @@
+---
+id: fastapi-fastapi-vs-django
+title: FastAPI vs Django
+summary: Django is a batteries-included framework with ORM, admin, auth, forms and templates, ideal for full products built quickly; FastAPI is a lightweight, typed, async-first API framework ideal for microservices and high-concurrency APIs, where you choose your own ORM and tools.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+**Django** is a fully furnished flat: kitchen, beds, wardrobes, all matching and ready on day one. **FastAPI** is a modern empty flat with excellent wiring: you pick each piece of furniture yourself, so it fits exactly, but you have to choose and assemble it.
+
+</Analogy>
+
+## Simple explanation
+
+| | Django (+ Django REST Framework) | FastAPI |
+| --- | --- | --- |
+| Style | batteries included, "the Django way" | minimal core, pick your tools |
+| ORM | built-in Django ORM + migrations | none built in: SQLAlchemy/SQLModel + Alembic, Tortoise |
+| Admin panel | **built-in**, huge time saver | none (third-party options) |
+| Auth, users, permissions | built-in | build it (OAuth2/JWT helpers) or use Cognito/Auth0 |
+| Validation | DRF serializers / forms | Pydantic from type hints |
+| API docs | via drf-spectacular | **automatic** OpenAPI + Swagger |
+| Async | partial (async views; ORM mostly sync) | **async-first** (ASGI) |
+| Performance | good | very high for I/O-bound APIs |
+| Templates / server-rendered HTML | built-in | possible (Jinja2) but not the focus |
+| Learning curve | larger framework, many conventions | small, quick to start; architecture is up to you |
+| Typical use | full web products, CMS, e-commerce, internal tools with admin | microservices, ML model APIs, backends for React/mobile, real-time |
+
+**Choose Django when** you build a complete product with users, an admin back office and a relational database, and want speed of delivery and strong conventions (for example an e-commerce site like TrendVista, a booking system, a CMS).
+
+**Choose FastAPI when** you build API-only services, need async concurrency (many outbound calls, websockets), serve ML models, want typed contracts and auto docs for frontend teams, or split a system into small services.
+
+**They also work together**: a Django monolith for the main product and admin, plus FastAPI microservices for a high-traffic or ML part; or Django Ninja, which brings FastAPI-style typed APIs into Django.
+
+The same endpoint in both:
+
+```python
+# Django REST Framework
+class ProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = ["id", "name", "price"]
+
+class ProductViewSet(viewsets.ModelViewSet):     # list, retrieve, create, update, delete
+    queryset = Product.objects.all()
+    serializer_class = ProductSerializer
+```
+
+```python
+# FastAPI
+@app.get("/products/{product_id}", response_model=ProductOut)
+def get_product(product_id: int, db: Session = Depends(get_db)):
+    product = db.get(Product, product_id)
+    if product is None:
+        raise HTTPException(404, "Product not found")
+    return product
+```
+
+DRF gives five endpoints from a few lines because the ORM, serializer and viewset fit together; FastAPI is more explicit and typed, with each piece chosen by you.
+
+## Code example
+
+The FastAPI version of a small product API, with real responses (SQLAlchemy, see "Database with SQLAlchemy"):
+
+```output
+POST /products {"name": "Clean Code", "price": 450, "category_id": 1} -> 201 {"id": 1, "name": "Clean Code", "price": 450, "category_id": 1}
+GET  /products?max_price=300  -> 200 [{"id": 2, "name": "USB Cable", "price": 199, "category_id": 2}]
+GET  /docs                    -> interactive documentation, generated automatically
+```
+
+The Django version of the same project would also give you `/admin/` to manage products with zero extra code.
+
+<Playground kind="none">
+
+```text
+Decide for each project, then compare with the suggested answer:
+
+1. An online bookstore with customers, orders, coupons and a back office for staff
+   → Django: admin, auth, ORM and migrations save weeks.
+
+2. A service that takes a photo and returns predicted tags from an ML model
+   → FastAPI: small, async, typed input/output, auto docs.
+
+3. A dashboard API that calls 6 other services per request
+   → FastAPI with async httpx and asyncio.gather.
+
+4. An internal tool for HR to edit employee records
+   → Django: the admin panel is almost the whole product.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Picking by benchmark alone">
+
+<Wrong>
+
+```text
+"FastAPI is 3x faster in benchmarks, so we rebuild our Django shop in FastAPI."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Most time goes to the database and network. Choose by needs: admin, auth and conventions (Django)
+vs API-only, async and typed microservices (FastAPI). Measure real bottlenecks first.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Rebuilding Django inside FastAPI">
+
+<Wrong>
+
+```text
+A FastAPI project that slowly grows its own admin, user system, permissions, migrations and form engine.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+If you need all of that, start with Django (or Django + Django Ninja for typed APIs).
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between Django and FastAPI?">
+
+Django is a full-stack, batteries-included framework with an ORM, migrations, admin, authentication, forms and templates, with strong conventions; with Django REST Framework it builds APIs quickly. FastAPI is a lightweight ASGI framework focused on APIs, using Pydantic type hints for validation and automatic OpenAPI docs, async-first and very fast, but you choose and integrate the ORM, auth and structure yourself.
+
+</QA>
+
+<QA q="When would you choose FastAPI over Django?">
+
+For API-only services and microservices, ML model serving, I/O-heavy workloads that benefit from async (calling many services, websockets), and when typed request/response contracts with automatic docs matter. Django wins for full products needing admin, users, permissions and fast CRUD development.
+
+</QA>
+
+<QA q="You used Django in your project. Why not FastAPI?">
+
+A good answer ties the choice to requirements: for example, the e-commerce backend needed products, orders, users, an admin panel for staff and relational data, which Django and DRF provide out of the box with migrations and permissions, so delivery was faster and safer; FastAPI would have fit a separate service such as recommendations or image processing.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which has a built-in admin panel?',
+      options: ['FastAPI', 'Django', 'Both', 'Neither'],
+      answer: 1,
+      why: 'django.contrib.admin.',
+    },
+    {
+      q: 'Which generates OpenAPI docs automatically from type hints?',
+      options: ['Django', 'FastAPI', 'Flask', 'Neither'],
+      answer: 1,
+      why: 'FastAPI with Pydantic.',
+    },
+    {
+      q: 'An ML inference microservice: best default?',
+      options: ['Django', 'FastAPI', 'Plain sockets', 'PHP'],
+      answer: 1,
+      why: 'Small, typed, async API.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Pick |
+| --- | --- |
+| Admin back office, users, permissions | Django |
+| Fast CRUD with conventions | Django + DRF |
+| API-only microservice | FastAPI |
+| Async, many outbound calls, websockets | FastAPI |
+| ML model serving | FastAPI |
+| Typed APIs inside Django | Django Ninja |
+
+Django: ORM + admin + auth built in · FastAPI: Pydantic + OpenAPI + async built in
+
+</CheatSheet>

@@ -1,0 +1,203 @@
+---
+id: linux-cron
+title: cron jobs
+summary: cron runs commands on a schedule written as five time fields (minute hour day month weekday) followed by the command; edit your schedule with crontab -e, use absolute paths and log output, or use systemd timers.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+An alarm clock with recurring alarms: "every day at 6:30", "Mondays at 9", "every 15 minutes during an exam". You set it once and it rings by itself. **cron** is the server's alarm clock, and each alarm runs a command.
+
+</Analogy>
+
+## Simple explanation
+
+A crontab line:
+
+```text
+┌───────────── minute (0-59)
+│ ┌─────────── hour (0-23)
+│ │ ┌───────── day of month (1-31)
+│ │ │ ┌─────── month (1-12)
+│ │ │ │ ┌───── day of week (0-7, 0 and 7 = Sunday)
+│ │ │ │ │
+0 2 * * * /home/guru/scripts/backup.sh >> /home/guru/logs/backup.log 2>&1
+```
+
+| Symbol | Meaning | Example |
+| --- | --- | --- |
+| `*` | every | `* * * * *` every minute |
+| `,` | list | `0 9,18 * * *` at 9:00 and 18:00 |
+| `-` | range | `0 9 * * 1-5` weekdays at 9:00 |
+| `/` | step | `*/15 * * * *` every 15 minutes |
+| `@reboot` | at boot | `@reboot /home/guru/start.sh` |
+| `@daily`, `@hourly`, `@weekly` | shortcuts | `@daily /usr/local/bin/cleanup` |
+
+More examples:
+
+| Schedule | Line |
+| --- | --- |
+| Every 5 minutes | `*/5 * * * * cmd` |
+| Every day at 2:30 AM | `30 2 * * * cmd` |
+| Every Monday at 9 AM | `0 9 * * 1 cmd` |
+| 1st of every month at midnight | `0 0 1 * * cmd` |
+
+Use **crontab.guru** to check expressions.
+
+Commands:
+
+```bash
+crontab -e        # edit your crontab
+crontab -l        # list it
+crontab -r        # remove it (careful!)
+sudo crontab -e   # root's crontab
+```
+
+System-wide jobs live in `/etc/crontab` and `/etc/cron.d/` (with a user field), plus folders `/etc/cron.daily/` etc.
+
+**Why cron jobs "work by hand but not in cron"**:
+
+1. cron has a **tiny PATH** and no `.bashrc`: use **absolute paths** (`/usr/bin/python3`, `/home/guru/.venv/bin/python`)
+2. The **working directory** is your home: `cd` first or use absolute paths
+3. **No environment variables** from your shell: set them in the script or at the top of the crontab
+4. Output goes nowhere (or local mail): add `>> /path/job.log 2>&1`
+5. `%` is special in crontab: escape it as `\%` (for example in `date +\%F`)
+
+Time zone is the server's (often UTC on EC2). Alternatives: **systemd timers** (logs in journalctl), and in AWS **EventBridge Scheduler** triggering Lambda or ECS tasks.
+
+## Code example
+
+```bash
+crontab -l
+echo "0 2 * * * /home/guru/scripts/backup.sh >> /home/guru/logs/backup.log 2>&1" | crontab -
+crontab -l
+```
+
+```output
+no crontab for guru
+0 2 * * * /home/guru/scripts/backup.sh >> /home/guru/logs/backup.log 2>&1
+```
+
+<Playground kind="terminal">
+
+```bash
+crontab -l
+systemctl status cron
+chmod +x scripts/backup.sh
+./scripts/backup.sh
+echo "0 2 * * * /home/guru/scripts/backup.sh >> /home/guru/logs/backup.log 2>&1" | crontab -
+crontab -l
+echo "*/15 * * * *" | crontab -
+crontab -e
+crontab -r
+crontab -l
+```
+
+</Playground>
+
+Test the script by hand first. A line with only time fields and no command is rejected. (In the simulator, `crontab -` reads the new crontab from the pipe; on a real server you would usually type it in `crontab -e`.)
+
+<Mistakes>
+
+<Mistake title="Relative paths and commands from your shell">
+
+<Wrong>
+
+```text
+0 * * * * python manage.py clearsessions
+```
+
+</Wrong>
+
+<Right>
+
+```text
+0 * * * * cd /home/deploy/shop && /home/deploy/shop/.venv/bin/python manage.py clearsessions >> /home/deploy/logs/cron.log 2>&1
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Every minute instead of once an hour">
+
+<Wrong>
+
+```text
+* 2 * * * /home/guru/scripts/backup.sh      # every minute between 2:00 and 2:59 → 60 backups
+```
+
+</Wrong>
+
+<Right>
+
+```text
+0 2 * * * /home/guru/scripts/backup.sh      # once, at 2:00
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain the cron syntax.">
+
+Five fields, minute, hour, day of month, month and day of week, followed by the command. `*` means every value, commas list values, hyphens give ranges and `/n` steps; for example `*/10 9-17 * * 1-5` runs every ten minutes during working hours on weekdays. Special strings like @reboot and @daily exist too.
+
+</QA>
+
+<QA q="A cron job works manually but not from cron. Why?">
+
+cron runs with a minimal environment: a short PATH, no shell profile, the home directory as working directory and no variables from your session. Use absolute paths for commands and files, set required environment variables, make the script executable, escape % characters, and redirect output to a log file to see the error (also check /var/log/syslog or journalctl -u cron).
+
+</QA>
+
+<QA q="What are alternatives to cron?">
+
+systemd timers (better logging and dependencies), Celery beat or APScheduler inside applications, Kubernetes CronJobs, and cloud schedulers such as AWS EventBridge Scheduler triggering Lambda or ECS tasks, which avoid depending on one server.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does 30 2 * * * mean?',
+      options: ['Every 30 minutes', 'Every day at 2:30', 'On the 30th at 2', 'Twice a day'],
+      answer: 1,
+      why: 'minute 30, hour 2.',
+    },
+    {
+      q: 'Every 15 minutes?',
+      options: ['15 * * * *', '*/15 * * * *', '* */15 * * *', '0 15 * * *'],
+      answer: 1,
+      why: '*/15 in the minute field.',
+    },
+    {
+      q: 'Edit your crontab?',
+      options: ['cron edit', 'crontab -e', 'nano /etc/cron', 'systemctl cron'],
+      answer: 1,
+      why: 'crontab -e opens it in your editor.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Field order | `min hour day month weekday command` |
+| --- | --- |
+| Every minute | `* * * * *` |
+| Every 5 min | `*/5 * * * *` |
+| Daily 2:30 | `30 2 * * *` |
+| Weekdays 9:00 | `0 9 * * 1-5` |
+| Monthly | `0 0 1 * *` |
+| At boot | `@reboot` |
+
+`crontab -e` · `-l` · `-r` · absolute paths · `>> log 2>&1` · escape `%` as `\%` · server time zone (often UTC)
+
+</CheatSheet>

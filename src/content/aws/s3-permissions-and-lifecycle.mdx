@@ -1,0 +1,240 @@
+---
+id: aws-s3-permissions-and-lifecycle
+title: S3 permissions, versioning and lifecycle
+summary: S3 access is decided by IAM policies, bucket policies and Block Public Access (ACLs are disabled by default); versioning keeps every old copy and turns deletes into delete markers; lifecycle rules move objects to cheaper storage classes and expire them automatically; encryption and replication protect the data.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **bank's safe-deposit vault**. Who may open a box is written in two places: the staff badge rules (**IAM policies**) and the notice on the vault door (**bucket policy**). A master switch says "never open to the public" (**Block Public Access**). The bank keeps a photocopy every time you replace a document (**versioning**) and, after a year, moves old files to the cheap basement archive (**lifecycle**).
+
+</Analogy>
+
+## Simple explanation
+
+**Who can access an object?** All of these are checked; an explicit **Deny anywhere wins**.
+
+| Control | Attached to | Example |
+| --- | --- | --- |
+| **IAM policy** | user / role | role `shop-api` may `s3:GetObject` on `shop-media/*` |
+| **Bucket policy** | bucket (resource policy) | only CloudFront may read; deny non-HTTPS; allow another account |
+| **Block Public Access** | account / bucket | overrides any public policy (keep ON) |
+| ACLs | legacy | disabled by default (Object Ownership = bucket owner enforced) |
+| Presigned URL | one object, limited time | invoice download for 5 minutes |
+
+A bucket policy that forces HTTPS and lets only CloudFront read:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Sid": "CloudFrontRead", "Effect": "Allow",
+     "Principal": {"Service": "cloudfront.amazonaws.com"},
+     "Action": "s3:GetObject", "Resource": "arn:aws:s3:::shop-media-shubham/*",
+     "Condition": {"StringEquals": {"AWS:SourceArn": "arn:aws:cloudfront::123456789012:distribution/E2ABC"}}},
+    {"Sid": "HttpsOnly", "Effect": "Deny", "Principal": "*", "Action": "s3:*",
+     "Resource": ["arn:aws:s3:::shop-media-shubham", "arn:aws:s3:::shop-media-shubham/*"],
+     "Condition": {"Bool": {"aws:SecureTransport": "false"}}}
+  ]
+}
+```
+
+**Versioning**: once enabled, every overwrite keeps the old version; a delete adds a **delete marker** (the object "disappears" but old versions remain and can be restored). Protects against accidents and ransomware; add **MFA delete** or **Object Lock** (WORM) for stronger protection. Old versions cost money, so expire them with lifecycle.
+
+**Lifecycle rules** (by prefix or tag):
+
+| Action | Example |
+| --- | --- |
+| Transition | `logs/` → Standard-IA after 30 days → Glacier after 90 |
+| Expiration | delete `logs/` after 365 days |
+| Noncurrent versions | delete old versions after 30 days |
+| Cleanup | abort incomplete multipart uploads after 7 days |
+
+**Encryption**: SSE-S3 by default; **SSE-KMS** for audited key control; client-side if you must. **Replication** (CRR/SRR) copies objects to another bucket/Region for DR or compliance (needs versioning).
+
+## Code example
+
+```python
+s3.put_bucket_versioning(Bucket=b, VersioningConfiguration={"Status": "Enabled"})
+v1 = s3.put_object(Bucket=b, Key="price-list.csv", Body=b"v1")["VersionId"]
+s3.put_object(Bucket=b, Key="price-list.csv", Body=b"v2-new")
+s3.delete_object(Bucket=b, Key="price-list.csv")              # adds a delete marker
+vs = s3.list_object_versions(Bucket=b)
+print("versions:", len(vs["Versions"]), "delete markers:", len(vs["DeleteMarkers"]))
+try:
+    s3.get_object(Bucket=b, Key="price-list.csv")
+except s3.exceptions.NoSuchKey as e:
+    print("get after delete:", e.response["Error"]["Code"])
+print("old version:", s3.get_object(Bucket=b, Key="price-list.csv", VersionId=v1)["Body"].read())
+
+s3.put_bucket_lifecycle_configuration(Bucket=b, LifecycleConfiguration={"Rules": [{
+    "ID": "logs", "Filter": {"Prefix": "logs/"}, "Status": "Enabled",
+    "Transitions": [{"Days": 30, "StorageClass": "STANDARD_IA"}, {"Days": 90, "StorageClass": "GLACIER"}],
+    "Expiration": {"Days": 365}}]})
+r = s3.get_bucket_lifecycle_configuration(Bucket=b)["Rules"][0]
+print("lifecycle:", r["ID"], [(t["Days"], t["StorageClass"]) for t in r["Transitions"]], r["Expiration"])
+
+s3.put_public_access_block(Bucket=b, PublicAccessBlockConfiguration={
+    "BlockPublicAcls": True, "IgnorePublicAcls": True, "BlockPublicPolicy": True, "RestrictPublicBuckets": True})
+print("public block:", s3.get_public_access_block(Bucket=b)["PublicAccessBlockConfiguration"]["BlockPublicPolicy"])
+```
+
+```output
+versions: 2 delete markers: 1
+get after delete: NoSuchKey
+old version: b'v1'
+lifecycle: logs [(30, 'STANDARD_IA'), (90, 'GLACIER')] {'Days': 365}
+public block: True
+```
+
+(Run against a mock of AWS.) Restore the file by deleting the delete marker version.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "req", "label": "Request: GetObject", "icon": "📨", "col": 0, "row": 1, "info": "From role shop-api, over HTTPS, for shop-media-shubham/products/7.jpg.", "example": "s3.get_object(...)" },
+    { "id": "bpa", "label": "Block Public Access", "icon": "🚫", "col": 1, "row": 0, "info": "If the request relies on public access, it is refused here no matter what any policy says.", "example": "All four settings ON" },
+    { "id": "deny", "label": "Any explicit Deny?", "icon": "⛔", "col": 1, "row": 2, "info": "In IAM policies, bucket policy, SCPs, permission boundaries. One Deny ends the evaluation.", "example": "HttpsOnly denies aws:SecureTransport = false" },
+    { "id": "allow", "label": "An Allow somewhere?", "icon": "✅", "col": 2, "row": 1, "info": "Same account: an Allow in the IAM policy OR the bucket policy is enough. Cross-account: both sides must allow.", "example": "IAM policy of shop-api allows s3:GetObject" },
+    { "id": "obj", "label": "Object returned", "icon": "🖼️", "col": 3, "row": 0, "info": "The current version (or a given VersionId).", "example": "200 OK image/jpeg" },
+    { "id": "no", "label": "AccessDenied", "icon": "🔒", "col": 3, "row": 2, "info": "Default when nothing allows it (implicit deny).", "example": "403" }
+  ],
+  "edges": [
+    ["req", "bpa"],
+    ["bpa", "deny"],
+    ["deny", "allow", "no deny"],
+    ["deny", "no", "deny"],
+    ["allow", "obj", "yes"],
+    ["allow", "no", "no"]
+  ],
+  "flows": [
+    {
+      "name": "The app reads an image",
+      "steps": [
+        ["req", "shop-api asks for products/7.jpg over HTTPS."],
+        ["bpa", "Not a public request: continue."],
+        ["deny", "HttpsOnly does not match (it is HTTPS)."],
+        ["allow", "The role's IAM policy allows GetObject."],
+        ["obj", "Image returned."]
+      ]
+    },
+    {
+      "name": "An anonymous user tries",
+      "steps": [
+        ["req", "No credentials, plain URL."],
+        ["allow", "No policy allows an anonymous principal."],
+        ["no", "403 AccessDenied."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Versioning without a lifecycle rule">
+
+<Wrong>
+
+```text
+Versioning on a bucket where a job rewrites a 2 GB file every hour: 48 GB/day of old versions billed forever.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Lifecycle: NoncurrentVersionExpiration after 7–30 days, and abort incomplete multipart uploads.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Wildcard principals">
+
+<Wrong>
+
+```json
+{"Effect": "Allow", "Principal": "*", "Action": "s3:*", "Resource": "arn:aws:s3:::shop-media-shubham/*"}
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Name exact principals (a role ARN, cloudfront.amazonaws.com with a SourceArn condition) and exact actions.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How is access to an S3 object evaluated?">
+
+Block Public Access is applied first; then all applicable policies (IAM identity policies, the bucket policy, SCPs, boundaries, session policies) are evaluated: an explicit Deny wins, otherwise an Allow is required (within one account either the identity or the bucket policy may grant it; across accounts both must). With no Allow the default is an implicit deny. ACLs are disabled by default.
+
+</QA>
+
+<QA q="What happens when you delete an object in a versioned bucket?">
+
+A simple DELETE adds a delete marker as the new current version, so GET returns 404 but earlier versions remain and can be restored by deleting the marker or copying an old version. A DELETE with a specific VersionId permanently removes that version.
+
+</QA>
+
+<QA q="How do you reduce S3 storage costs?">
+
+Lifecycle rules that transition objects to Standard-IA, Glacier tiers or Intelligent-Tiering, expire temporary data and noncurrent versions, abort incomplete multipart uploads; compress data; use Storage Lens to find large or idle buckets.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'IAM allows GetObject, bucket policy explicitly denies it. Result?',
+      options: ['Allowed', 'Denied', 'Depends on Region', 'Allowed for 1 hour'],
+      answer: 1,
+      why: 'Explicit Deny always wins.',
+    },
+    {
+      q: 'Delete in a versioned bucket creates...',
+      options: ['Nothing', 'A delete marker', 'A Glacier copy', 'An error'],
+      answer: 1,
+      why: 'Old versions remain.',
+    },
+    {
+      q: 'Move logs to Glacier after 90 days automatically?',
+      options: ['Replication', 'Lifecycle rule', 'Bucket policy', 'Versioning'],
+      answer: 1,
+      why: 'Transition actions.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Topic | Remember |
+| --- | --- |
+| Access | IAM policy + bucket policy · explicit Deny wins · ACLs off |
+| Public | Block Public Access ON · CloudFront OAC for public files |
+| HTTPS only | Deny when `aws:SecureTransport` = false |
+| Versioning | overwrites kept · delete → delete marker · restore old versions |
+| Protection | MFA delete · Object Lock (WORM) |
+| Lifecycle | transition (IA, Glacier) · expiration · noncurrent versions · abort multipart |
+| Encryption | SSE-S3 default · SSE-KMS for key control |
+| Replication | CRR / SRR (needs versioning) |
+
+</CheatSheet>

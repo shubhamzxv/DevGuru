@@ -1,0 +1,213 @@
+---
+id: django-aggregate-annotate
+title: aggregate and annotate
+summary: aggregate() computes summary values over a whole QuerySet and returns a dict (total, average, max), while annotate() adds a computed value to each row (orders per customer, total per order); values() before annotate() groups like SQL GROUP BY.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A shop's day-end report. **aggregate** is the single line at the bottom: "Total sales: ₹4,143. Average bill: ₹1,381." **annotate** is the extra column you add to every line: "Asha: 2 orders, ₹848 paid; Ravi: 1 order, ₹1,796 paid".
+
+</Analogy>
+
+## Simple explanation
+
+```python
+from django.db.models import Avg, Count, F, Max, Min, Q, Sum
+```
+
+**aggregate**: one result for the whole QuerySet (a dict):
+
+```python
+Product.objects.aggregate(total=Count("id"), avg=Avg("price"), max=Max("price"), min=Min("price"))
+Product.objects.aggregate(stock_value=Sum(F("price") * F("stock")))
+```
+
+**annotate**: a value per row (SQL `GROUP BY` behind the scenes):
+
+```python
+Category.objects.annotate(n=Count("products"), avg=Avg("products__price"))
+Order.objects.annotate(total=Sum(F("items__price") * F("items__quantity")))
+User.objects.annotate(
+    n_orders=Count("orders", distinct=True),
+    spent=Sum(F("orders__items__price") * F("orders__items__quantity"), filter=Q(orders__status="paid")),
+)
+```
+
+Then you can **filter and sort** on the annotation: `.filter(n__gte=2)` (SQL `HAVING`), `.order_by("-spent")`.
+
+**Group by a field**: `values()` first, then `annotate()`:
+
+```python
+Order.objects.values("status").annotate(n=Count("id"))
+# [{'status': 'paid', 'n': 2}, {'status': 'pending', 'n': 1}]
+```
+
+Gotchas:
+
+- Two `Count`/`Sum` across **different** relations in one query multiply rows; use `distinct=True` for counts or subqueries (`Subquery`, `OuterRef`)
+- `Sum` of nothing is `None`: wrap with `Coalesce(Sum(...), 0)`
+- Default `Meta.ordering` can sneak into `GROUP BY`; add `.order_by()` to clear it when grouping with `values()`
+
+Other useful expressions: `Case`/`When` (conditional values), `ExpressionWrapper`, `functions.TruncMonth("created_at")` for monthly reports, `Window` functions for rankings.
+
+## Code example
+
+```python
+>>> Product.objects.aggregate(total=Count("id"), avg=Avg("price"), max=Max("price"), min=Min("price"))
+>>> Product.objects.aggregate(stock_value=Sum(F("price") * F("stock")))
+>>> for c in Category.objects.annotate(n=Count("products"), avg=Avg("products__price")).order_by("-n"):
+...     print(c.name, c.n, round(c.avg, 2))
+>>> for o in Order.objects.annotate(total=Sum(F("items__price") * F("items__quantity"))):
+...     print(o.id, o.customer.username, o.status, o.total)
+>>> for u in User.objects.annotate(n_orders=Count("orders", distinct=True),
+...         spent=Sum(F("orders__items__price") * F("orders__items__quantity"), filter=Q(orders__status="paid"))).order_by("-spent"):
+...     print(u.username, u.n_orders, u.spent)
+>>> Order.objects.values("status").annotate(n=Count("id")).order_by("status")
+>>> Category.objects.annotate(n=Count("products")).filter(n__gte=2).values_list("name", flat=True)
+```
+
+```output
+{'total': 7, 'avg': Decimal('927.857142857143'), 'max': Decimal('2499'), 'min': Decimal('199')}
+{'stock_value': Decimal('34582')}
+Books 3 666.33
+Electronics 3 1399.00
+Toys 1 299.00
+1 asha paid 848
+2 asha pending 1499
+3 ravi paid 1796
+ravi 1 1796
+asha 2 848
+meera 0 None
+<QuerySet [{'status': 'paid', 'n': 2}, {'status': 'pending', 'n': 1}]>
+<QuerySet ['Books', 'Electronics']>
+```
+
+Meera has no paid orders, so her `Sum` is `None` (use `Coalesce` for 0).
+
+<Playground kind="sql">
+
+```sql
+CREATE TABLE product (id INTEGER PRIMARY KEY, name TEXT, price REAL, category TEXT);
+CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT, status TEXT);
+CREATE TABLE item (order_id INTEGER, product_id INTEGER, quantity INTEGER, price REAL);
+INSERT INTO product VALUES (1,'Clean Code',450,'Books'),(2,'Fluent Python',899,'Books'),(4,'USB Cable',199,'Electronics'),(5,'Headphones',1499,'Electronics'),(7,'Rubik Cube',299,'Toys');
+INSERT INTO orders VALUES (1,'asha','paid'),(2,'asha','pending'),(3,'ravi','paid');
+INSERT INTO item VALUES (1,1,1,450),(1,4,2,199),(2,5,1,1499),(3,2,1,899),(3,7,3,299);
+
+-- aggregate(avg=Avg("price"), max=Max("price"))
+SELECT AVG(price) AS avg, MAX(price) AS max FROM product;
+-- Category.objects.annotate(n=Count("products"))
+SELECT category, COUNT(*) AS n, ROUND(AVG(price), 2) AS avg_price FROM product GROUP BY category ORDER BY n DESC;
+-- Order.objects.annotate(total=Sum(F("items__price") * F("items__quantity")))
+SELECT o.id, o.customer, o.status, SUM(i.price * i.quantity) AS total FROM orders o JOIN item i ON i.order_id = o.id GROUP BY o.id;
+-- spent on paid orders per customer
+SELECT o.customer, SUM(i.price * i.quantity) AS spent FROM orders o JOIN item i ON i.order_id = o.id WHERE o.status = 'paid' GROUP BY o.customer ORDER BY spent DESC;
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Summing in Python">
+
+<Wrong>
+
+```python
+total = sum(item.price * item.quantity for item in OrderItem.objects.all())   # loads every row
+```
+
+</Wrong>
+
+<Right>
+
+```python
+total = OrderItem.objects.aggregate(total=Sum(F("price") * F("quantity")))["total"]
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Two counts across different relations">
+
+<Wrong>
+
+```python
+Category.objects.annotate(n_products=Count("products"), n_tags=Count("products__tags"))   # joins multiply: wrong numbers
+```
+
+</Wrong>
+
+<Right>
+
+```python
+Category.objects.annotate(n_products=Count("products", distinct=True), n_tags=Count("products__tags", distinct=True))
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between aggregate and annotate?">
+
+`aggregate()` evaluates immediately and returns a dictionary with values computed over the whole QuerySet (like a SELECT with aggregate functions and no GROUP BY). `annotate()` returns a QuerySet where each object gets an extra computed attribute, computed per row or per group (GROUP BY), which can then be filtered, ordered or aggregated again.
+
+</QA>
+
+<QA q="How do you get the number of orders per customer?">
+
+`User.objects.annotate(n_orders=Count("orders")).order_by("-n_orders")`, or grouped values: `Order.objects.values("customer__username").annotate(n=Count("id"))`. Use `filter=Q(...)` inside Count for conditional counts such as paid orders only.
+
+</QA>
+
+<QA q="How do you write a monthly sales report with the ORM?">
+
+`Order.objects.filter(status="paid").annotate(month=TruncMonth("created_at")).values("month").annotate(revenue=Sum(F("items__price") * F("items__quantity")), orders=Count("id", distinct=True)).order_by("month")`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'aggregate() returns...',
+      options: ['A QuerySet', 'A dict', 'A list of models', 'An int'],
+      answer: 1,
+      why: 'e.g. {"avg": Decimal(...)}.',
+    },
+    {
+      q: 'Number of products in each category?',
+      options: ['Category.objects.aggregate(Count("products"))', 'Category.objects.annotate(n=Count("products"))', 'Product.objects.count()', 'len(Category.objects.all())'],
+      answer: 1,
+      why: 'annotate = one value per row.',
+    },
+    {
+      q: 'Filter on an annotation becomes which SQL clause?',
+      options: ['WHERE', 'HAVING', 'ORDER BY', 'LIMIT'],
+      answer: 1,
+      why: 'Conditions on aggregated values.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Whole table summary | `.aggregate(avg=Avg("price"), n=Count("id"))` |
+| Per row | `.annotate(n=Count("products"))` |
+| Per group | `.values("status").annotate(n=Count("id"))` |
+| Conditional | `Count("orders", filter=Q(orders__status="paid"))` |
+| Expressions | `Sum(F("price") * F("quantity"))` |
+| None → 0 | `Coalesce(Sum(...), 0)` |
+| HAVING | `.annotate(n=...).filter(n__gte=2)` |
+| By month | `TruncMonth("created_at")` |
+
+</CheatSheet>

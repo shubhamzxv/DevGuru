@@ -1,0 +1,201 @@
+---
+id: linux-find
+title: find
+summary: find searches folders for files by name, type, size, age or emptiness, and can run a command on every result with -exec or delete them with -delete.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+**grep** looks for words **inside** documents. **find** is the librarian who walks the shelves looking for **books** by title, size, or "added more than a week ago", and can then stamp each one it finds.
+
+</Analogy>
+
+## Simple explanation
+
+```bash
+find WHERE [TESTS] [ACTION]
+```
+
+| Test | Matches | Example |
+| --- | --- | --- |
+| `-name "*.py"` | name with wildcards (quote it!) | `find . -name "*.py"` |
+| `-iname` | same, ignoring case | `find . -iname "readme*"` |
+| `-type f` / `-type d` | files / directories | `find /var/log -type f` |
+| `-size +100M` | bigger than (`-` smaller; `c` bytes, `k`, `M`, `G`) | `find / -size +500M 2>/dev/null` |
+| `-mtime -1` / `+7` | modified within 1 day / more than 7 days ago | `find logs -mtime +30` |
+| `-mmin -10` | modified within 10 minutes | |
+| `-empty` | empty files or folders | `find . -empty` |
+| `-maxdepth 1` | do not go deeper | `find ~ -maxdepth 1 -type d` |
+| `-user www-data` | owner | |
+| `-perm 777` | permission | security audits |
+| `!` / `-not` | negate | `find . -name "*.py" -not -path "./.venv/*"` |
+
+| Action | Does |
+| --- | --- |
+| (none) | print the paths |
+| `-exec cmd {} \;` | run cmd once per file (`{}` = the path) |
+| `-exec cmd {} +` | run cmd once with many files (faster) |
+| `-delete` | delete matches (**run without it first!**) |
+| `\| xargs cmd` | pass results to another command |
+
+Real tasks:
+
+```bash
+find /var/log -name "*.gz" -mtime +30 -delete                # clean old rotated logs
+find . -name "__pycache__" -type d -exec rm -r {} +          # remove Python caches
+find / -type f -size +1G 2>/dev/null                         # what fills the disk?
+find /var/www -type f -exec chmod 644 {} +                   # fix file permissions
+find /var/www -type d -exec chmod 755 {} +                   # fix folder permissions
+find . -name "*.py" | xargs grep -n "TODO"                   # combine with grep
+```
+
+`2>/dev/null` hides "Permission denied" noise when searching from `/`.
+
+## Code example
+
+```bash
+find . -name "*.log"
+find ~ -maxdepth 1 -type d
+find logs -name "*.log" -exec wc -l {} \;
+find . -type f -size +300c
+```
+
+```output
+./logs/access.log
+./logs/app.log
+/home/guru
+/home/guru/app
+/home/guru/logs
+/home/guru/scripts
+10 logs/access.log
+7 logs/app.log
+./logs/access.log
+./logs/app.log
+```
+
+<Playground kind="terminal">
+
+```bash
+find . -name "*.py"
+find . -name "*.log"
+find . -type d
+find ~ -maxdepth 1 -type d
+find . -type f -size +300c
+find logs -name "*.log" -exec wc -l {} \;
+touch empty1.txt empty2.txt
+find . -empty -type f
+find . -name "empty*.txt" -delete
+find . -name "empty*.txt"
+find . -name "*.txt" -mtime +7
+```
+
+</Playground>
+
+Check the list first, then add `-delete`. (Every file in the simulator was "modified today", so `-mtime +7` finds nothing.)
+
+<Mistakes>
+
+<Mistake title="Unquoted wildcard">
+
+<Wrong>
+
+```bash
+find . -name *.py       # the shell expands *.py first: "find: paths must precede expression"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+find . -name "*.py"
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="-delete in the wrong place">
+
+<Wrong>
+
+```bash
+find . -delete -name "*.tmp"      # tests are read left to right: deletes EVERYTHING first
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+find . -name "*.tmp"              # check
+find . -name "*.tmp" -delete      # then delete, with -delete last
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you find files larger than 100 MB?">
+
+`find / -type f -size +100M 2>/dev/null`, optionally piping to `xargs ls -lh` or using `-exec du -h {} +` and sorting, to see sizes. `du -h --max-depth=1 | sort -h` is the complementary folder-level view.
+
+</QA>
+
+<QA q="How do you delete files older than 7 days?">
+
+`find /path -type f -mtime +7` to review, then `find /path -type f -mtime +7 -delete` (or `-exec rm {} +`). In cron, use absolute paths and restrict by name, for example `-name "*.log.gz"`.
+
+</QA>
+
+<QA q="What is the difference between -exec ... \; and -exec ... +?">
+
+With `\;` the command runs once for every file found. With `+` find passes as many paths as possible to a single command invocation, like xargs, which is much faster for many files.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Find only directories?',
+      options: ['-type f', '-type d', '-dir', '-name d'],
+      answer: 1,
+      why: 'd = directory, f = file.',
+    },
+    {
+      q: 'Files modified more than 30 days ago?',
+      options: ['-mtime -30', '-mtime +30', '-age 30', '-old 30'],
+      answer: 1,
+      why: '+ = more than, - = less than.',
+    },
+    {
+      q: 'What does {} mean in -exec?',
+      options: ['Nothing', 'The current file path', 'All files', 'The home folder'],
+      answer: 1,
+      why: 'find replaces {} with each path.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Command |
+| --- | --- |
+| By name | `find . -name "*.py"` · `-iname` |
+| Files / dirs | `-type f` · `-type d` |
+| Size | `-size +100M` · `-size -1k` |
+| Age | `-mtime +7` · `-mmin -10` |
+| Depth | `-maxdepth 1` |
+| Exclude | `-not -path "./.venv/*"` |
+| Run cmd | `-exec cmd {} \;` · `-exec cmd {} +` · `\| xargs cmd` |
+| Delete | `-delete` (last, after checking) |
+| Quiet | `2>/dev/null` |
+
+</CheatSheet>

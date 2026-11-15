@@ -1,0 +1,251 @@
+---
+id: dsa-binary-search
+title: Binary search
+summary: Binary search finds a target in a sorted list by comparing with the middle and discarding half the range each step, taking O(log n); its variants find the first or last position, the insertion point, a peak or a rotated array's target, and "binary search on the answer" solves minimum-capacity and minimum-speed problems.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The **guess-the-number game**: "I'm thinking of a number from 1 to 100." You guess 50; "too high". Now you guess 25; "too low"; then 37... Each guess throws away half the possibilities, so you need at most 7 guesses for 100 numbers and about 20 for a million.
+
+</Analogy>
+
+## Simple explanation
+
+Requirement: the data is **sorted** (or the condition you test is **monotonic**: false, false, ..., true, true).
+
+```python
+lo, hi = 0, len(a) - 1
+while lo <= hi:
+    mid = (lo + hi) // 2
+    if a[mid] == target: return mid
+    if a[mid] < target:  lo = mid + 1     # target is on the right
+    else:                hi = mid - 1     # target is on the left
+return -1
+```
+
+**Time O(log n)**, space O(1).
+
+**Variants**
+
+| Problem | Trick |
+| --- | --- |
+| First position of target / insertion point | "lower bound": find the first index with `a[i] >= target` |
+| Last position | first index with `a[i] > target`, minus 1 |
+| Count of target | upper bound − lower bound |
+| Rotated sorted array | one half is always sorted; check if the target is inside it |
+| Peak element | move towards the bigger neighbour |
+| Square root (integer) | largest x with x·x ≤ n |
+| **Binary search on the answer** | minimum ship capacity, Koko eating bananas, split array: test "is answer X feasible?" and search X |
+
+Python's **`bisect`** module does lower/upper bounds: `bisect_left(a, x)`, `bisect_right(a, x)`, `insort(a, x)`.
+
+**Avoid off-by-one bugs**: pick one style and stick to it — inclusive `lo <= hi` for exact match, or half-open `lo < hi` with `hi = len(a)` for "first index where condition is true".
+
+<Visual caption="Type a number and play: each step compares with the middle and throws away half of the list.">
+
+<BinarySearchVisualizer values={[2, 5, 8, 12, 16, 23, 38, 56, 72, 91]} target={23} />
+
+</Visual>
+
+## Code example
+
+```python
+from bisect import bisect_left, bisect_right
+
+def binary_search(a, target):
+    lo, hi, steps = 0, len(a) - 1, 0
+    while lo <= hi:
+        steps += 1
+        mid = (lo + hi) // 2
+        if a[mid] == target:
+            return mid, steps
+        if a[mid] < target:
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return -1, steps
+
+def first_true(lo, hi, ok):
+    """Smallest x in [lo, hi] with ok(x) True (ok is False...False True...True)."""
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if ok(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+def search_rotated(a, target):
+    lo, hi = 0, len(a) - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if a[mid] == target:
+            return mid
+        if a[lo] <= a[mid]:                       # left half sorted
+            if a[lo] <= target < a[mid]:
+                hi = mid - 1
+            else:
+                lo = mid + 1
+        else:                                     # right half sorted
+            if a[mid] < target <= a[hi]:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+    return -1
+
+big = list(range(0, 2_000_000, 2))
+print(binary_search(big, 1_234_568), "of", len(big), "items")
+a = [1, 2, 2, 2, 3, 5]
+print("first 2 at", bisect_left(a, 2), "| last 2 at", bisect_right(a, 2) - 1, "| count", bisect_right(a, 2) - bisect_left(a, 2))
+print("insert 4 at", bisect_left(a, 4))
+print("rotated:", search_rotated([4, 5, 6, 7, 0, 1, 2], 0))
+
+weights, days = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5
+def can_ship(cap):
+    need, load = 1, 0
+    for w in weights:
+        if load + w > cap:
+            need, load = need + 1, 0
+        load += w
+    return need <= days
+print("min ship capacity:", first_true(max(weights), sum(weights), can_ship))
+```
+
+```output
+(617284, 17) of 1000000 items
+first 2 at 1 | last 2 at 3 | count 3
+insert 4 at 5
+rotated: 4
+min ship capacity: 15
+```
+
+<Playground kind="python">
+
+```python
+def int_sqrt(n):
+    """Largest x with x*x <= n, by binary search."""
+    lo, hi = 0, n
+    while lo < hi:
+        mid = (lo + hi + 1) // 2      # round up so lo = mid always makes progress
+        if mid * mid <= n:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+print(int_sqrt(16), int_sqrt(17), int_sqrt(1_000_000), int_sqrt(2**60))
+
+# Try it: what goes wrong if you use (lo + hi) // 2 here? (hint: lo = 0, hi = 1)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Binary search on unsorted data">
+
+<Wrong>
+
+```python
+binary_search([9, 2, 7, 4], 7)      # may return -1: halves are discarded by a false assumption
+```
+
+</Wrong>
+
+<Right>
+
+```python
+a = sorted(data)                     # sort once O(n log n), then each search is O(log n)
+# or use a set for pure membership tests
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Infinite loop with lo = mid">
+
+<Wrong>
+
+```python
+while lo < hi:
+    mid = (lo + hi) // 2
+    if ok(mid): lo = mid           # when hi = lo + 1, mid == lo → never moves
+    else: hi = mid - 1
+```
+
+</Wrong>
+
+<Right>
+
+```python
+mid = (lo + hi + 1) // 2           # round up when the update is lo = mid
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is binary search and what does it require?">
+
+An O(log n) search that compares the target with the middle element of a sorted range and discards the half that cannot contain it, repeating until found or the range is empty. It requires sorted data or, more generally, a monotonic condition over the search space.
+
+</QA>
+
+<QA q="Find the first and last position of a value in a sorted array.">
+
+Run two binary searches: the lower bound (first index with a[i] ≥ target) and the upper bound (first index with a[i] > target) minus one. If the lower bound is out of range or a[lower] ≠ target, the value is absent. In Python, bisect_left and bisect_right do exactly this.
+
+</QA>
+
+<QA q="What is 'binary search on the answer'?">
+
+When the answer is a number in a known range and feasibility is monotonic (if capacity C works, any bigger capacity works), binary search the smallest feasible value, testing feasibility with a greedy check at each midpoint. Examples: minimum ship capacity in D days, minimum eating speed, splitting an array into k parts with minimum largest sum.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Max comparisons to search 1,000,000 sorted items?',
+      options: ['~20', '~1,000', '~500,000', '~100'],
+      answer: 0,
+      why: 'log₂(1,000,000) ≈ 20.',
+    },
+    {
+      q: 'bisect_left([1, 2, 2, 3], 2) returns...',
+      options: ['0', '1', '2', '3'],
+      answer: 1,
+      why: 'First index where 2 could go.',
+    },
+    {
+      q: 'Binary search requires...',
+      options: ['Unique values', 'Sorted data / monotonic condition', 'A linked list', 'Even length'],
+      answer: 1,
+      why: 'Otherwise halves cannot be discarded.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Exact match | `while lo <= hi` · `lo = mid+1` / `hi = mid-1` |
+| First true | `while lo < hi: mid = (lo+hi)//2; ok → hi = mid else lo = mid+1` |
+| Last true | `mid = (lo+hi+1)//2; ok → lo = mid else hi = mid-1` |
+| Lower / upper bound | `bisect_left` / `bisect_right` |
+| Insert sorted | `bisect.insort(a, x)` |
+| Rotated | find the sorted half |
+| On the answer | search value range + feasibility check |
+| Time | O(log n) |
+
+</CheatSheet>

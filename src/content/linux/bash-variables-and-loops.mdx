@@ -1,0 +1,241 @@
+---
+id: linux-bash-variables-and-loops
+title: Variables, if and loops in Bash
+summary: Bash has variables, arithmetic with $(( )), tests with [ ] for files, strings and numbers, if/elif/else/fi, for loops over lists, ranges and files, and while loops.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A security guard's instructions: "**If** the door is open, close it, **else** check the window. **For each** floor, walk the corridor. **While** it is night, check every hour." Bash writes exactly those instructions for the computer.
+
+</Analogy>
+
+## Simple explanation
+
+**Variables and arithmetic**
+
+```bash
+name="Shubham"            # no spaces around =
+count=3
+echo "Hi $name, you have ${count} new orders"
+total=$((count * 2 + 1))  # integer arithmetic
+((count++))               # increment
+files=$(ls logs | wc -l)  # command output
+echo "${PORT:-8000}"      # default if unset
+```
+
+**Tests: `[ ... ]`** (spaces inside the brackets are required)
+
+| Files | Strings | Numbers |
+| --- | --- | --- |
+| `-f file` exists, is a file | `-z "$s"` empty | `$a -eq $b` equal |
+| `-d dir` is a folder | `-n "$s"` not empty | `-ne` not equal |
+| `-e path` exists | `"$a" = "$b"` equal | `-lt` / `-le` less (or equal) |
+| `-x file` executable | `"$a" != "$b"` different | `-gt` / `-ge` greater (or equal) |
+| `-s file` not empty | | |
+
+`[[ ... ]]` is Bash's improved version (supports `&&`, `||`, patterns `== *.log`, regex `=~`). `(( ... ))` is for arithmetic conditions: `(( count > 5 ))`.
+
+**if / elif / else**
+
+```bash
+if [ -f .env ]; then
+  echo "found .env"
+elif [ -f .env.example ]; then
+  cp .env.example .env
+else
+  echo "no env file" >&2
+  exit 1
+fi
+```
+
+**for** loops
+
+```bash
+for env in dev staging prod; do echo "deploy to $env"; done
+for i in {1..5}; do echo "attempt $i"; done
+for f in logs/*.log; do echo "$f has $(wc -l < "$f") lines"; done
+for user in $(cut -d: -f1 /etc/passwd); do echo "$user"; done
+```
+
+**while** loops
+
+```bash
+attempt=1
+while [ $attempt -le 5 ]; do
+  curl -sf localhost:8000/health && break
+  echo "not ready, retry $attempt"
+  attempt=$((attempt + 1))
+  sleep 2
+done
+```
+
+`break` leaves the loop, `continue` skips to the next round. `until` is the opposite of while.
+
+## Code example
+
+```bash
+for f in logs/*.log; do
+  errors=$(grep -c ERROR "$f" || true)
+  if [ "$errors" -gt 0 ]; then
+    echo "$f: $errors errors"
+  else
+    echo "$f: clean"
+  fi
+done
+```
+
+```output
+logs/access.log: clean
+logs/app.log: 2 errors
+```
+
+<Playground kind="terminal">
+
+```bash
+name="Shubham"
+echo "Hello $name"
+count=4
+echo "double: $((count * 2))"
+if [ $count -gt 3 ]; then echo "big order"; else echo "small order"; fi
+if [ -f notes.txt ]; then echo "notes exist"; fi
+if [ -d backups ]; then echo "backups exist"; else echo "no backups folder"; fi
+for env in dev staging prod; do echo "deploy to $env"; done
+for i in {1..3}; do echo "attempt $i"; done
+for f in logs/*.log; do echo "$f: $(grep -c ERROR $f) errors"; done
+n=1; while [ $n -le 3 ]; do echo "check $n"; n=$((n+1)); done
+for i in {1..10}; do if [ $i -eq 4 ]; then break; fi; echo $i; done
+```
+
+</Playground>
+
+One-liners join the lines with `;`. In a script file you write them on separate lines, as in the code example.
+
+<Mistakes>
+
+<Mistake title="Missing spaces in [ ]">
+
+<Wrong>
+
+```bash
+if [$count -gt 3]; then      # "[4: command not found"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+if [ "$count" -gt 3 ]; then
+```
+
+</Right>
+
+`[` is a command, so it needs spaces around it like any command.
+
+</Mistake>
+
+<Mistake title="Comparing numbers with > inside [ ]">
+
+<Wrong>
+
+```bash
+if [ $a > $b ]; then         # > is a redirect here: creates a file named after $b
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+if [ "$a" -gt "$b" ]; then
+if (( a > b )); then
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Looping over ls output with spaces">
+
+<Wrong>
+
+```bash
+for f in $(ls *.log); do ...   # breaks on file names with spaces
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+for f in *.log; do ... "$f" ...; done
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you check if a file exists in Bash?">
+
+`if [ -f "/path/file" ]; then ... fi` for a regular file, `-d` for a directory, `-e` for any path. Combine with `!` to test that it does not exist: `if [ ! -f .env ]; then ...`.
+
+</QA>
+
+<QA q="What is the difference between [ ] and [[ ]]?">
+
+`[` is the POSIX test command and works in any sh; variables should be quoted and operators like && are not allowed inside. `[[ ]]` is a Bash keyword: no word splitting on variables, supports &&, ||, pattern matching with == and regex with =~, so it is safer in Bash scripts but not portable to plain sh.
+
+</QA>
+
+<QA q="Write a loop that retries a health check five times.">
+
+`for i in {1..5}; do curl -sf localhost:8000/health && exit 0; echo "retry $i"; sleep 2; done; exit 1`: exit with success as soon as curl succeeds, otherwise fail after five attempts.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Correct number comparison?',
+      options: ['[ $a > 5 ]', '[ $a -gt 5 ]', '[$a -gt 5]', 'if $a > 5'],
+      answer: 1,
+      why: '-gt inside [ ] with spaces.',
+    },
+    {
+      q: 'What prints 1 to 5?',
+      options: ['for i in 1-5', 'for i in {1..5}', 'for (1..5)', 'loop 5'],
+      answer: 1,
+      why: 'Brace range.',
+    },
+    {
+      q: 'Test that a folder exists?',
+      options: ['[ -f dir ]', '[ -d dir ]', '[ -x dir ]', '[ -z dir ]'],
+      answer: 1,
+      why: '-d = directory.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Piece | Syntax |
+| --- | --- |
+| Variable | `x=5` · `"$x"` · `${x:-default}` |
+| Arithmetic | `$((a + b))` · `((x++))` · `(( x > 3 ))` |
+| File tests | `-f` `-d` `-e` `-x` `-s` |
+| String tests | `-z` `-n` `=` `!=` |
+| Number tests | `-eq` `-ne` `-lt` `-le` `-gt` `-ge` |
+| if | `if [ cond ]; then ...; elif ...; else ...; fi` |
+| for | `for x in a b c; do ...; done` · `{1..5}` · `*.log` |
+| while | `while [ cond ]; do ...; done` |
+| Loop control | `break` · `continue` |
+
+</CheatSheet>

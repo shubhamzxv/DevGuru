@@ -13,6 +13,8 @@ export interface CommandResult {
   error?: boolean;
   /** true = clear the screen (the `clear` command). */
   clear?: boolean;
+  /** Exit status when it is not simply 0 / 1, or a non-zero status that is not an error (grep found nothing). */
+  exitCode?: number;
 }
 
 export interface Simulator {

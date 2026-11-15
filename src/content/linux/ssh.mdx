@@ -1,0 +1,212 @@
+---
+id: linux-ssh
+title: SSH and scp
+summary: SSH gives you an encrypted terminal on a remote server, best with key-based login (ssh -i key.pem user@host or keys in ~/.ssh); scp and rsync copy files over the same secure connection.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **lock and key** pair: you put a padlock (the **public key**) on the server's door; only your personal key (the **private key**), which never leaves your pocket, opens it. Anyone can see the padlock; nobody can copy your key from it.
+
+**SSH** is the secure tunnel through that door. **scp** passes parcels (files) through the same tunnel.
+
+</Analogy>
+
+## Simple explanation
+
+**Connect**
+
+```bash
+ssh ubuntu@13.233.10.20                     # user@host, port 22
+ssh -i ~/keys/shop.pem ec2-user@13.233.10.20   # with a key file (EC2)
+ssh -p 2222 deploy@server.example.com       # another port
+ssh user@host "df -h && uptime"             # run one command and come back
+exit                                        # leave
+```
+
+**Key-based login** (better than passwords):
+
+```bash
+ssh-keygen -t ed25519 -C "shubham@laptop"   # creates ~/.ssh/id_ed25519 (private) + .pub (public)
+ssh-copy-id deploy@server                    # adds the public key to the server's ~/.ssh/authorized_keys
+ssh deploy@server                            # no password now
+```
+
+- Private key: stays on your machine, `chmod 600`. Never share or commit it
+- Public key: goes into `~/.ssh/authorized_keys` on the server
+- First connection asks to trust the server's fingerprint; it is saved in `~/.ssh/known_hosts`
+
+**~/.ssh/config** saves typing:
+
+```text
+Host shop-prod
+    HostName 13.233.10.20
+    User ubuntu
+    IdentityFile ~/keys/shop.pem
+```
+
+Now just `ssh shop-prod`.
+
+**Copy files**
+
+```bash
+scp app.tar.gz ubuntu@server:/home/ubuntu/            # upload
+scp ubuntu@server:/var/log/nginx/error.log .          # download
+scp -r build/ ubuntu@server:/var/www/shop/            # folder
+rsync -avz --delete build/ ubuntu@server:/var/www/shop/   # sync: only changed files, faster
+```
+
+**Port forwarding** (reach a private database through the server):
+
+```bash
+ssh -L 5433:shop-db.internal:5432 ubuntu@bastion     # then connect to localhost:5433
+```
+
+**Harden the server** in `/etc/ssh/sshd_config`: `PasswordAuthentication no`, `PermitRootLogin no`, then `sudo systemctl restart ssh`. In AWS, allow port 22 only from your IP in the security group, or use **SSM Session Manager** with no open port at all.
+
+## Code example
+
+```bash
+ssh-keygen -t ed25519 -C "shubham@laptop"
+chmod 400 shop.pem
+ssh -i shop.pem ubuntu@13.233.10.20
+scp -i shop.pem release.tar.gz ubuntu@13.233.10.20:/home/ubuntu/
+```
+
+```output
+Generating public/private ed25519 key pair.
+Your identification has been saved in /home/guru/.ssh/id_ed25519
+Your public key has been saved in /home/guru/.ssh/id_ed25519.pub
+Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.8.0-1016-aws x86_64)
+ubuntu@ip-172-31-5-20:~$
+release.tar.gz                    100%   12MB   9.8MB/s   00:01
+```
+
+<Playground kind="terminal">
+
+```bash
+cat /etc/ssh/sshd_config
+systemctl status ssh
+ss -tulpn
+grep "Failed password" /var/log/auth.log
+grep "Accepted publickey" /var/log/auth.log
+ssh -i shop.pem ubuntu@13.233.10.20
+scp notes.txt ubuntu@13.233.10.20:/home/ubuntu/
+```
+
+</Playground>
+
+The simulator cannot reach a real server, but you can look at the SSH server's config, its status, port 22 in `ss`, and the failed and accepted logins in `auth.log`.
+
+<Mistakes>
+
+<Mistake title="Key file permissions too open">
+
+<Wrong>
+
+```bash
+ssh -i shop.pem ubuntu@host
+# WARNING: UNPROTECTED PRIVATE KEY FILE! ... bad permissions; key ignored
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+chmod 400 shop.pem
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Port 22 open to the whole internet with passwords">
+
+<Wrong>
+
+```text
+Security group: 22 from 0.0.0.0/0, PasswordAuthentication yes → thousands of brute-force attempts a day.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Key-only login, PermitRootLogin no, 22 open only to your IP (or SSM Session Manager), fail2ban if needed.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does SSH key authentication work?">
+
+You generate a key pair; the public key is placed in the server's ~/.ssh/authorized_keys. When connecting, the server challenges the client to prove it holds the matching private key by signing data; the private key never leaves the client. It is resistant to password guessing and can be protected with a passphrase.
+
+</QA>
+
+<QA q="What is the difference between scp and rsync?">
+
+Both copy over SSH. scp copies the files you name every time. rsync compares source and destination and transfers only the differences, can delete removed files (`--delete`), resume, preserve permissions and compress, so it is better for repeated deploys and backups.
+
+</QA>
+
+<QA q="How do you secure SSH on a server?">
+
+Use key-based authentication and disable password login and root login in sshd_config, restrict port 22 by firewall or security group to known IPs or use a bastion or SSM Session Manager, keep the server patched, consider fail2ban, and audit /var/log/auth.log.
+
+</QA>
+
+<QA q="How do you connect to a database in a private subnet from your laptop?">
+
+Through an SSH tunnel via a bastion host: `ssh -L 5433:db-host:5432 user@bastion`, then connect the client to localhost:5433. In AWS, SSM Session Manager port forwarding does the same without opening SSH.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which key goes on the server?',
+      options: ['Private key', 'Public key (.pub)', 'Both', 'Neither'],
+      answer: 1,
+      why: 'It goes into ~/.ssh/authorized_keys.',
+    },
+    {
+      q: 'Download error.log from the server to the current folder?',
+      options: ['scp error.log user@server:.', 'scp user@server:/var/log/nginx/error.log .', 'ssh get error.log', 'cp server:error.log'],
+      answer: 1,
+      why: 'scp SOURCE DEST; remote paths use user@host:path.',
+    },
+    {
+      q: 'Default SSH port?',
+      options: ['21', '22', '80', '443'],
+      answer: 1,
+      why: 'Port 22.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| Connect | `ssh user@host` · `ssh -i key.pem user@host` · `-p 2222` |
+| One command | `ssh user@host "uptime"` |
+| New key | `ssh-keygen -t ed25519` |
+| Install key | `ssh-copy-id user@host` |
+| Key permissions | `chmod 400 key.pem` · `chmod 700 ~/.ssh` |
+| Upload / download | `scp f user@host:/path` · `scp user@host:/path .` |
+| Folder | `scp -r dir user@host:/path` · `rsync -avz dir/ user@host:/path/` |
+| Tunnel | `ssh -L 5433:db:5432 user@bastion` |
+| Shortcut | `~/.ssh/config` with `Host` blocks |
+
+</CheatSheet>

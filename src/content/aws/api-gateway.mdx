@@ -1,0 +1,218 @@
+---
+id: aws-api-gateway
+title: API Gateway
+summary: Amazon API Gateway is a managed front door for APIs; HTTP APIs (cheaper, simpler) and REST APIs (more features) route requests to Lambda, HTTP backends or AWS services, and add authorization (JWT, IAM, Lambda authorizers, Cognito), throttling, CORS, custom domains, stages and logging, while WebSocket APIs keep two-way connections.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The **reception desk of an office tower**. Visitors never walk straight into departments: reception checks their ID badge (authorizer), sends them to the right floor (route → integration), limits how many people from one company may enter per minute (throttling), and keeps a visitor log (access logs).
+
+</Analogy>
+
+## Simple explanation
+
+| Type | When |
+| --- | --- |
+| **HTTP API** | most new APIs: Lambda/HTTP backends, JWT auth, CORS built in, lower cost and latency |
+| **REST API** | need API keys + usage plans, request validation, transformations, caching, WAF, private endpoints, direct AWS service integrations |
+| **WebSocket API** | chat, live dashboards: `$connect`, `$disconnect`, custom routes |
+
+**Pieces**
+
+| Piece | Example |
+| --- | --- |
+| **Route** | `POST /orders`, `GET /orders/{id}`, `$default` |
+| **Integration** | Lambda proxy, HTTP proxy to an ALB/URL, private integration via VPC link |
+| **Authorizer** | JWT (Cognito, Auth0), IAM (SigV4), Lambda authorizer (custom tokens) |
+| **Stage** | `dev`, `prod` with stage variables; auto-deploy for HTTP APIs |
+| **Custom domain** | `api.shop.example.com` with an ACM certificate + base path mapping `/v1` |
+| **Throttling** | default account limit (10,000 rps); per-route limits, usage plans |
+| **CORS** | allowed origins, methods, headers |
+| **Logging** | access logs + execution logs to CloudWatch; X-Ray tracing |
+
+**Lambda proxy event (HTTP API, payload v2)** your function receives: `routeKey`, `rawPath`, `headers`, `queryStringParameters`, `pathParameters`, `body` (string, maybe base64), `requestContext.authorizer.jwt.claims`. It returns `{statusCode, headers, body}`.
+
+Limits to remember: **29-second integration timeout** by default (REST API regional can request more), 10 MB payload. Long work → return 202 and process asynchronously (SQS, Step Functions).
+
+Alternatives: **Lambda function URLs** (simple single-function HTTPS endpoint), **ALB** with Lambda targets, **AppSync** for GraphQL.
+
+## Code example
+
+```bash
+# Create an HTTP API that sends every request to a Lambda function (quick create)
+aws apigatewayv2 create-api --name shop-api --protocol-type HTTP \
+  --target arn:aws:lambda:ap-south-1:123456789012:function:order-total
+aws lambda add-permission --function-name order-total --statement-id apigw \
+  --action lambda:InvokeFunction --principal apigateway.amazonaws.com \
+  --source-arn "arn:aws:execute-api:ap-south-1:123456789012:a1b2c3d4e5/*"
+
+curl -s -X POST https://a1b2c3d4e5.execute-api.ap-south-1.amazonaws.com/orders/total \
+  -H "Content-Type: application/json" -d '{"items":[{"price":450,"qty":1},{"price":199,"qty":2}]}'
+```
+
+```output
+{"items": 2, "total": 848}
+```
+
+Reading path parameters and JWT claims in the handler:
+
+```python
+def lambda_handler(event, context):
+    order_id = event["pathParameters"]["id"]                                  # GET /orders/{id}
+    user = event["requestContext"]["authorizer"]["jwt"]["claims"]["sub"]       # from the JWT authorizer
+    return {"statusCode": 200, "body": json.dumps({"order": order_id, "user": user})}
+```
+
+A FastAPI app can sit behind API Gateway on Lambda with **Mangum** (`handler = Mangum(app)`).
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "client", "label": "React app", "icon": "🌐", "col": 0, "row": 1, "info": "Calls https://api.shop.example.com/v1/orders with a Bearer token.", "example": "fetch with Authorization header" },
+    { "id": "gw", "label": "API Gateway (HTTP API)", "icon": "🚪", "col": 1, "row": 1, "info": "Custom domain + TLS, CORS, throttling, routes, access logs.", "example": "Route POST /orders" },
+    { "id": "auth", "label": "JWT authorizer", "icon": "🪪", "col": 1, "row": 0, "info": "Validates the token signature, issuer, audience and expiry (Cognito). Invalid → 401 before your code runs.", "example": "claims.sub = user id" },
+    { "id": "lambda", "label": "Lambda: create order", "icon": "⚡", "col": 2, "row": 0, "info": "Receives the event, writes to DynamoDB, returns the response.", "example": "statusCode 201" },
+    { "id": "alb", "label": "VPC link → ALB", "icon": "🔗", "col": 2, "row": 2, "info": "Private integration: GET /products/* goes to containers in private subnets.", "example": "Existing Django service" },
+    { "id": "ddb", "label": "DynamoDB", "icon": "🗃️", "col": 3, "row": 0, "info": "Order stored.", "example": "orders table" }
+  ],
+  "edges": [
+    ["client", "gw", "HTTPS"],
+    ["gw", "auth", "check token"],
+    ["gw", "lambda", "POST /orders"],
+    ["gw", "alb", "GET /products/*"],
+    ["lambda", "ddb"]
+  ],
+  "flows": [
+    {
+      "name": "Create an order",
+      "steps": [
+        ["client", "POST /v1/orders with a Bearer token."],
+        ["gw", "Route matched; throttling OK; CORS headers added."],
+        ["auth", "Token valid: claims passed to the integration."],
+        ["lambda", "Function runs with the user id from the claims."],
+        ["ddb", "Order saved."],
+        ["client", "201 Created."]
+      ]
+    },
+    {
+      "name": "Bad token",
+      "steps": [
+        ["client", "Expired token."],
+        ["auth", "Rejected: 401 Unauthorized. Lambda never runs (no cost)."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Long synchronous work behind API Gateway">
+
+<Wrong>
+
+```text
+POST /reports runs a 2-minute export in Lambda → API Gateway returns 504 after ~29 seconds.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+POST /reports puts a job on SQS and returns 202 + job id; the client polls GET /reports/{id} or gets a WebSocket/email.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Checking tokens yourself in every function">
+
+<Wrong>
+
+```python
+def lambda_handler(event, context):
+    token = event["headers"]["authorization"]   # hand-written JWT checks copied into 20 functions
+```
+
+</Wrong>
+
+<Right>
+
+```text
+A JWT/Cognito authorizer on the routes; functions read verified claims from requestContext.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between API Gateway HTTP APIs and REST APIs?">
+
+HTTP APIs are newer, cheaper and faster, supporting Lambda and HTTP integrations, JWT authorizers, CORS and auto-deploy. REST APIs offer more features: API keys and usage plans, request validation and mapping templates, response caching, WAF integration, private APIs and direct AWS service integrations.
+
+</QA>
+
+<QA q="How can you secure an API Gateway endpoint?">
+
+Authorizers (JWT/Cognito, IAM SigV4, Lambda authorizers), resource policies or private APIs reachable only from a VPC, WAF rules (REST), throttling and usage plans with API keys for partners, mutual TLS on custom domains, and least-privilege permissions on the integrations.
+
+</QA>
+
+<QA q="How does API Gateway integrate with Lambda?">
+
+With a Lambda proxy integration, API Gateway passes the full HTTP request as an event (method, path, headers, query, body, auth context) and invokes the function synchronously; the function returns statusCode, headers and body which are mapped to the HTTP response. Lambda needs a resource-based permission allowing apigateway.amazonaws.com to invoke it.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Cheapest choice for a JSON API on Lambda with JWT auth?',
+      options: ['REST API', 'HTTP API', 'WebSocket API', 'CloudFront only'],
+      answer: 1,
+      why: 'Simpler and cheaper.',
+    },
+    {
+      q: 'Default max integration time?',
+      options: ['3 s', '29 s', '15 min', 'No limit'],
+      answer: 1,
+      why: 'Long work should be asynchronous.',
+    },
+    {
+      q: 'Partner API keys with quotas?',
+      options: ['HTTP API JWT', 'REST API usage plans', 'Route 53', 'SNS'],
+      answer: 1,
+      why: 'Usage plans + API keys.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Feature |
+| --- | --- |
+| Lambda API | HTTP API + Lambda proxy |
+| Auth | JWT / Cognito · IAM · Lambda authorizer |
+| Domain | custom domain + ACM + base path `/v1` |
+| Limits | throttling per route · usage plans (REST) |
+| Private backend | VPC link → ALB/NLB |
+| Real time | WebSocket API |
+| Logs | access logs → CloudWatch · X-Ray |
+| Timeout | ~29 s → long jobs via SQS + 202 |
+| Lambda permission | `aws lambda add-permission --principal apigateway.amazonaws.com` |
+
+</CheatSheet>

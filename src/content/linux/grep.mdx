@@ -1,0 +1,198 @@
+---
+id: linux-grep
+title: grep
+summary: grep prints the lines that match a pattern; options such as -i (ignore case), -n (line numbers), -c (count), -v (invert), -r (recursive), -w (whole word), -E (extended regex) and -A/-B/-C (context) make it the main tool for searching logs and code.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A highlighter pen run down a 500-page register: you only keep the lines with the word you care about. **grep** does that in milliseconds, across one file or a whole project.
+
+</Analogy>
+
+## Simple explanation
+
+```bash
+grep PATTERN file
+grep "connection lost" logs/app.log
+```
+
+The options you will use daily:
+
+| Option | Meaning | Example |
+| --- | --- | --- |
+| `-i` | ignore case | `grep -i error app.log` |
+| `-n` | show line numbers | `grep -n TODO app.py` |
+| `-c` | count matching lines | `grep -c " 500 " access.log` |
+| `-v` | lines that do **not** match | `grep -v DEBUG app.log` |
+| `-r` / `-R` | search folders recursively | `grep -rn "SECRET_KEY" .` |
+| `-l` | only file names | `grep -rl "import requests" src/` |
+| `-w` | whole word only | `grep -w id models.py` |
+| `-E` | extended regex (`\|`, `+`, `?`) | `grep -E "ERROR\|WARN" app.log` |
+| `-o` | only the matching part | `grep -oE "[0-9.]+ms" app.log` |
+| `-A 3` / `-B 2` / `-C 2` | lines after / before / around | `grep -A 5 Traceback app.log` |
+| `-q` | quiet: only the exit status | `if grep -q ERROR app.log; then ...` |
+| `--include` | file filter for -r | `grep -rn "def " --include="*.py" .` |
+
+Patterns are **regular expressions**: `^` line start, `$` line end, `.` any character, `*` repeat, `[0-9]` a digit, `\b` word boundary. Quote patterns with spaces or special characters.
+
+Exit status: **0** = found, **1** = not found, **2** = error. Scripts use that with `-q`.
+
+Classic log searches:
+
+```bash
+grep " 500 " /var/log/nginx/access.log | tail          # recent server errors
+grep -c "Failed password" /var/log/auth.log            # brute-force attempts
+grep -B 2 -A 10 "Traceback" app.log                    # a Python error with context
+ps aux | grep -v grep | grep gunicorn                  # find a process (without the grep line)
+```
+
+`rg` (ripgrep) is a faster modern alternative for code: it respects `.gitignore` automatically.
+
+## Code example
+
+```bash
+grep ERROR logs/app.log
+grep -c INFO logs/app.log
+grep -n -i "slow" logs/app.log
+grep -v INFO logs/app.log
+grep -rn "gunicorn" app
+```
+
+```output
+2026-11-15 09:02:42 ERROR Database connection lost
+2026-11-15 09:05:17 ERROR Payment service timeout
+4
+3:2026-11-15 09:01:10 WARN  Slow query: 950ms
+2026-11-15 09:01:10 WARN  Slow query: 950ms
+2026-11-15 09:02:42 ERROR Database connection lost
+2026-11-15 09:05:17 ERROR Payment service timeout
+app/Dockerfile:7:CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]
+app/requirements.txt:2:gunicorn==23.0.0
+```
+
+<Playground kind="terminal">
+
+```bash
+grep ERROR logs/app.log
+grep -c INFO logs/app.log
+grep -in "slow" logs/app.log
+grep -v INFO logs/app.log
+grep " 401 " logs/access.log
+grep -c "POST /login" logs/access.log
+grep -rn gunicorn app
+grep "Failed password" /var/log/auth.log
+grep -q ERROR logs/app.log && echo "there are errors"
+grep NOTHING logs/app.log; echo "exit status: $?"
+```
+
+</Playground>
+
+The last line shows grep's exit status 1 when nothing matched: that is how scripts test for a match.
+
+<Mistakes>
+
+<Mistake title="Unquoted pattern with spaces or symbols">
+
+<Wrong>
+
+```bash
+grep connection lost app.log      # searches "connection" in files named "lost" and "app.log"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+grep "connection lost" app.log
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Using | without -E">
+
+<Wrong>
+
+```bash
+grep "ERROR|WARN" app.log         # searches the literal text ERROR|WARN
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+grep -E "ERROR|WARN" app.log
+grep -e ERROR -e WARN app.log
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you search for a word in all files of a project?">
+
+`grep -rn "word" .` (recursive with line numbers), adding `-i` for case-insensitive, `-w` for whole words, `--include="*.py"` to limit file types or `-l` to list only file names. ripgrep (`rg word`) is a faster alternative that skips ignored files.
+
+</QA>
+
+<QA q="How do you count how many requests returned 500 in an nginx log?">
+
+`grep -c '" 500 ' /var/log/nginx/access.log` counts matching lines; more precise is awk on the status field: `awk '$9 == 500' access.log | wc -l`.
+
+</QA>
+
+<QA q="How do you show lines around a match?">
+
+`-A N` prints N lines after, `-B N` before and `-C N` both, for example `grep -A 20 Traceback app.log` to see the full Python stack trace.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which option inverts the match?',
+      options: ['-i', '-v', '-n', '-c'],
+      answer: 1,
+      why: '-v prints lines that do not match.',
+    },
+    {
+      q: 'Search all files in folders below?',
+      options: ['-a', '-r', '-f', '-all'],
+      answer: 1,
+      why: 'Recursive.',
+    },
+    {
+      q: 'grep exit status when nothing matched?',
+      options: ['0', '1', '2', '127'],
+      answer: 1,
+      why: '0 found, 1 not found, 2 error.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Command |
+| --- | --- |
+| Basic | `grep "text" file` |
+| Case-insensitive, line numbers | `grep -in text file` |
+| Count / invert | `grep -c` · `grep -v` |
+| Whole project | `grep -rn text . --include="*.py"` |
+| Several words | `grep -E "ERROR\|WARN"` |
+| Context | `-A 5` · `-B 2` · `-C 3` |
+| In scripts | `grep -q text file && ...` |
+
+Regex: `^` start · `$` end · `.` any · `*` repeat · `[0-9]` digit · `\b` word edge
+
+</CheatSheet>

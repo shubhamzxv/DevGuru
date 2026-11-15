@@ -1,0 +1,226 @@
+---
+id: fastapi-request-body
+title: Request body
+summary: Data sent as JSON in POST, PUT and PATCH requests is declared with a Pydantic model as a function parameter; FastAPI parses, validates and converts it, and you can mix it with path and query parameters.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Posting a parcel: the **address** on the outside is the URL (path and query). The **contents** inside the box is the request body. The post office (FastAPI) opens the box and checks the contents against the packing list (your Pydantic model) before delivering it.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+from pydantic import BaseModel
+
+class OrderIn(BaseModel):
+    product_id: int              # required
+    quantity: int = 1            # optional, default 1
+    note: str | None = None      # optional, may be null
+
+@app.post("/orders", status_code=201)
+def create_order(order: OrderIn):
+    return {"received": order.model_dump()}
+```
+
+What FastAPI does with the JSON body:
+
+1. Reads it (needs `Content-Type: application/json`)
+2. Validates it against `OrderIn`: missing required fields, wrong types → **422** with the exact field
+3. Converts it to an `OrderIn` object: `order.product_id`, `order.quantity`
+4. Documents the schema in `/docs`
+
+Mixing parameter kinds in one endpoint:
+
+```python
+@app.put("/users/{user_id}/orders/{order_id}")
+def update(user_id: int, order_id: int, order: OrderIn, notify: bool = False):
+    ...
+```
+
+`user_id`, `order_id` → path · `order` → body · `notify` → query.
+
+Other useful pieces:
+
+- `order.model_dump()` → dict, `order.model_dump(exclude_unset=True)` → only fields the client sent (perfect for **PATCH**)
+- Several models: `def f(order: OrderIn, customer: Customer)` expects `{"order": {...}, "customer": {...}}`
+- A single extra value in the body: `priority: Annotated[int, Body()]`
+- `Body(embed=True)` wraps a single model under its name
+- GET requests should not have a body; use query parameters there
+- Form data (`Form()`) and file uploads (`UploadFile`) need `python-multipart`
+
+## Code example
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+
+class OrderIn(BaseModel):
+    product_id: int
+    quantity: int = 1
+    note: str | None = None
+
+@app.post("/orders", status_code=201)
+def create_order(order: OrderIn):
+    return {"received": order.model_dump(), "total_items": order.quantity}
+
+@app.put("/users/{user_id}/orders/{order_id}")
+def update(user_id: int, order_id: int, order: OrderIn, notify: bool = False):
+    return {"user_id": user_id, "order_id": order_id, "order": order, "notify": notify}
+```
+
+```output
+POST /orders {"product_id": 7, "quantity": 2}  -> 201 {"received": {"product_id": 7, "quantity": 2, "note": null}, "total_items": 2}
+POST /orders {"product_id": 7}                 -> 201 {"received": {"product_id": 7, "quantity": 1, "note": null}, "total_items": 1}
+POST /orders {"quantity": 2}                   -> 422 {"detail": [{"type": "missing", "loc": ["body", "product_id"], "msg": "Field required", "input": {"quantity": 2}}]}
+POST /orders {"product_id": "seven"}           -> 422 {"detail": [{"type": "int_parsing", "loc": ["body", "product_id"], ...}]}
+PUT  /users/5/orders/9?notify=true {"product_id": 7, "quantity": 3}
+                                               -> 200 {"user_id": 5, "order_id": 9, "order": {"product_id": 7, "quantity": 3, "note": null}, "notify": true}
+POST /orders  body: not json                   -> 422 (type: json_invalid)
+```
+
+The `loc` field tells the client exactly where the problem is: `["body", "product_id"]`.
+
+<Playground kind="none">
+
+```python
+# main.py  →  fastapi dev main.py
+# curl -X POST localhost:8000/orders -H "Content-Type: application/json" -d '{"product_id": 7, "quantity": 2}'
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+ORDERS: list[dict] = []
+
+class OrderIn(BaseModel):
+    product_id: int
+    quantity: int = 1
+    note: str | None = None
+
+@app.post("/orders", status_code=201)
+def create_order(order: OrderIn):
+    saved = {"id": len(ORDERS) + 1, **order.model_dump()}
+    ORDERS.append(saved)
+    return saved
+
+@app.get("/orders")
+def list_orders():
+    return ORDERS
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Reading the body by hand">
+
+<Wrong>
+
+```python
+@app.post("/orders")
+async def create(request: Request):
+    data = await request.json()
+    if "product_id" not in data: ...      # manual checks, no docs, no types
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.post("/orders")
+def create(order: OrderIn):               # validated, typed, documented
+    ...
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Forgetting the Content-Type header">
+
+<Wrong>
+
+```bash
+curl -X POST localhost:8000/orders -d '{"product_id": 7}'
+# curl sends application/x-www-form-urlencoded → 422
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+curl -X POST localhost:8000/orders -H "Content-Type: application/json" -d '{"product_id": 7}'
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you receive JSON in a FastAPI endpoint?">
+
+Declare a Pydantic model and use it as a parameter type. FastAPI reads the JSON body, validates it against the model, returns 422 with field-level errors if it is invalid, and passes an instance of the model to the function. The model also appears in the OpenAPI docs.
+
+</QA>
+
+<QA q="How would you implement a PATCH endpoint that updates only the fields sent?">
+
+Use a model where all fields are optional, then `updates = payload.model_dump(exclude_unset=True)` to get only the fields the client actually sent, and apply them to the stored object (for example `stored.model_copy(update=updates)` or setting attributes on the ORM object).
+
+</QA>
+
+<QA q="What status code does FastAPI return for an invalid body?">
+
+422 Unprocessable Entity, with a `detail` list describing each error: its type, its location (such as body → product_id), a message and the input. You can customise it with an exception handler for RequestValidationError.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'How do you declare a JSON body?',
+      options: ['A dict parameter', 'A Pydantic model parameter', 'Query()', 'Path()'],
+      answer: 1,
+      why: 'BaseModel subclasses are read from the body.',
+    },
+    {
+      q: 'In def f(user_id: int, order: OrderIn, notify: bool = False) with path /users/{user_id}, notify is...',
+      options: ['Path', 'Body', 'Query', 'Header'],
+      answer: 2,
+      why: 'A simple type not in the path is a query parameter.',
+    },
+    {
+      q: 'Only the fields the client sent?',
+      options: ['model_dump()', 'model_dump(exclude_unset=True)', 'dict(order)', 'order.json()'],
+      answer: 1,
+      why: 'Used for partial updates.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Body model | `class OrderIn(BaseModel): product_id: int` |
+| Use it | `def create(order: OrderIn)` |
+| Created status | `@app.post("/orders", status_code=201)` |
+| To dict | `order.model_dump()` |
+| Partial update | `order.model_dump(exclude_unset=True)` |
+| Extra body value | `priority: Annotated[int, Body()]` |
+| Form / files | `Form()`, `UploadFile` (+ python-multipart) |
+| Client | `-H "Content-Type: application/json" -d '{...}'` |
+
+</CheatSheet>

@@ -1,0 +1,221 @@
+---
+id: django-celery
+title: Background tasks with Celery (overview)
+summary: Celery runs slow or scheduled work outside the request in separate worker processes; Django puts a task message on a broker such as Redis, RabbitMQ or SQS, a worker executes it with retries, Celery beat schedules periodic tasks, and transaction.on_commit makes sure tasks only start after data is saved.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A restaurant's **order slip system**: the waiter writes the order on a slip, pins it to the rail (the broker) and goes back to customers immediately. Cooks in the kitchen (workers) pick slips one by one. If a dish fails, the cook tries again. A wall clock reminds them to bake bread every morning (beat).
+
+</Analogy>
+
+## Simple explanation
+
+```text
+Django view ──task.delay(order_id)──> Broker (Redis / RabbitMQ / SQS) ──> Celery worker(s) ──> email, PDF, API call
+                                                                      └─ results backend (optional)
+Celery beat (scheduler) ──every night──> Broker
+```
+
+**Setup**
+
+```python
+# config/celery.py
+import os
+from celery import Celery
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+app = Celery("shop")
+app.config_from_object("django.conf:settings", namespace="CELERY")
+app.autodiscover_tasks()                 # finds tasks.py in every app
+
+# config/__init__.py
+from .celery import app as celery_app
+
+# settings.py
+CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_TASK_ACKS_LATE = True             # re-deliver if a worker dies mid-task
+```
+
+**A task**
+
+```python
+# orders/tasks.py
+from celery import shared_task
+
+@shared_task(bind=True, autoretry_for=(ConnectionError,), retry_backoff=True, max_retries=5)
+def send_order_email(self, order_id):
+    order = Order.objects.select_related("customer").get(pk=order_id)   # re-read from the DB
+    send_mail("Order confirmed", f"Order #{order.pk}", None, [order.customer.email])
+```
+
+**Calling it**
+
+```python
+from django.db import transaction
+
+def place_order(user, cart):
+    order = create_order(user, cart)
+    transaction.on_commit(lambda: send_order_email.delay(order.pk))     # only after COMMIT
+    return order
+```
+
+**Run**
+
+```bash
+celery -A config worker -l info --concurrency 4
+celery -A config beat -l info              # periodic tasks
+```
+
+**Periodic tasks** (beat):
+
+```python
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    "nightly-sales-report": {"task": "reports.tasks.daily_sales", "schedule": crontab(hour=1, minute=0)},
+}
+```
+
+Rules for good tasks: pass **ids**, not model objects; make them **idempotent** (safe to run twice); set timeouts and retries; keep them small and chain/group bigger flows; monitor with **Flower**. On AWS: Redis on ElastiCache or **SQS** as broker, workers as a separate ECS service (same image, different command).
+
+When `BackgroundTasks`-style "after the response" is enough, Celery is overkill; when work must survive restarts, retry, scale or run on a schedule, use Celery.
+
+## Code example
+
+```output
+$ celery -A config worker -l info
+[tasks]
+  . orders.tasks.send_order_email
+  . reports.tasks.daily_sales
+celery@ip-172-31-5-20 ready.
+
+(Django)  POST /orders/  → 201 in 45 ms  (the email is NOT sent inside the request)
+(worker)  Task orders.tasks.send_order_email[7c1f...] received
+(worker)  Task orders.tasks.send_order_email[7c1f...] succeeded in 1.32s: None
+(worker)  SMTP timeout → Task ...[9a2b...] retry: Retry in 2s · 4s · 8s (retry_backoff)
+```
+
+<Playground kind="terminal">
+
+```bash
+docker run -d --name broker -p 6379:6379 redis:7
+docker exec broker redis-cli ping
+docker exec broker redis-cli set queue:celery "send_order_email(1)"
+docker exec broker redis-cli get queue:celery
+cat ~/app/compose.yaml
+```
+
+</Playground>
+
+In a real project the Compose file would add a `worker` service using the same image with the command `celery -A config worker -l info` (see Docker → Compose example).
+
+<Mistakes>
+
+<Mistake title="Passing model instances and calling before commit">
+
+<Wrong>
+
+```python
+order = Order.objects.create(...)
+send_order_email.delay(order)         # pickled object, stale data; may run before the transaction commits → DoesNotExist
+```
+
+</Wrong>
+
+<Right>
+
+```python
+transaction.on_commit(lambda: send_order_email.delay(order.pk))
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Non-idempotent tasks with retries">
+
+<Wrong>
+
+```python
+@shared_task(autoretry_for=(Exception,))
+def charge_customer(order_id):
+    gateway.charge(order_id)          # a retry after a timeout charges twice
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def charge_customer(order_id):
+    order = Order.objects.get(pk=order_id)
+    if order.paid: return
+    gateway.charge(order_id, idempotency_key=f"order-{order_id}")
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Celery and why use it with Django?">
+
+A distributed task queue: Django sends task messages to a broker (Redis, RabbitMQ, SQS) and separate worker processes execute them, with retries, time limits, routing to queues and scheduling via beat. It keeps slow or unreliable work (emails, PDFs, third-party APIs, reports) out of the request so responses stay fast and work survives failures.
+
+</QA>
+
+<QA q="Why use transaction.on_commit when calling tasks?">
+
+Because the task may start before the surrounding database transaction commits; the worker would then not find the new row or would see old data. on_commit schedules the delay call only after a successful commit, and skips it on rollback.
+
+</QA>
+
+<QA q="How do you schedule periodic jobs in Django?">
+
+Celery beat with a CELERY_BEAT_SCHEDULE (or django-celery-beat to edit schedules in the admin), a system cron or systemd timer running management commands, or cloud schedulers such as EventBridge Scheduler triggering ECS tasks or Lambda.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does the broker do?',
+      options: ['Runs tasks', 'Stores task messages until a worker takes them', 'Sends emails', 'Replaces the database'],
+      answer: 1,
+      why: 'Redis/RabbitMQ/SQS hold the queue.',
+    },
+    {
+      q: 'What should you pass to a task?',
+      options: ['The model instance', 'The object id', 'The request', 'A DB session'],
+      answer: 1,
+      why: 'Re-read fresh data in the worker.',
+    },
+    {
+      q: 'Run a task every night at 1 AM?',
+      options: ['BackgroundTasks', 'Celery beat with crontab(hour=1)', 'A signal', 'Middleware'],
+      answer: 1,
+      why: 'beat schedules periodic tasks.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| App | `app = Celery("shop"); app.config_from_object("django.conf:settings", namespace="CELERY"); app.autodiscover_tasks()` |
+| Task | `@shared_task(bind=True, autoretry_for=(...), retry_backoff=True)` |
+| Call | `task.delay(id)` · `task.apply_async(args=[id], countdown=60)` |
+| After commit | `transaction.on_commit(lambda: task.delay(id))` |
+| Worker / beat | `celery -A config worker -l info` · `celery -A config beat` |
+| Schedule | `CELERY_BEAT_SCHEDULE = {...: {"schedule": crontab(hour=1)}}` |
+| Monitor | Flower |
+
+</CheatSheet>

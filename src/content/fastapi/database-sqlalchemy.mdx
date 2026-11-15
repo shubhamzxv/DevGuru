@@ -1,0 +1,315 @@
+---
+id: fastapi-database-sqlalchemy
+title: Database with SQLAlchemy
+summary: SQLAlchemy 2.0 maps Python classes to tables; FastAPI gets a session per request from a yield dependency, uses select() to query, add() and commit() to save, Pydantic models with from_attributes to return rows, and Alembic for migrations.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **librarian** between you and the store room. You ask in plain language ("all books under 300 rupees, cheapest first"); the librarian translates it into the exact shelf instructions (SQL), fetches the books and hands them to you as books, not as raw shelf codes. **SQLAlchemy** is that librarian; the **session** is one visit to the desk.
+
+</Analogy>
+
+## Simple explanation
+
+**1. Engine and session factory** (`app/db.py`)
+
+```python
+from sqlalchemy import create_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
+
+engine = create_engine("postgresql+psycopg://shop:secret@localhost:5432/shop")   # or sqlite:///./shop.db
+SessionLocal = sessionmaker(bind=engine, autoflush=False)
+
+class Base(DeclarativeBase):
+    pass
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+```
+
+**2. Models (tables)** with SQLAlchemy 2.0 typed style
+
+```python
+from sqlalchemy import ForeignKey, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+class Product(Base):
+    __tablename__ = "products"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    price: Mapped[int]
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
+    category: Mapped["Category"] = relationship(back_populates="products")
+```
+
+**3. CRUD in endpoints**
+
+| Operation | Code |
+| --- | --- |
+| Get by id | `db.get(Product, product_id)` |
+| Query | `db.scalars(select(Product).where(Product.price <= 300).order_by(Product.price)).all()` |
+| One row | `db.scalars(select(User).where(User.email == email)).first()` |
+| Create | `db.add(obj); db.commit(); db.refresh(obj)` |
+| Update | set attributes, then `db.commit()` |
+| Delete | `db.delete(obj); db.commit()` |
+
+**4. Return rows through Pydantic**: `model_config = ConfigDict(from_attributes=True)` on the Out schema.
+
+**5. Migrations with Alembic** (not `create_all` in production):
+
+```bash
+alembic init alembic
+alembic revision --autogenerate -m "create products"
+alembic upgrade head
+```
+
+More to know: avoid **N+1 queries** with `selectinload(Category.products)`; set pool options (`pool_size`, `pool_pre_ping=True`); async apps can use `create_async_engine` + `AsyncSession` with `asyncpg`; SQLModel is a thin layer that combines SQLAlchemy and Pydantic models.
+
+## Code example
+
+```python
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import ForeignKey, String, create_engine, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+
+engine = create_engine("sqlite:///./shop.db", connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(bind=engine, autoflush=False)
+
+class Base(DeclarativeBase):
+    pass
+
+class Category(Base):
+    __tablename__ = "categories"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), unique=True)
+    products: Mapped[list["Product"]] = relationship(back_populates="category")
+
+class Product(Base):
+    __tablename__ = "products"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    price: Mapped[int]
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
+    category: Mapped[Category] = relationship(back_populates="products")
+
+Base.metadata.create_all(engine)            # demo only; use Alembic in real projects
+
+class ProductIn(BaseModel):
+    name: str
+    price: int
+    category_id: int
+
+class ProductOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    price: int
+    category_id: int
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+app = FastAPI()
+
+@app.post("/products", response_model=ProductOut, status_code=201)
+def create_product(data: ProductIn, db: Session = Depends(get_db)):
+    if db.get(Category, data.category_id) is None:
+        raise HTTPException(404, "Category not found")
+    product = Product(**data.model_dump())
+    db.add(product)
+    db.commit()
+    db.refresh(product)                      # loads the new id from the database
+    return product
+
+@app.get("/products", response_model=list[ProductOut])
+def list_products(max_price: int | None = None, db: Session = Depends(get_db)):
+    stmt = select(Product).order_by(Product.price)
+    if max_price is not None:
+        stmt = stmt.where(Product.price <= max_price)
+    return db.scalars(stmt).all()
+
+@app.delete("/products/{product_id}", status_code=204)
+def delete_product(product_id: int, db: Session = Depends(get_db)):
+    product = db.get(Product, product_id)
+    if product is None:
+        raise HTTPException(404, "Product not found")
+    db.delete(product)
+    db.commit()
+```
+
+```output
+(categories 1 = books and 2 = electronics were inserted first)
+POST /products {"name": "Clean Code", "price": 450, "category_id": 1} -> 201 {"id": 1, "name": "Clean Code", "price": 450, "category_id": 1}
+POST /products {"name": "USB Cable", "price": 199, "category_id": 2}  -> 201 {"id": 2, "name": "USB Cable", "price": 199, "category_id": 2}
+POST /products {"name": "Toy", "price": 99, "category_id": 9}         -> 404 {"detail": "Category not found"}
+GET /products                -> 200 [{"id": 2, "name": "USB Cable", "price": 199, ...}, {"id": 1, "name": "Clean Code", "price": 450, ...}]
+GET /products?max_price=300  -> 200 [{"id": 2, "name": "USB Cable", "price": 199, "category_id": 2}]
+DELETE /products/2           -> 204
+GET /products/2              -> 404 {"detail": "Product not found"}
+```
+
+<Playground kind="sql">
+
+```sql
+-- The SQL that SQLAlchemy generates for the endpoints above:
+CREATE TABLE categories (id INTEGER PRIMARY KEY, name VARCHAR(50) UNIQUE);
+CREATE TABLE products (id INTEGER PRIMARY KEY, name VARCHAR(100), price INTEGER,
+                       category_id INTEGER REFERENCES categories(id));
+INSERT INTO categories (name) VALUES ('books'), ('electronics');
+INSERT INTO products (name, price, category_id) VALUES ('Clean Code', 450, 1), ('USB Cable', 199, 2);
+
+SELECT * FROM products WHERE price <= 300 ORDER BY price;
+SELECT c.name, COUNT(p.id) AS products FROM categories c LEFT JOIN products p ON p.category_id = c.id GROUP BY c.name;
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting commit">
+
+<Wrong>
+
+```python
+db.add(product)
+return product            # nothing saved; the session closes and rolls back
+```
+
+</Wrong>
+
+<Right>
+
+```python
+db.add(product)
+db.commit()
+db.refresh(product)
+return product
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="N+1 queries">
+
+<Wrong>
+
+```python
+for category in db.scalars(select(Category)).all():
+    print(category.name, len(category.products))    # one extra query per category
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from sqlalchemy.orm import selectinload
+categories = db.scalars(select(Category).options(selectinload(Category.products))).all()   # 2 queries total
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="create_all instead of migrations">
+
+<Wrong>
+
+```text
+Base.metadata.create_all() in production: it never changes existing tables, so new columns are missing.
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+alembic revision --autogenerate -m "add discount to products"
+alembic upgrade head
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you connect FastAPI to a database?">
+
+Create a SQLAlchemy engine and a sessionmaker, define models on a DeclarativeBase, and provide a `get_db` dependency that yields a session per request and closes it afterwards. Endpoints receive `db: Session = Depends(get_db)`, query with select(), commit changes, and return rows through Pydantic schemas with from_attributes. Schema changes are managed with Alembic migrations.
+
+</QA>
+
+<QA q="What is the N+1 query problem and how do you fix it?">
+
+Loading a list of N parent rows with one query and then lazily loading each row's relationship in a loop causes N extra queries. Fix it with eager loading: `selectinload` (a second IN query) or `joinedload` (a JOIN), or by writing a single aggregate query.
+
+</QA>
+
+<QA q="Why use Alembic?">
+
+It versions database schema changes as migration scripts that can be reviewed, applied in order (`upgrade head`) and rolled back (`downgrade`) consistently across environments. `create_all` only creates missing tables and cannot alter existing ones.
+
+</QA>
+
+<QA q="Sync or async SQLAlchemy with FastAPI?">
+
+Sync SQLAlchemy with def endpoints is simple and works well because FastAPI uses a thread pool. Async SQLAlchemy (create_async_engine, AsyncSession, asyncpg) with async def endpoints helps under very high concurrency, but every call must be awaited and lazy loading needs care.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'After db.add(obj), what saves it?',
+      options: ['db.save()', 'db.commit()', 'db.close()', 'Nothing needed'],
+      answer: 1,
+      why: 'commit writes the transaction.',
+    },
+    {
+      q: 'Get the new id after commit?',
+      options: ['db.refresh(obj)', 'db.get()', 'obj.reload()', 'select max(id)'],
+      answer: 0,
+      why: 'refresh reloads the row (often automatic too).',
+    },
+    {
+      q: 'Fix N+1 when listing categories with products?',
+      options: ['More workers', 'selectinload(Category.products)', 'A bigger server', 'Remove relationships'],
+      answer: 1,
+      why: 'Eager-load the relationship.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Engine | `create_engine("postgresql+psycopg://u:p@host/db", pool_pre_ping=True)` |
+| Session per request | `def get_db(): db = SessionLocal(); try: yield db; finally: db.close()` |
+| Model | `class X(Base): __tablename__ = "x"; id: Mapped[int] = mapped_column(primary_key=True)` |
+| By id | `db.get(X, id)` |
+| Query | `db.scalars(select(X).where(...).order_by(...)).all()` |
+| Save | `db.add(o); db.commit(); db.refresh(o)` |
+| Delete | `db.delete(o); db.commit()` |
+| Eager load | `.options(selectinload(X.items))` |
+| Schema | `ConfigDict(from_attributes=True)` |
+| Migrations | `alembic revision --autogenerate -m "..."` · `alembic upgrade head` |
+
+</CheatSheet>

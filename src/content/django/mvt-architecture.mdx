@@ -1,0 +1,218 @@
+---
+id: django-mvt-architecture
+title: MVT architecture
+summary: Django follows Model-View-Template; the Model handles data, the View holds the request logic and the Template renders HTML, while Django's URL dispatcher plays the controller role that MVC frameworks give to the controller.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A restaurant: the **store room** holds the ingredients (Model), the **chef** decides what to cook for each order (View), and the **plating** makes it look right on the table (Template). The **waiter** who takes the order to the right chef is the URL dispatcher.
+
+</Analogy>
+
+## Simple explanation
+
+```text
+Browser ──GET /products/──> URLconf ──> View ──> Model (ORM) ──> Database
+                                         │
+                                         └──> Template ──> HTML response
+```
+
+| Part | Django file | Responsibility |
+| --- | --- | --- |
+| **Model** | `models.py` | data structure, database access, business rules close to the data |
+| **View** | `views.py` | receive the request, fetch/change data, choose the response |
+| **Template** | `templates/*.html` | presentation: HTML with `{{ variables }}` and `{% tags %}` |
+| (URLconf) | `urls.py` | map URL patterns to views |
+
+**MVT vs MVC**: in classic MVC the **Controller** handles input and the **View** is the presentation. Django's naming is shifted:
+
+| MVC | Django MVT |
+| --- | --- |
+| Model | Model |
+| Controller | View (+ URLconf, and the framework itself) |
+| View | Template |
+
+For a **JSON API** (Django REST Framework) the "template" is replaced by a **serializer** that turns models into JSON.
+
+Where business logic goes: simple rules on the model (methods, managers), request handling in views, and complex multi-model workflows in a **service layer** (`services.py`) so views stay thin and logic is testable.
+
+## Code example
+
+```python
+# models.py: data
+class Product(models.Model):
+    name = models.CharField(max_length=100)
+    price = models.DecimalField(max_digits=8, decimal_places=2)
+    stock = models.PositiveIntegerField(default=0)
+
+# views.py: logic
+def product_list(request):
+    products = Product.active.select_related("category")
+    q = request.GET.get("q")
+    if q:
+        products = products.filter(name__icontains=q)
+    return render(request, "store/product_list.html", {"products": products, "q": q})
+
+# urls.py: routing
+urlpatterns = [path("", views.product_list, name="product-list")]
+```
+
+```html
+<!-- templates/store/product_list.html: presentation -->
+<h1>Products{% if q %} matching "{{ q }}"{% endif %}</h1>
+<ul>
+{% for product in products %}
+  <li>{{ product.name }} ({{ product.category.name }}) ₹{{ product.price|floatformat:0 }}</li>
+{% empty %}
+  <li>No products found.</li>
+{% endfor %}
+</ul>
+```
+
+```output
+GET /products/?q=cable  →  Products matching "cable" · USB Cable (Electronics) ₹199
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "browser", "label": "Browser", "icon": "🌐", "col": 0, "row": 1, "info": "Sends GET /products/?q=cable.", "example": "A customer searching for a cable." },
+    { "id": "urls", "label": "URLconf (urls.py)", "icon": "🧭", "col": 1, "row": 1, "info": "Matches the path to a view. Plays the controller's routing role.", "example": "path('', views.product_list)" },
+    { "id": "view", "label": "View (views.py)", "icon": "🧑‍🍳", "col": 2, "row": 1, "info": "The logic: reads request.GET, asks the model for data, picks a template.", "example": "product_list(request)" },
+    { "id": "model", "label": "Model (models.py)", "icon": "🗃️", "col": 3, "row": 0, "info": "Defines the data and runs ORM queries.", "example": "Product.active.filter(name__icontains='cable')" },
+    { "id": "db", "label": "Database", "icon": "🛢️", "col": 4, "row": 0, "info": "PostgreSQL or SQLite. Receives the SQL the ORM generated.", "example": "SELECT ... WHERE name LIKE '%cable%'" },
+    { "id": "template", "label": "Template (.html)", "icon": "🎨", "col": 3, "row": 2, "info": "Turns the data into HTML with variables, loops and filters.", "example": "{% for product in products %}" }
+  ],
+  "edges": [
+    ["browser", "urls", "request"],
+    ["urls", "view"],
+    ["view", "model", "query"],
+    ["model", "db", "SQL"],
+    ["view", "template", "context"],
+    ["template", "browser", "HTML"]
+  ],
+  "flows": [
+    {
+      "name": "Search products",
+      "steps": [
+        ["browser", "GET /products/?q=cable"],
+        ["urls", "The URL matches product_list."],
+        ["view", "The view reads q='cable' and asks for matching products."],
+        ["model", "The ORM builds the query."],
+        ["db", "The database returns one row: USB Cable."],
+        ["view", "The view passes {products, q} to the template."],
+        ["template", "The template renders the list as HTML."],
+        ["browser", "The page shows: USB Cable (Electronics) ₹199."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Fat views">
+
+<Wrong>
+
+```python
+def checkout(request):
+    # 150 lines: stock checks, price rules, payment call, emails, inventory updates...
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def checkout(request):
+    order = services.place_order(user=request.user, cart=request.session["cart"])   # logic in a service
+    return redirect("orders:detail", pk=order.pk)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Queries inside templates">
+
+<Wrong>
+
+```html
+{% for order in user.orders.all %}{% for item in order.items.all %}{{ item.product.name }}{% endfor %}{% endfor %}
+<!-- N+1 queries hidden in the template -->
+```
+
+</Wrong>
+
+<Right>
+
+```python
+orders = request.user.orders.prefetch_related("items__product")   # fetch in the view, then loop in the template
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain Django's MVT architecture.">
+
+The Model defines data and talks to the database through the ORM, the View contains the request-handling logic and decides what to return, and the Template renders the presentation. The URL dispatcher routes requests to views, so Django itself acts as the controller; MVT's View corresponds to MVC's Controller and the Template to MVC's View.
+
+</QA>
+
+<QA q="Where do you put business logic in Django?">
+
+Small rules that belong to one model go in model methods, properties or custom managers/querysets; views stay thin and handle HTTP concerns; workflows spanning several models, external services or transactions go in a service layer that is easy to unit test.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In MVT, what plays the MVC "view" (presentation) role?',
+      options: ['Model', 'View', 'Template', 'URLconf'],
+      answer: 2,
+      why: 'Templates render the output.',
+    },
+    {
+      q: 'Which file maps URLs to views?',
+      options: ['models.py', 'urls.py', 'admin.py', 'apps.py'],
+      answer: 1,
+      why: 'The URLconf.',
+    },
+    {
+      q: 'In a DRF API, what replaces the template?',
+      options: ['Middleware', 'Serializer', 'Signal', 'Form'],
+      answer: 1,
+      why: 'Serializers turn models into JSON.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Layer | File | Example |
+| --- | --- | --- |
+| Model | `models.py` | `class Product(models.Model)` |
+| View | `views.py` | `def product_list(request)` |
+| Template | `templates/app/*.html` | `{% for p in products %}` |
+| URLs | `urls.py` | `path("", views.product_list)` |
+| API output | `serializers.py` | `ProductSerializer` |
+| Workflows | `services.py` | `place_order(user, cart)` |
+
+MVC Controller ≈ Django View · MVC View ≈ Django Template
+
+</CheatSheet>

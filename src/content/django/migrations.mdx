@@ -1,0 +1,233 @@
+---
+id: django-migrations
+title: Migrations
+summary: Migrations are versioned Python files that record model changes; makemigrations creates them from your models, migrate applies them to the database, showmigrations and sqlmigrate inspect them, and data migrations with RunPython change existing rows.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Renovating a house with a **logbook**: "Step 1: build kitchen. Step 2: add window. Step 3: move door." Any builder can take an empty plot and follow the log to get the same house, or see which steps a house already has. Migrations are that logbook for your database.
+
+</Analogy>
+
+## Simple explanation
+
+The loop every time models change:
+
+```bash
+python manage.py makemigrations          # 1. compare models with the last migration → write a new file
+python manage.py migrate                 # 2. apply unapplied migrations to the database
+```
+
+Files live in `<app>/migrations/0001_initial.py`, `0002_product_discount.py`... and are **committed to git**. Django records applied ones in the `django_migrations` table.
+
+Useful commands:
+
+| Command | Does |
+| --- | --- |
+| `showmigrations` | `[X]` applied, `[ ]` pending |
+| `sqlmigrate store 0002` | the SQL a migration will run |
+| `migrate store 0001` | go back to 0001 (runs the reverse operations) |
+| `makemigrations --check --dry-run` | fail in CI if someone forgot to create migrations |
+| `squashmigrations store 0001 0020` | combine many into one |
+| `migrate --fake` | mark as applied without running (careful!) |
+
+**Data migrations**: change rows, not just schema:
+
+```python
+from django.db import migrations
+
+def fill_slugs(apps, schema_editor):
+    Category = apps.get_model("store", "Category")      # the historical model, not an import
+    for c in Category.objects.filter(slug=""):
+        c.slug = c.name.lower().replace(" ", "-")
+        c.save(update_fields=["slug"])
+
+class Migration(migrations.Migration):
+    dependencies = [("store", "0002_category_slug")]
+    operations = [migrations.RunPython(fill_slugs, migrations.RunPython.noop)]
+```
+
+**Safe changes on a live database**:
+
+- Adding a NOT NULL column: give a `default` (or add as nullable → backfill → make NOT NULL)
+- Renaming: Django asks "Did you rename...?"; answer yes so it renames instead of drop + add
+- Removing a column: first deploy code that no longer uses it, then remove it
+- Big tables: indexes with `AddIndexConcurrently` (PostgreSQL) to avoid locking
+- Run `migrate` as a **deploy step** before the new code starts, once
+
+## Code example
+
+```bash
+python manage.py makemigrations store
+python manage.py migrate
+python manage.py showmigrations store
+python manage.py sqlmigrate store 0001
+```
+
+```output
+Migrations for 'store':
+  store/migrations/0001_initial.py
+    + Create model Category
+    + Create model Tag
+    + Create model Order
+    + Create model Product
+    + Create model OrderItem
+    + Create model Profile
+    + Create index store_produ_categor_ca64c7_idx on field(s) category, price of model product
+Running migrations:
+  Applying store.0001_initial... OK
+store
+ [X] 0001_initial
+BEGIN;
+--
+-- Create model Category
+--
+CREATE TABLE "store_category" ("id" integer NOT NULL PRIMARY KEY AUTOINCREMENT, "name" varchar(50) NOT NULL UNIQUE, "slug" varchar(50) NOT NULL UNIQUE);
+...
+```
+
+<Playground kind="sql">
+
+```sql
+-- What a migration "AddField discount to product" does, by hand:
+CREATE TABLE store_product (id INTEGER PRIMARY KEY, name TEXT NOT NULL, price DECIMAL NOT NULL);
+INSERT INTO store_product (name, price) VALUES ('Clean Code', 450), ('USB Cable', 199);
+
+-- 0002_product_discount: a NOT NULL column needs a default for existing rows
+ALTER TABLE store_product ADD COLUMN discount INTEGER NOT NULL DEFAULT 0;
+SELECT * FROM store_product;
+
+-- Django's bookkeeping table
+CREATE TABLE django_migrations (id INTEGER PRIMARY KEY, app TEXT, name TEXT, applied TEXT);
+INSERT INTO django_migrations (app, name, applied) VALUES ('store', '0001_initial', '2026-11-15'), ('store', '0002_product_discount', '2026-11-16');
+SELECT app, name FROM django_migrations;
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Not committing migration files">
+
+<Wrong>
+
+```text
+Each developer runs makemigrations locally; migration files are in .gitignore.
+Production gets different migrations than development → "table already exists", lost data.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Create migrations once, review and commit them; every environment runs the same files with migrate.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Importing models in a data migration">
+
+<Wrong>
+
+```python
+from store.models import Category        # today's model: breaks when fields change later
+```
+
+</Wrong>
+
+<Right>
+
+```python
+Category = apps.get_model("store", "Category")   # the model as it was at this migration
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Editing an applied migration">
+
+<Wrong>
+
+```text
+Changing 0003 after it ran in production: the database and the file now disagree.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Write a new migration (0004) that makes the change.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are Django migrations?">
+
+Version-controlled Python files describing schema operations (create model, add field, alter field, add index, run Python). makemigrations generates them by comparing models to the migration history; migrate applies pending ones in dependency order and records them in django_migrations. They make schema changes reproducible across environments and reversible.
+
+</QA>
+
+<QA q="How do you add a non-nullable column to a large production table safely?">
+
+Add it with a default (or nullable first), deploy, backfill existing rows in batches with a data migration or script, then alter it to NOT NULL; create indexes concurrently on PostgreSQL; and run migrations as a controlled deploy step, checking the SQL with sqlmigrate beforehand.
+
+</QA>
+
+<QA q="What is a data migration?">
+
+A migration with RunPython (or RunSQL) operations that transform existing data, for example filling a new column or splitting a field, using `apps.get_model` to get the historical model and providing a reverse function or noop.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command writes the migration file?',
+      options: ['migrate', 'makemigrations', 'showmigrations', 'sqlmigrate'],
+      answer: 1,
+      why: 'migrate applies it.',
+    },
+    {
+      q: 'Where does Django record applied migrations?',
+      options: ['settings.py', 'the django_migrations table', 'git', 'a cache'],
+      answer: 1,
+      why: 'One row per applied migration.',
+    },
+    {
+      q: 'See the SQL of a migration?',
+      options: ['sqlmigrate app 0002', 'migrate --sql', 'showmigrations -v', 'dbshell'],
+      answer: 0,
+      why: 'sqlmigrate prints it without running it.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| Create | `python manage.py makemigrations [app]` |
+| Apply | `python manage.py migrate` |
+| Status | `showmigrations` |
+| SQL | `sqlmigrate app 0002` |
+| Roll back | `migrate app 0001` |
+| CI check | `makemigrations --check --dry-run` |
+| Data change | `migrations.RunPython(forward, reverse)` + `apps.get_model()` |
+| Combine | `squashmigrations app 0001 0020` |
+
+</CheatSheet>

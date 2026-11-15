@@ -1,0 +1,232 @@
+---
+id: dsa-quick-sort
+title: Quick sort
+summary: Quick sort picks a pivot, partitions the list so smaller items go left and larger go right, then sorts both sides recursively; it averages O(n log n) and sorts in place, but degrades to O(n²) with bad pivots, so random or median pivots are used, and its partition step powers quickselect for the k-th smallest item.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Sorting students by height for a photo. The teacher picks one student (the **pivot**) and says: "everyone shorter, stand on the left; everyone taller, on the right." Now the pivot is exactly in the right place. Then the same is done for the left group and the right group separately.
+
+</Analogy>
+
+## Simple explanation
+
+```text
+[7, 2, 9, 4, 3, 8]   pivot = 4
+partition → [2, 3] 4 [7, 9, 8]     4 is in its final position
+recurse   → [2, 3] and [7, 8, 9]
+result    → [2, 3, 4, 7, 8, 9]
+```
+
+**Partition** (Lomuto scheme): walk through the range, swapping items smaller than the pivot to the front; finally swap the pivot into place. O(n) for the range.
+
+| Case | When | Time |
+| --- | --- | --- |
+| Best / average | pivot splits roughly in half | **O(n log n)** |
+| Worst | pivot is always the smallest/largest (sorted input + first/last pivot) | **O(n²)** |
+
+**Avoid the worst case**: random pivot, median-of-three, or three-way partitioning when there are many duplicates.
+
+| Property | Quick sort |
+| --- | --- |
+| Extra space | O(log n) average (recursion), in place |
+| Stable | **no** |
+| Strengths | fast in practice, cache-friendly, in place |
+
+**Quickselect**: to find the k-th smallest item, partition once and recurse into **only one side** → average **O(n)** (used for "k-th largest", medians, top-k without full sorting).
+
+<Visual caption="Purple is the pivot. Watch smaller items move to its left, then each side is sorted.">
+
+<SortVisualizer algorithm="quick" values={[7, 2, 9, 4, 3, 8, 1, 6]} />
+
+</Visual>
+
+## Code example
+
+```python
+import random
+
+def partition(a, lo, hi):
+    """Lomuto: pivot = a[hi]; returns the pivot's final index."""
+    pivot = a[hi]
+    i = lo
+    for j in range(lo, hi):
+        if a[j] < pivot:
+            a[i], a[j] = a[j], a[i]
+            i += 1
+    a[i], a[hi] = a[hi], a[i]
+    return i
+
+def quick_sort(a, lo=0, hi=None):
+    if hi is None:
+        hi = len(a) - 1
+    if lo < hi:
+        r = random.randint(lo, hi)          # random pivot avoids the sorted-input worst case
+        a[r], a[hi] = a[hi], a[r]
+        p = partition(a, lo, hi)
+        quick_sort(a, lo, p - 1)
+        quick_sort(a, p + 1, hi)
+    return a
+
+def kth_smallest(a, k):
+    """Quickselect, average O(n). k is 1-based."""
+    a = a[:]
+    lo, hi = 0, len(a) - 1
+    while True:
+        p = partition(a, lo, hi)
+        if p == k - 1:
+            return a[p]
+        if p < k - 1:
+            lo = p + 1
+        else:
+            hi = p - 1
+
+random.seed(1)
+demo = [7, 2, 9, 4, 3, 8]
+p = partition(demo, 0, len(demo) - 1)       # last item (8) as pivot
+print("after one partition:", demo, "pivot index", p)
+print(quick_sort([7, 2, 9, 4, 3, 8, 1, 6]))
+print("3rd smallest:", kth_smallest([7, 2, 9, 4, 3, 8], 3))
+print("2nd largest:", kth_smallest([3, 2, 1, 5, 6, 4], 6 - 2 + 1))
+```
+
+```output
+after one partition: [7, 2, 4, 3, 8, 9] pivot index 4
+[1, 2, 3, 4, 6, 7, 8, 9]
+3rd smallest: 4
+2nd largest: 5
+```
+
+<Playground kind="python">
+
+```python
+import sys
+sys.setrecursionlimit(10_000)
+calls = 0
+
+def quick_sort_last_pivot(a, lo, hi):
+    global calls
+    calls += 1
+    if lo < hi:
+        pivot, i = a[hi], lo
+        for j in range(lo, hi):
+            if a[j] < pivot:
+                a[i], a[j] = a[j], a[i]; i += 1
+        a[i], a[hi] = a[hi], a[i]
+        quick_sort_last_pivot(a, lo, i - 1)
+        quick_sort_last_pivot(a, i + 1, hi)
+
+data = list(range(500))                      # already sorted: the worst case for a last-item pivot
+quick_sort_last_pivot(data, 0, len(data) - 1)
+print("calls on sorted input:", calls)       # ~n calls deep → O(n²) comparisons
+
+# Try it: shuffle data first (import random; random.shuffle(data)) and compare the calls.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Always using the first or last item as pivot">
+
+<Wrong>
+
+```text
+Pivot = a[hi] on already sorted data → partitions of size n-1 and 0 → O(n²), deep recursion.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Random pivot (swap a random index into hi) or median-of-three.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Assuming quick sort is stable">
+
+<Wrong>
+
+```text
+Sort orders by date with quick sort, then expect equal dates to keep their previous order.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Use a stable sort (sorted(), merge sort) when the order of equal items matters.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain quick sort and its time complexity.">
+
+Choose a pivot, partition the array so elements smaller than the pivot are on its left and larger ones on its right (the pivot is then in its final position), and recursively sort both sides. Average O(n log n) with O(log n) stack space; worst case O(n²) when partitions are very unbalanced, which random or median-of-three pivots make unlikely.
+
+</QA>
+
+<QA q="How do you find the k-th largest element without sorting everything?">
+
+Quickselect: partition around a pivot and recurse only into the side containing the target index, giving average O(n). Alternatively keep a min-heap of size k (O(n log k)), which is simpler and good for streaming data.
+
+</QA>
+
+<QA q="Why is quick sort often faster than merge sort in practice?">
+
+It sorts in place with sequential memory access, which is cache-friendly, and has small constant factors; merge sort allocates and copies temporary arrays. With good pivot selection the O(n²) worst case is very unlikely.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'After partitioning, the pivot is...',
+      options: ['At the start', 'In its final sorted position', 'Removed', 'At the end'],
+      answer: 1,
+      why: 'Smaller left, larger right.',
+    },
+    {
+      q: 'Worst case of quick sort?',
+      options: ['O(n log n)', 'O(n²)', 'O(n)', 'O(log n)'],
+      answer: 1,
+      why: 'Unbalanced partitions.',
+    },
+    {
+      q: 'Average time of quickselect?',
+      options: ['O(n)', 'O(n log n)', 'O(n²)', 'O(log n)'],
+      answer: 0,
+      why: 'Recurse into one side only.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Quick sort |
+| --- | --- |
+| Idea | pivot · partition · recurse both sides |
+| Average | O(n log n) |
+| Worst | O(n²) (bad pivots) |
+| Space | O(log n) avg, in place |
+| Stable | no |
+| Pivot | random / median-of-three |
+| Duplicates | three-way partition |
+| k-th item | quickselect O(n) avg · heap O(n log k) |
+
+</CheatSheet>

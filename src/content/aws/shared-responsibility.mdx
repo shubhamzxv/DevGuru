@@ -1,0 +1,199 @@
+---
+id: aws-shared-responsibility
+title: Shared responsibility model
+summary: AWS is responsible for security of the cloud (data centres, hardware, network, the virtualisation layer and managed-service internals), and the customer is responsible for security in the cloud (IAM, data, encryption choices, network rules, OS patches on EC2, application code); the split moves towards AWS as services become more managed.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Renting a flat in a gated society. The **society** guards the main gate, maintains the lifts, wiring and water tank (security **of** the building). **You** lock your own door, decide who gets a key, and keep your valuables in a safe (security **in** your flat). If you leave your door open, the gate guard cannot help.
+
+</Analogy>
+
+## Simple explanation
+
+| AWS: security **OF** the cloud | You: security **IN** the cloud |
+| --- | --- |
+| physical data centres, guards, power | **IAM**: users, roles, MFA, least privilege |
+| hardware, storage devices, disposal | **data**: classification, encryption (KMS), backups |
+| global network, Regions, AZs | **network config**: security groups, NACLs, public/private subnets |
+| hypervisor and host OS | **guest OS** on EC2: patches, hardening, antivirus |
+| managed-service software (RDS engine patching, S3 durability) | **application** code, dependencies, secrets |
+| compliance of the infrastructure (ISO, SOC, PCI) | your compliance: logging, access reviews |
+
+**The line moves with the service type**:
+
+| Service | You still manage |
+| --- | --- |
+| EC2 (IaaS) | OS patches, runtime, app, firewall rules, data |
+| RDS (managed) | DB users/passwords, parameter settings, security groups, backups retention, encryption choice |
+| Lambda / S3 / DynamoDB (serverless) | code, IAM permissions, data, bucket policies |
+
+Most cloud breaches come from the **customer side**: public S3 buckets, leaked access keys in GitHub, over-permissive IAM, security groups open to `0.0.0.0/0` on database ports, unpatched servers.
+
+Your checklist:
+
+1. Protect the **root user** (MFA, no access keys, do not use it day to day)
+2. **IAM least privilege**; roles instead of long-lived keys
+3. **Encrypt** data at rest (KMS) and in transit (TLS)
+4. **Block Public Access** on S3; private subnets for databases
+5. **Logging**: CloudTrail (API calls), VPC Flow Logs, CloudWatch
+6. **Detect**: GuardDuty, Security Hub, AWS Config rules
+7. **Patch** EC2 (SSM Patch Manager) and dependencies
+
+## Code example
+
+The two most common customer-side fixes, as CLI commands:
+
+```bash
+# 1. Block public access on every bucket of the account
+aws s3control put-public-access-block --account-id 123456789012 \
+  --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+# 2. Turn on CloudTrail for every Region (who did what, when)
+aws cloudtrail create-trail --name org-trail --s3-bucket-name shop-cloudtrail-logs --is-multi-region-trail
+aws cloudtrail start-logging --name org-trail
+```
+
+```output
+{
+    "Name": "org-trail",
+    "S3BucketName": "shop-cloudtrail-logs",
+    "IsMultiRegionTrail": true,
+    "TrailARN": "arn:aws:cloudtrail:ap-south-1:123456789012:trail/org-trail"
+}
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "dc", "label": "Data centres", "icon": "🏭", "col": 0, "row": 0, "info": "AWS: buildings, guards, power, cooling, hardware disposal.", "example": "You can never visit them." },
+    { "id": "hv", "label": "Hypervisor & network", "icon": "🧱", "col": 1, "row": 0, "info": "AWS: the virtualisation layer (Nitro), the global network, Region and AZ isolation.", "example": "One customer's VM cannot see another's." },
+    { "id": "managed", "label": "Managed service internals", "icon": "⚙️", "col": 2, "row": 0, "info": "AWS: RDS engine patching, S3 durability, Lambda runtime.", "example": "RDS applies a minor PostgreSQL patch in your maintenance window." },
+    { "id": "iam", "label": "IAM & access", "icon": "🔑", "col": 0, "row": 2, "info": "YOU: users, roles, MFA, least-privilege policies, root account protection.", "example": "No access keys on the root user." },
+    { "id": "net", "label": "Network rules", "icon": "🚧", "col": 1, "row": 2, "info": "YOU: security groups, NACLs, which subnets are public.", "example": "Port 5432 only from the app's security group." },
+    { "id": "os", "label": "OS & app", "icon": "🖥️", "col": 2, "row": 2, "info": "YOU on EC2: OS patches, packages, your code and its dependencies.", "example": "apt upgrade, pip-audit, SSM Patch Manager." },
+    { "id": "data", "label": "Your data", "icon": "🗄️", "col": 3, "row": 1, "info": "YOU: classification, encryption with KMS, backups, who can read it.", "example": "S3 Block Public Access + SSE-KMS." }
+  ],
+  "edges": [
+    ["dc", "hv"],
+    ["hv", "managed"],
+    ["iam", "data", "controls access"],
+    ["net", "os"],
+    ["os", "data"],
+    ["managed", "data", "stores"]
+  ],
+  "flows": [
+    {
+      "name": "A typical breach",
+      "steps": [
+        ["iam", "A developer commits an access key with admin rights to a public GitHub repo."],
+        ["data", "Bots find it within minutes and copy the S3 data."],
+        ["hv", "AWS's side was never broken: this was the customer's responsibility."],
+        ["iam", "Fix: roles instead of keys, least privilege, secret scanning, GuardDuty alerts."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Assuming AWS patches your EC2 servers">
+
+<Wrong>
+
+```text
+"AWS manages the servers": an EC2 instance runs a two-year-old kernel and OpenSSL.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+EC2 OS patching is yours (SSM Patch Manager, golden AMIs, or move to managed/serverless services).
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Using the root user for daily work">
+
+<Wrong>
+
+```text
+Root user with access keys used in scripts and by three developers.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Root: MFA, no keys, locked away. People: IAM Identity Center users with roles; apps: IAM roles.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain the AWS shared responsibility model.">
+
+AWS secures the cloud itself: facilities, hardware, network, the virtualisation layer and the internals of managed services. Customers secure what they put in the cloud: identity and access, data and its encryption, network configuration, guest operating systems and applications on EC2, and their own compliance. The more managed the service, the more AWS takes on.
+
+</QA>
+
+<QA q="Who patches what for EC2, RDS and Lambda?">
+
+EC2: the customer patches the guest OS and software, AWS the hypervisor and hardware. RDS: AWS patches the OS and database engine (in your maintenance window); you manage database users, parameters, network access and backup settings. Lambda: AWS manages the runtime and servers; you manage your code, dependencies and IAM permissions.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Who is responsible for security group rules?',
+      options: ['AWS', 'The customer', 'Both equally', 'Nobody'],
+      answer: 1,
+      why: 'Security in the cloud.',
+    },
+    {
+      q: 'Who patches the hypervisor under EC2?',
+      options: ['AWS', 'The customer', 'The OS vendor only', 'Nobody'],
+      answer: 0,
+      why: 'Security of the cloud.',
+    },
+    {
+      q: 'Most common cause of cloud data leaks?',
+      options: ['AWS data centre breaches', 'Customer misconfiguration (public buckets, leaked keys)', 'Hardware faults', 'Earthquakes'],
+      answer: 1,
+      why: 'The customer side of the model.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| AWS (OF the cloud) | You (IN the cloud) |
+| --- | --- |
+| facilities, hardware | IAM, MFA, least privilege |
+| network, hypervisor | security groups, subnets |
+| managed-service internals | data, encryption, backups |
+| infrastructure compliance | EC2 OS patches, app code |
+
+Checklist: root MFA · roles not keys · S3 Block Public Access · CloudTrail · GuardDuty · encryption
+
+</CheatSheet>

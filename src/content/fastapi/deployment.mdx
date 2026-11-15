@@ -1,0 +1,222 @@
+---
+id: fastapi-deployment
+title: Deployment basics
+summary: In production a FastAPI app runs in a Docker image with Uvicorn (or Gunicorn managing Uvicorn workers), reads settings from environment variables, sits behind a load balancer or nginx that terminates HTTPS, and on AWS commonly runs on ECS Fargate, App Runner, EC2 or Lambda.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Cooking at home vs running a restaurant. At home (`fastapi dev`) one person cooks, tastes and changes the recipe on the fly. A restaurant needs several cooks (workers), a front door with security (HTTPS, load balancer), a manager who replaces a sick cook (restarts, health checks) and the same recipe in every branch (the Docker image).
+
+</Analogy>
+
+## Simple explanation
+
+**1. Settings from the environment** (`pydantic-settings`)
+
+```python
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env")
+    database_url: str
+    secret_key: str
+    debug: bool = False
+    allowed_origins: list[str] = []
+
+settings = Settings()          # reads DATABASE_URL, SECRET_KEY... from env or .env
+```
+
+**2. Run with production settings**
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers
+# or Gunicorn as process manager:
+gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 4 -b 0.0.0.0:8000
+```
+
+Rule of thumb: workers ≈ CPU cores (or 2 × cores + 1 for I/O-heavy apps); one process per container is also fine when the orchestrator runs several containers.
+
+**3. Dockerfile**
+
+```dockerfile
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+RUN useradd -m app
+USER app
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers"]
+```
+
+**4. In front of it**: a load balancer (AWS ALB) or nginx terminating **HTTPS**, health checks on `/health`, gzip, timeouts. `--proxy-headers` (and `forwarded_allow_ips`) so the app sees the real client IP and scheme.
+
+**5. Where on AWS**
+
+| Option | When |
+| --- | --- |
+| **ECS Fargate + ALB** | the common production choice: containers, autoscaling, no servers |
+| **App Runner** | simplest: give it the image, it gives you HTTPS and scaling |
+| **EC2** + systemd + nginx | full control, small budgets |
+| **Lambda** + API Gateway (with **Mangum** adapter) | spiky or low traffic, pay per request |
+| **EKS** | many services, Kubernetes skills |
+
+Production checklist: `debug=False`; secrets from Secrets Manager/SSM; CORS limited to real origins; database migrations (`alembic upgrade head`) as a deploy step; structured logs to stdout → CloudWatch; `/health` (and a readiness check that tests the DB); timeouts and connection pools; docs disabled or protected; run tests in CI before deploy; images tagged with the git SHA.
+
+## Code example
+
+```python
+# app/main.py
+from fastapi import FastAPI
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    app_name: str = "Shop API"
+    debug: bool = False
+    database_url: str = "sqlite:///./dev.db"
+
+settings = Settings()
+app = FastAPI(title=settings.app_name, docs_url="/docs" if settings.debug else None)
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+```
+
+```bash
+docker build -t shop-api:1.4.0 .
+docker run -d -p 8000:8000 -e DEBUG=false -e DATABASE_URL=postgresql+psycopg://shop:secret@db/shop shop-api:1.4.0
+curl localhost:8000/health
+curl -o /dev/null -w "%{http_code}\n" localhost:8000/docs
+```
+
+```output
+{"status":"ok"}
+404
+```
+
+With `DEBUG=false` the docs are switched off, and the database URL comes from the environment.
+
+<Playground kind="terminal">
+
+```bash
+cd ~/app
+cat Dockerfile
+docker build -t shop-api:1.4.0 .
+docker run -d --name api --restart unless-stopped -p 8000:8000 -e DEBUG=false shop-api:1.4.0
+docker ps
+curl localhost:8000
+docker logs api
+docker inspect api
+```
+
+</Playground>
+
+The terminal simulator builds and runs the seeded app the same way you would ship a FastAPI image.
+
+<Mistakes>
+
+<Mistake title="Development server settings in production">
+
+<Wrong>
+
+```bash
+fastapi dev main.py               # or: uvicorn main:app --reload, one process, debug on
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Running migrations on every container start without control">
+
+<Wrong>
+
+```text
+CMD alembic upgrade head && uvicorn ...   # 10 containers start → 10 migrations race at once
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Run "alembic upgrade head" once as a deploy step (a CI job or a one-off ECS task) before rolling out the new containers.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How would you deploy a FastAPI application to production?">
+
+Package it in a Docker image (slim Python, non-root user, Uvicorn or Gunicorn with Uvicorn workers), configure it with environment variables and a secrets manager, run migrations as a separate step, and run it on a container platform such as ECS Fargate behind an Application Load Balancer with HTTPS, health checks and autoscaling, with logs and metrics in CloudWatch and CI/CD building and deploying images tagged by commit.
+
+</QA>
+
+<QA q="Uvicorn or Gunicorn?">
+
+Uvicorn is the ASGI server that runs the app. Gunicorn is a mature process manager that can run several Uvicorn worker processes, restart crashed ones and handle signals; Uvicorn's own --workers flag now covers many cases. In containers, one or a few workers per container with the orchestrator scaling containers is common.
+
+</QA>
+
+<QA q="Can FastAPI run on AWS Lambda?">
+
+Yes, with an adapter such as Mangum that converts API Gateway or Lambda function URL events into ASGI requests. It suits spiky, low or unpredictable traffic; watch cold starts, package size, and database connections (use RDS Proxy).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which flag is for development only?',
+      options: ['--workers', '--reload', '--host', '--port'],
+      answer: 1,
+      why: 'Never --reload in production.',
+    },
+    {
+      q: 'Where should SECRET_KEY come from in production?',
+      options: ['Hard-coded', 'Git', 'Environment / secrets manager', 'The URL'],
+      answer: 2,
+      why: 'pydantic-settings reads env vars.',
+    },
+    {
+      q: 'Most common managed container option on AWS for an API?',
+      options: ['S3', 'ECS Fargate behind an ALB', 'Route 53', 'CloudFront only'],
+      answer: 1,
+      why: 'Serverless containers with load balancing.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Command / code |
+| --- | --- |
+| Settings | `class Settings(BaseSettings): database_url: str` |
+| Server | `uvicorn app.main:app --host 0.0.0.0 --workers 4 --proxy-headers` |
+| Gunicorn | `gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w 4` |
+| Image | python slim, `pip --no-cache-dir`, `USER app`, exec-form CMD |
+| Health | `GET /health` for the load balancer |
+| Migrations | `alembic upgrade head` as a deploy step |
+| AWS | ECS Fargate + ALB · App Runner · EC2 · Lambda (Mangum) |
+
+</CheatSheet>

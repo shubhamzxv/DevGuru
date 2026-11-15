@@ -1,0 +1,237 @@
+---
+id: django-serializers
+title: Serializers
+summary: DRF serializers convert model instances to JSON-ready data and validate incoming data back into objects; ModelSerializer builds fields from a model, extra fields come from source, SerializerMethodField and nested serializers, and validate_<field> and validate() add rules.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **customs officer** at the border, working both ways. Outgoing: pack the goods into standard boxes with labels (model → JSON). Incoming: open the parcel, check every item against the rules, reject what is wrong, and only let valid goods in (JSON → validated data → saved object).
+
+</Analogy>
+
+## Simple explanation
+
+```python
+from rest_framework import serializers
+
+class ProductSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)   # follow a relation
+    in_stock = serializers.SerializerMethodField()                                  # computed
+
+    class Meta:
+        model = Product
+        fields = ["id", "name", "price", "stock", "category", "category_name", "in_stock"]
+        read_only_fields = ["id"]
+
+    def get_in_stock(self, obj):
+        return obj.stock > 0
+
+    def validate_price(self, value):                  # one field
+        if value <= 0:
+            raise serializers.ValidationError("Price must be positive.")
+        return value
+
+    def validate(self, data):                         # several fields
+        if data.get("stock", 0) > 1000:
+            raise serializers.ValidationError({"stock": "Max 1000 units per product."})
+        return data
+```
+
+**Two directions**
+
+```python
+# Output (serialization)
+ProductSerializer(product).data                       # one object → dict
+ProductSerializer(products, many=True).data           # queryset → list
+
+# Input (deserialization + validation)
+s = ProductSerializer(data=request.data)
+s.is_valid(raise_exception=True)                      # 400 with field errors if invalid
+s.validated_data
+s.save()                                              # create(); with instance=obj → update(); partial=True for PATCH
+```
+
+**Field options**: `read_only=True`, `write_only=True` (passwords), `required=False`, `allow_null=True`, `source="..."`, `default=...`.
+
+**Relations**: by default a ForeignKey is its primary key (`"category": 1`). Alternatives: `StringRelatedField()` (`__str__`), `SlugRelatedField(slug_field="slug")`, a nested serializer (`items = OrderItemSerializer(many=True, read_only=True)`), or `HyperlinkedRelatedField`.
+
+Writable nested serializers need your own `create()`/`update()`. Use **different serializers** for list vs detail or read vs write when shapes differ (`get_serializer_class()` in the view). Nested output needs `select_related`/`prefetch_related` in the view's queryset to avoid N+1.
+
+## Code example
+
+```python
+class OrderItemSerializer(serializers.ModelSerializer):
+    product = serializers.StringRelatedField()
+
+    class Meta:
+        model = OrderItem
+        fields = ["product", "quantity", "price"]
+
+class OrderSerializer(serializers.ModelSerializer):
+    items = OrderItemSerializer(many=True, read_only=True)
+    customer = serializers.ReadOnlyField(source="customer.username")
+
+    class Meta:
+        model = Order
+        fields = ["id", "customer", "status", "items", "created_at"]
+```
+
+```output
+ProductSerializer(Product.objects.get(pk=1)).data
+  {"id": 1, "name": "Clean Code", "price": "450.00", "stock": 12, "category": 1, "category_name": "Books", "in_stock": true}
+
+POST /api/products/ {"name": "Mouse", "price": "0", "stock": 5, "category": 2}     → 400 {"price": ["Price must be positive."]}
+POST /api/products/ {"name": "Mouse", "price": "399", "stock": 5000, "category": 2} → 400 {"stock": ["Max 1000 units per product."]}
+POST /api/products/ {"name": "Mouse", "price": "399", "stock": 5, "category": 2}    → 201 {"id": 8, ..., "category_name": "Electronics", "in_stock": true}
+
+OrderSerializer for asha's first order:
+  {"id": 1, "customer": "asha", "status": "paid",
+   "items": [{"product": "Clean Code (₹450.00)", "quantity": 1, "price": "450.00"},
+             {"product": "USB Cable (₹199.00)", "quantity": 2, "price": "199.00"}],
+   "created_at": "2026-11-15T07:15:24.246495Z"}
+```
+
+Prices come out as strings (`"450.00"`) to keep Decimal precision in JSON.
+
+<Playground kind="none">
+
+```python
+# accounts/serializers.py — a signup serializer with a write-only password
+from django.contrib.auth import get_user_model
+from rest_framework import serializers
+
+User = get_user_model()
+
+class SignupSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=8)
+
+    class Meta:
+        model = User
+        fields = ["id", "username", "email", "password"]
+
+    def validate_email(self, value):
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("Email already registered.")
+        return value.lower()
+
+    def create(self, validated_data):
+        return User.objects.create_user(**validated_data)    # hashes the password
+
+# In a view: s = SignupSerializer(data=request.data); s.is_valid(raise_exception=True); s.save()
+# Response contains id, username, email — never the password.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="fields = '__all__' on a user or order model">
+
+<Wrong>
+
+```python
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = "__all__"        # exposes password hash, is_superuser... and lets clients write them
+```
+
+</Wrong>
+
+<Right>
+
+```python
+fields = ["id", "username", "email"]
+read_only_fields = ["id"]
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Nested serializer without prefetching">
+
+<Wrong>
+
+```python
+class OrderViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Order.objects.all()           # items and their products fetched per order: N+1
+    serializer_class = OrderSerializer
+```
+
+</Wrong>
+
+<Right>
+
+```python
+queryset = Order.objects.select_related("customer").prefetch_related("items__product")
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a serializer in DRF?">
+
+A class that converts complex data such as model instances and querysets into native Python types for rendering as JSON, and parses and validates incoming data back into validated_data, from which save() creates or updates instances. ModelSerializer derives fields, validators and create/update from a model.
+
+</QA>
+
+<QA q="How do you add a computed field or a related field to a serializer?">
+
+A computed field with `SerializerMethodField()` and a `get_<name>(self, obj)` method; a related attribute with `source="relation.field"` on a read-only field; related objects with StringRelatedField, SlugRelatedField, PrimaryKeyRelatedField or a nested serializer.
+
+</QA>
+
+<QA q="Where does validation happen in a serializer?">
+
+Field-level type and option checks, then `validate_<field>()` methods, then object-level `validate(self, data)`, plus model-derived validators such as UniqueValidator. `is_valid(raise_exception=True)` makes DRF return 400 with the error dictionary.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Serialize a queryset of products?',
+      options: ['ProductSerializer(qs)', 'ProductSerializer(qs, many=True)', 'qs.serialize()', 'json.dumps(qs)'],
+      answer: 1,
+      why: 'many=True for lists.',
+    },
+    {
+      q: 'Accept a password but never return it?',
+      options: ['read_only=True', 'write_only=True', 'required=False', 'source="password"'],
+      answer: 1,
+      why: 'Write-only fields are excluded from output.',
+    },
+    {
+      q: 'Add "in_stock": true computed from stock?',
+      options: ['A model field', 'SerializerMethodField + get_in_stock', 'Meta.extra', 'A signal'],
+      answer: 1,
+      why: 'Computed per object.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| From a model | `class S(serializers.ModelSerializer): class Meta: model = X; fields = [...]` |
+| Output | `S(obj).data` · `S(qs, many=True).data` |
+| Input | `s = S(data=request.data); s.is_valid(raise_exception=True); s.save()` |
+| Update / PATCH | `S(obj, data=..., partial=True)` |
+| Related value | `CharField(source="category.name", read_only=True)` |
+| Computed | `SerializerMethodField()` + `get_x(self, obj)` |
+| Nested | `items = ItemSerializer(many=True, read_only=True)` |
+| Rules | `validate_<field>()` · `validate(self, data)` |
+| Secrets | `write_only=True` |
+
+</CheatSheet>

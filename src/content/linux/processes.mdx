@@ -1,0 +1,203 @@
+---
+id: linux-processes
+title: Processes (ps, top, kill)
+summary: A process is a running program with a PID; ps lists them, top or htop shows live CPU and memory use, and kill sends signals such as SIGTERM (15) to stop politely or SIGKILL (9) to force.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A restaurant kitchen: every dish being cooked is a **process** with its own order number (**PID**). **ps** is reading the list of current orders. **top** is the live screen showing which cook is busiest. **kill** is the manager telling a cook to stop: politely ("finish and clean up": SIGTERM), or by switching off the stove (SIGKILL).
+
+</Analogy>
+
+## Simple explanation
+
+Every running program is a process with:
+
+- **PID** (process ID) and **PPID** (parent's PID). PID 1 is `systemd` (or init), the first process
+- an **owner** (user), CPU and memory use, a state (running, sleeping, zombie)
+
+**Listing**
+
+```bash
+ps aux                 # all processes: USER PID %CPU %MEM ... COMMAND
+ps aux | grep gunicorn # find one
+pgrep -a python        # PIDs by name
+pstree                 # parent/child tree
+```
+
+**Live view**: `top` (built in) or `htop` (nicer, install it). In top: `P` sort by CPU, `M` by memory, `k` kill, `q` quit. Look at **load average** (1, 5, 15 minutes): above the number of CPU cores means the machine is overloaded.
+
+**Signals**
+
+| Signal | Number | Meaning |
+| --- | --- | --- |
+| `SIGTERM` | 15 | "please stop": default of `kill`, the app can clean up |
+| `SIGKILL` | 9 | stop immediately, cannot be caught: last resort |
+| `SIGINT` | 2 | what Ctrl+C sends |
+| `SIGHUP` | 1 | terminal closed; many daemons reload config on it |
+
+```bash
+kill 1204          # SIGTERM
+kill -9 1204       # SIGKILL
+pkill -f gunicorn  # by name/command line
+killall nginx
+```
+
+**Foreground and background jobs** (in a real terminal):
+
+```bash
+python3 worker.py &          # run in the background
+jobs                         # list background jobs
+fg %1                        # bring back
+Ctrl+Z, then bg              # pause, then continue in background
+nohup python3 worker.py &    # keep running after you log out
+```
+
+For anything that must run permanently, use a **systemd service** (next topic) or Docker, not `nohup`.
+
+## Code example
+
+```bash
+ps aux
+kill 1204
+kill 412
+sudo kill 412
+```
+
+```output
+  PID USER     COMMAND
+    1 root     /sbin/init
+  412 root     /usr/sbin/sshd -D
+  977 guru     -bash
+ 1204 guru     python3 -m http.server 9000
+bash: kill: (412) - Operation not permitted
+```
+
+<Playground kind="terminal">
+
+```bash
+ps
+ps aux | grep python
+top
+kill 1204
+ps
+kill 412
+kill 99999
+uptime
+```
+
+</Playground>
+
+You can stop your own process (1204), not root's (412) without sudo. `uptime` shows the load average.
+
+<Mistakes>
+
+<Mistake title="kill -9 first">
+
+<Wrong>
+
+```bash
+kill -9 $(pgrep gunicorn)      # no graceful shutdown: requests cut, temp files and locks left behind
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+kill $(pgrep -o gunicorn)      # SIGTERM first, wait a few seconds
+kill -9 <pid>                  # only if it is still stuck
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Starting a server with & over SSH">
+
+<Wrong>
+
+```bash
+python3 manage.py runserver 0.0.0.0:8000 &     # dies when the SSH session ends, no restart on crash
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Run it as a systemd service (or in Docker with a restart policy).
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you find and stop a process that uses too much CPU?">
+
+Use `top` or `htop` (sorted by CPU) or `ps aux --sort=-%cpu | head` to find the PID, check what it is with `ps -fp <pid>`, then `kill <pid>` (SIGTERM) and only `kill -9` if it does not exit. If it is a service, use `systemctl restart` or `stop` and investigate the logs.
+
+</QA>
+
+<QA q="What is the difference between SIGTERM and SIGKILL?">
+
+SIGTERM (15) asks the process to terminate; it can catch it to finish work and clean up, and it is what `kill`, `docker stop` and systemd send first. SIGKILL (9) is handled by the kernel, cannot be caught or ignored, and ends the process immediately without cleanup.
+
+</QA>
+
+<QA q="What is a zombie process?">
+
+A process that has finished but whose parent has not yet read its exit status, so it remains in the process table (state Z). It uses no CPU or memory beyond the table entry; the fix is for the parent to reap it, or to restart the parent.
+
+</QA>
+
+<QA q="What does load average mean?">
+
+The average number of processes running or waiting for CPU (and uninterruptible I/O) over 1, 5 and 15 minutes. Compare it with the number of CPU cores: a load of 4 on a 4-core machine is fully busy; higher means work is queuing.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Default signal sent by kill PID?',
+      options: ['SIGKILL (9)', 'SIGTERM (15)', 'SIGINT (2)', 'SIGHUP (1)'],
+      answer: 1,
+      why: 'A polite request to stop.',
+    },
+    {
+      q: 'Which signal cannot be caught?',
+      options: ['SIGTERM', 'SIGINT', 'SIGKILL', 'SIGHUP'],
+      answer: 2,
+      why: 'SIGKILL is enforced by the kernel.',
+    },
+    {
+      q: 'Ctrl+C sends...',
+      options: ['SIGINT', 'SIGKILL', 'SIGSTOP', 'Nothing'],
+      answer: 0,
+      why: 'Interrupt from the keyboard.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| All processes | `ps aux` · `ps -ef` |
+| Find by name | `pgrep -a name` · `ps aux \| grep name` |
+| Live | `top` · `htop` |
+| Stop politely / force | `kill PID` · `kill -9 PID` |
+| By name | `pkill -f pattern` · `killall name` |
+| Background | `cmd &` · `jobs` · `fg` · `bg` · `nohup` |
+| Load | `uptime` |
+
+</CheatSheet>

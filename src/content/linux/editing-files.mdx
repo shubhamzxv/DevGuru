@@ -1,0 +1,194 @@
+---
+id: linux-editing-files
+title: Editing files (nano, vim basics)
+summary: nano is a simple terminal editor with shortcuts shown on screen; vim is powerful but modal (insert mode to type, normal mode for commands, :wq to save and quit); for small changes you can also use echo, tee and sed.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+**nano** is like Notepad: open, type, save. **vim** is like a professional camera with modes: in one mode the buttons take photos, in another the same buttons change settings. Powerful once learned, confusing on day one. Everybody's first vim question is "how do I get out?".
+
+</Analogy>
+
+## Simple explanation
+
+**nano** (start here):
+
+```bash
+nano /etc/nginx/sites-available/shop     # sudo nano for system files
+```
+
+| Keys | Action |
+| --- | --- |
+| type normally | edit |
+| `Ctrl+O`, Enter | save ("write Out") |
+| `Ctrl+X` | exit (asks to save if changed) |
+| `Ctrl+W` | search |
+| `Ctrl+K` / `Ctrl+U` | cut line / paste |
+| `Alt+U` | undo |
+
+**vim** (installed on nearly every server, often the default editor for git and crontab):
+
+| Mode | How to enter | What keys do |
+| --- | --- | --- |
+| **Normal** | `Esc` | move and run commands |
+| **Insert** | `i` (before cursor), `a` (after), `o` (new line) | type text |
+| **Command** | `:` from normal | save, quit, search and replace |
+
+The survival kit:
+
+| Keys (in normal mode) | Action |
+| --- | --- |
+| `i` | start typing |
+| `Esc` | stop typing |
+| `:w` | save |
+| `:q` | quit |
+| `:wq` or `:x` | save and quit |
+| `:q!` | quit **without** saving |
+| `/word`, `n` | search, next |
+| `dd` / `yy` / `p` | delete line / copy line / paste |
+| `u` / `Ctrl+r` | undo / redo |
+| `gg` / `G` | top / bottom |
+| `:%s/old/new/g` | replace in the whole file |
+
+**Without an editor** (also great in scripts and Dockerfiles):
+
+```bash
+echo "PORT=8000" >> .env                          # append a line
+echo "127.0.0.1 shop.local" | sudo tee -a /etc/hosts   # append to a root-owned file
+sed -i 's/DEBUG=true/DEBUG=false/' .env           # change in place
+```
+
+Set your favourite editor for git, crontab and others: `export EDITOR=nano` in `~/.bashrc`.
+
+## Code example
+
+```bash
+echo "DEBUG=true" > .env
+echo "PORT=8000" >> .env
+sed -i 's/DEBUG=true/DEBUG=false/' .env
+cat .env
+```
+
+```output
+DEBUG=false
+PORT=8000
+```
+
+<Playground kind="terminal">
+
+```bash
+nano .env
+echo "DEBUG=true" > .env
+echo "PORT=8000" >> .env
+cat .env
+sed -i 's/DEBUG=true/DEBUG=false/' .env
+cat .env
+echo "127.0.0.1 shop.local" >> /etc/hosts
+echo "127.0.0.1 shop.local" | sudo tee -a /etc/hosts
+cat /etc/hosts
+```
+
+</Playground>
+
+Editors cannot open inside the simulator, so this run edits with `echo`, `sed -i` and `tee`. Writing to `/etc/hosts` without sudo fails; `sudo tee -a` works.
+
+<Mistakes>
+
+<Mistake title="Typing in vim's normal mode">
+
+<Wrong>
+
+```text
+Open vim, start typing "hello": letters run as commands, text gets deleted or jumps around.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Press i, type, press Esc, then :wq and Enter.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="sudo echo into a root file">
+
+<Wrong>
+
+```bash
+sudo echo "127.0.0.1 shop.local" >> /etc/hosts
+# Permission denied: the >> is done by YOUR shell, not by sudo
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+echo "127.0.0.1 shop.local" | sudo tee -a /etc/hosts
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you save and exit vim?">
+
+Press Esc to be in normal mode, then type `:wq` and Enter (or `:x`, or `ZZ`). To quit without saving, `:q!`.
+
+</QA>
+
+<QA q="How do you edit a file on a server without an interactive editor?">
+
+Use stream tools: `sed -i` to change text in place, `echo` or `printf` with `>` or `>>` to write or append, `tee` (with sudo for root-owned files), or here-documents (`cat > file << EOF`). In automation, configuration management tools or templates are preferred.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In vim, how do you quit without saving?',
+      options: [':wq', ':q!', 'Ctrl+X', ':save'],
+      answer: 1,
+      why: ':q! discards changes.',
+    },
+    {
+      q: 'In nano, Ctrl+O does...',
+      options: ['Open', 'Save (write out)', 'Quit', 'Undo'],
+      answer: 1,
+      why: 'Then Ctrl+X to exit.',
+    },
+    {
+      q: 'Append a line to root-owned /etc/hosts?',
+      options: ['sudo echo x >> /etc/hosts', 'echo x | sudo tee -a /etc/hosts', 'echo x > /etc/hosts', 'cat x /etc/hosts'],
+      answer: 1,
+      why: 'tee runs with sudo and writes the file.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| nano | vim |
+| --- | --- |
+| `Ctrl+O` save | `:w` save |
+| `Ctrl+X` exit | `:q` quit, `:wq` both, `:q!` discard |
+| `Ctrl+W` search | `/word`, `n` |
+| `Ctrl+K`/`Ctrl+U` cut/paste | `dd` / `p`, `yy` copy |
+| `Alt+U` undo | `u` undo |
+| | `i` insert, `Esc` normal |
+
+No editor: `echo >>` · `sed -i 's/a/b/'` · `| sudo tee -a file`
+
+</CheatSheet>

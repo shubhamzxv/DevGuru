@@ -1,0 +1,223 @@
+---
+id: django-caching
+title: Caching in Django
+summary: Django's cache framework stores computed results in Redis or Memcached; you can cache whole views with cache_page, template fragments with the cache tag, or any value with cache.get, set and get_or_set, and you must plan invalidation and timeouts.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A busy tea stall makes a **big kettle** of tea every 10 minutes instead of brewing each cup from scratch. Customers get tea instantly; after 10 minutes, or when the boss changes the recipe, a fresh kettle is made. The kettle is the cache; 10 minutes is the timeout; the recipe change is invalidation.
+
+</Analogy>
+
+## Simple explanation
+
+**Configure a backend** (Redis is the usual choice):
+
+```python
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/1",          # ElastiCache endpoint in AWS
+        "TIMEOUT": 300,
+    }
+}
+```
+
+Others: `LocMemCache` (per process, development/tests), `DatabaseCache`, `FileBasedCache`, Memcached.
+
+**Three levels**
+
+1. **Low-level API**: any value:
+
+```python
+from django.core.cache import cache
+
+data = cache.get("top_products")
+if data is None:
+    data = list(Product.objects.order_by("-price").values_list("name", flat=True)[:3])
+    cache.set("top_products", data, timeout=300)
+
+cache.get_or_set("greeting", lambda: "namaste", 60)
+cache.delete("top_products")
+cache.incr("views")
+cache.get_many([...]); cache.set_many({...})
+```
+
+2. **Per-view**:
+
+```python
+from django.views.decorators.cache import cache_page
+
+@cache_page(60 * 15)           # whole response for 15 minutes, keyed by URL
+def product_list(request): ...
+```
+
+Careful with per-user pages: add `@vary_on_cookie` or do not cache them.
+
+3. **Template fragments**:
+
+```html
+{% load cache %}
+{% cache 600 sidebar request.user.id %} ... expensive menu ... {% endcache %}
+```
+
+Plus the per-site cache middleware, HTTP caching headers (`Cache-Control`, `ETag` via `@condition`), and CDN caching (CloudFront).
+
+**Invalidation strategies**
+
+- **Timeouts** (TTL): simple, data may be stale for up to the timeout
+- **Delete on change**: in `save()`, a signal or the service: `cache.delete(f"product:{pk}")`
+- **Versioned keys**: `cache.set(f"product:{pk}:v{version}", ...)` or `cache.incr_version()`
+- Use `transaction.on_commit` to delete after the database change is committed
+
+Also cache **sessions** in Redis (`SESSION_ENGINE = "...cached_db"`) and use the same Redis for DRF throttling and Celery.
+
+## Code example
+
+```python
+def top_products():
+    data = cache.get("top_products")
+    if data is None:
+        data = list(Product.objects.order_by("-price").values_list("name", flat=True)[:3])
+        cache.set("top_products", data, timeout=300)
+    return data
+
+for i in range(2):
+    with CaptureQueriesContext(connection) as ctx:
+        result = top_products()
+    print(f"call {i + 1}: {result} queries={len(ctx)}")
+
+print(cache.get_or_set("greeting", lambda: "namaste", 60))
+cache.set("views", 0); cache.incr("views"); print(cache.incr("views"))
+```
+
+```output
+call 1: ['Keyboard', 'Headphones', 'Fluent Python'] queries=1
+call 2: ['Keyboard', 'Headphones', 'Fluent Python'] queries=0
+namaste
+2
+```
+
+The second call did not touch the database.
+
+<Playground kind="terminal">
+
+```bash
+docker run -d --name cache -p 6379:6379 redis:7
+docker exec cache redis-cli ping
+docker exec cache redis-cli set top_products "Keyboard,Headphones"
+docker exec cache redis-cli get top_products
+docker ps
+```
+
+</Playground>
+
+Django's Redis cache talks to a server like this one; in AWS the same role is played by ElastiCache.
+
+<Mistakes>
+
+<Mistake title="cache_page on personalised pages">
+
+<Wrong>
+
+```python
+@cache_page(600)
+def my_orders(request): ...       # the first user's orders are shown to everyone for 10 minutes
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def my_orders(request):
+    data = cache.get_or_set(f"user:{request.user.id}:orders", lambda: build(request.user), 300)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Per-process cache in production">
+
+<Wrong>
+
+```text
+LocMemCache with 4 Gunicorn workers on 3 servers: 12 separate caches, deletes only hit one of them.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+A shared Redis (ElastiCache) for every process and server.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What caching options does Django provide?">
+
+A pluggable cache framework (Redis, Memcached, local memory, database, file backends) with a low-level API (get, set, get_or_set, delete, incr), per-view caching with cache_page, template fragment caching with the cache tag, per-site cache middleware, and helpers for HTTP caching headers and conditional responses.
+
+</QA>
+
+<QA q="How do you keep cached data fresh?">
+
+Set sensible timeouts, delete or update affected keys when data changes (in services, model save or signals, ideally after commit), use versioned or namespaced keys, cache per user where data is personal, and accept short staleness where business rules allow.
+
+</QA>
+
+<QA q="What is cache stampede and how do you prevent it?">
+
+When a popular key expires, many requests miss at once and all recompute the expensive value, overloading the database. Prevent it with locks so one request recomputes, staggered or early refresh (refresh before expiry), background recomputation, or serving stale data while refreshing.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Usual production cache backend?',
+      options: ['LocMemCache', 'Redis', 'FileBasedCache', 'DummyCache'],
+      answer: 1,
+      why: 'Shared across processes and servers.',
+    },
+    {
+      q: 'Cache a whole view for 15 minutes?',
+      options: ['@cache_page(60 * 15)', 'cache.set(view)', '{% cache %}', 'CACHES TIMEOUT only'],
+      answer: 0,
+      why: 'Per-view caching.',
+    },
+    {
+      q: 'Main risk of caching?',
+      options: ['Faster pages', 'Stale data if not invalidated', 'Less memory', 'More SQL'],
+      answer: 1,
+      why: 'Plan invalidation.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Backend | `CACHES = {"default": {"BACKEND": "...RedisCache", "LOCATION": "redis://..."}}` |
+| Get / set | `cache.get(k)` · `cache.set(k, v, 300)` |
+| Compute once | `cache.get_or_set(k, func, 300)` |
+| Remove | `cache.delete(k)` |
+| Counter | `cache.incr(k)` |
+| Whole view | `@cache_page(900)` (+ `@vary_on_cookie`) |
+| Fragment | `{% load cache %}{% cache 600 name key %}...{% endcache %}` |
+| Sessions | `SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"` |
+
+</CheatSheet>

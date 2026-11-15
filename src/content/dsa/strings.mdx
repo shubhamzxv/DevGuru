@@ -1,0 +1,225 @@
+---
+id: dsa-strings
+title: Strings
+summary: Python strings are immutable sequences of characters, so every change builds a new string; build results with a list and join, count characters with a dict or Counter, and solve classic problems such as palindromes, anagrams, reversing words and character frequency in O(n).
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A string is a **printed sentence**. You cannot rub out a letter; to change it you print a new copy. If you build a long sentence by reprinting the whole page after every new word, it is very slow. Instead, collect the words on **sticky notes** (a list) and print once at the end (`"".join`).
+
+</Analogy>
+
+## Simple explanation
+
+| Operation | Time | Note |
+| --- | --- | --- |
+| `s[i]`, `len(s)` | O(1) | |
+| `s[i:j]` | O(j − i) | copy |
+| `s + t` | O(len(s) + len(t)) | new string |
+| `sub in s`, `s.find(sub)` | O(n·m) worst, fast in practice | |
+| `"".join(parts)` | O(total length) | the right way to build strings |
+| `s.split()`, `s.lower()`, `s[::-1]` | O(n) | |
+| `sorted(s)` | O(n log n) | returns a list of characters |
+
+**Immutable**: `s[0] = "x"` is an error. Convert to a list if you need many edits, then join.
+
+**Useful tools**
+
+- `collections.Counter(s)`: character counts
+- `str.isalnum()`, `isdigit()`, `isalpha()`, `lower()`
+- `ord("a") = 97`, `chr(98) = "b"`; `ord(c) - ord("a")` gives 0–25 for an array of 26 counts
+- f-strings for formatting
+
+**Classic problems**
+
+| Problem | Idea |
+| --- | --- |
+| Palindrome (ignore case/punctuation) | two pointers from both ends |
+| Anagram | equal `Counter` (or sorted strings) |
+| First unique character | count, then scan in order |
+| Reverse words | `" ".join(reversed(s.split()))` |
+| Longest substring without repeats | sliding window (see that topic) |
+| Group anagrams | dict keyed by sorted letters / count tuple |
+| String compression `aaabb → a3b2` | scan runs |
+
+## Code example
+
+```python
+from collections import Counter
+
+def is_palindrome(s):
+    i, j = 0, len(s) - 1
+    while i < j:
+        if not s[i].isalnum():
+            i += 1
+        elif not s[j].isalnum():
+            j -= 1
+        elif s[i].lower() != s[j].lower():
+            return False
+        else:
+            i, j = i + 1, j - 1
+    return True
+
+def is_anagram(a, b):
+    return Counter(a) == Counter(b)
+
+def first_unique(s):
+    counts = Counter(s)
+    for i, c in enumerate(s):
+        if counts[c] == 1:
+            return i
+    return -1
+
+def compress(s):
+    out, i = [], 0
+    while i < len(s):
+        j = i
+        while j < len(s) and s[j] == s[i]:
+            j += 1
+        out.append(f"{s[i]}{j - i}")
+        i = j
+    return "".join(out)
+
+print(is_palindrome("A man, a plan, a canal: Panama"))
+print(is_anagram("listen", "silent"), is_anagram("rat", "car"))
+print(first_unique("leetcode"), first_unique("aabb"))
+print(" ".join(reversed("the sky is blue".split())))
+print(compress("aaabbc"))
+print(Counter("mississippi").most_common(2))
+```
+
+```output
+True
+True False
+0 -1
+blue is sky the
+a3b2c1
+[('i', 4), ('s', 4)]
+```
+
+<Playground kind="python">
+
+```python
+from collections import defaultdict
+
+def group_anagrams(words):
+    groups = defaultdict(list)
+    for w in words:
+        groups["".join(sorted(w))].append(w)    # same letters → same key
+    return list(groups.values())
+
+print(group_anagrams(["eat", "tea", "tan", "ate", "nat", "bat"]))
+
+# Try it: use a tuple of 26 letter counts as the key instead of sorting (O(k) per word).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Building a string with += in a loop">
+
+<Wrong>
+
+```python
+out = ""
+for word in words:
+    out += word + ","      # may copy the whole string each time: O(n²) in the worst case
+```
+
+</Wrong>
+
+<Right>
+
+```python
+out = ",".join(words)      # one pass, O(total length)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Trying to change a character">
+
+<Wrong>
+
+```python
+s = "cat"
+s[0] = "b"                 # TypeError: 'str' object does not support item assignment
+```
+
+</Wrong>
+
+<Right>
+
+```python
+s = "b" + s[1:]            # or: chars = list(s); chars[0] = "b"; s = "".join(chars)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you check if two strings are anagrams?">
+
+Compare character counts: Counter(a) == Counter(b), O(n) time and O(k) space for k distinct characters. Sorting both strings and comparing also works in O(n log n). Check lengths first as a quick exit.
+
+</QA>
+
+<QA q="Why are Python strings immutable and what does it mean for performance?">
+
+Immutability makes strings hashable (usable as dict keys), safe to share and thread-safe. Any modification creates a new string, so repeated concatenation in a loop can be O(n²); building a list and joining once is O(n).
+
+</QA>
+
+<QA q="How do you check a palindrome ignoring spaces and punctuation?">
+
+Use two pointers at both ends, skip non-alphanumeric characters, and compare lowercased characters while moving inwards; any mismatch means false. O(n) time and O(1) extra space.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Best way to build a long string from many parts?',
+      options: ['+= in a loop', '"".join(parts)', 'str.replace', 'format each time'],
+      answer: 1,
+      why: 'One allocation, O(total length).',
+    },
+    {
+      q: 'Counter("aab") == Counter("aba")?',
+      options: ['True', 'False', 'Error', 'Depends on order'],
+      answer: 0,
+      why: 'Same counts → anagrams.',
+    },
+    {
+      q: 'ord("c") - ord("a") is...',
+      options: ['1', '2', '3', '99'],
+      answer: 1,
+      why: 'Letter index 0–25.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Code |
+| --- | --- |
+| Reverse | `s[::-1]` |
+| Words | `s.split()` · `" ".join(words)` |
+| Counts | `Counter(s)` · `most_common(k)` |
+| Letter index | `ord(c) - ord("a")` |
+| Clean | `c.isalnum()` · `s.lower()` |
+| Anagram key | `"".join(sorted(w))` |
+| Build | list of parts + `"".join` |
+| Palindrome | two pointers |
+
+</CheatSheet>

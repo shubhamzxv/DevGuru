@@ -1,0 +1,212 @@
+---
+id: dsa-big-o
+title: Big-O notation
+summary: Big-O describes how the running time or memory of an algorithm grows as the input grows, keeping only the fastest-growing term; the common classes from fastest to slowest are O(1), O(log n), O(n), O(n log n), O(n²) and O(2ⁿ).
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Finding a friend's name in a **phone book**:
+
+- **O(1)**: you already know the page number. One step, however big the book
+- **O(log n)**: open the middle, decide left or right half, repeat. A 1,000,000-name book takes about 20 steps
+- **O(n)**: read every name from the first page. Twice the names, twice the time
+- **O(n²)**: for every name, compare it with every other name (looking for duplicates by hand)
+
+Big-O is not "how many seconds"; it is **how the work grows** when the book gets bigger.
+
+</Analogy>
+
+## Simple explanation
+
+We count **steps** as a function of the input size **n**, then keep only the part that matters for big n:
+
+- **Drop constants**: `3n + 5` → **O(n)**. `n/2` → **O(n)**
+- **Keep the biggest term**: `n² + 100n` → **O(n²)**
+- **Different inputs, different letters**: looping over `a` then `b` is **O(a + b)**; a loop over `b` inside a loop over `a` is **O(a · b)**
+
+| Big-O | Name | Example | n = 1,000 → steps |
+| --- | --- | --- | --- |
+| **O(1)** | constant | `d[key]`, `a[i]`, `append` | 1 |
+| **O(log n)** | logarithmic | binary search, balanced tree lookup | ~10 |
+| **O(n)** | linear | one loop, `x in list`, `sum(a)` | 1,000 |
+| **O(n log n)** | linearithmic | `sorted()`, merge sort | ~10,000 |
+| **O(n²)** | quadratic | nested loops over the same list | 1,000,000 |
+| **O(2ⁿ)** | exponential | all subsets, naive Fibonacci | astronomically many |
+
+**How to find it**:
+
+1. A simple statement: O(1)
+2. A loop that runs n times: multiply its body by n
+3. Nested loops: multiply; loops one after the other: add, keep the biggest
+4. Halving the problem each step: log n
+5. Calls to built-ins count too: `x in list` is O(n), `x in set` is O(1) on average, `list.insert(0, x)` is O(n)
+
+**Best, average, worst**: interviews usually mean the **worst case** unless said otherwise. **Amortized** O(1) (like `list.append`) means "occasionally slow, but O(1) on average over many calls".
+
+## Code example
+
+Count the steps of three ways to check for duplicates:
+
+```python
+def has_dup_quadratic(a):            # compare every pair: O(n²)
+    steps = 0
+    for i in range(len(a)):
+        for j in range(i + 1, len(a)):
+            steps += 1
+            if a[i] == a[j]:
+                return True, steps
+    return False, steps
+
+def has_dup_sort(a):                 # sort, then check neighbours: O(n log n)
+    b = sorted(a)
+    steps = len(b) - 1
+    return any(b[i] == b[i + 1] for i in range(len(b) - 1)), steps
+
+def has_dup_set(a):                  # remember what we have seen: O(n) time, O(n) memory
+    seen, steps = set(), 0
+    for x in a:
+        steps += 1
+        if x in seen:
+            return True, steps
+        seen.add(x)
+    return False, steps
+
+for n in [10, 100, 1000]:
+    data = list(range(n))            # no duplicates: the worst case
+    print(n, has_dup_quadratic(data)[1], has_dup_set(data)[1])
+```
+
+```output
+10 45 10
+100 4950 100
+1000 499500 1000
+```
+
+Ten times more data: the quadratic version does about **100×** more steps, the set version **10×** more.
+
+<Playground kind="python">
+
+```python
+import math
+
+for n in [10, 100, 1_000, 1_000_000]:
+    print(f"n={n:>9,}  log n={math.log2(n):5.1f}  n log n={n * math.log2(n):>14,.0f}  n²={n * n:>16,}")
+
+# Try it: which of these steps counts would still be fast (under ~100 million) for n = 1,000,000?
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Hidden O(n) inside a loop">
+
+<Wrong>
+
+```python
+result = []
+for x in items:            # n times
+    if x not in result:    # `in` on a list scans it: O(n)  → total O(n²)
+        result.append(x)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+seen, result = set(), []
+for x in items:
+    if x not in seen:      # set lookup: O(1) on average → total O(n)
+        seen.add(x)
+        result.append(x)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Keeping constants and small terms">
+
+<Wrong>
+
+```text
+"This is O(2n + 10)" or "O(n² + n)"
+```
+
+</Wrong>
+
+<Right>
+
+```text
+O(n) and O(n²): Big-O keeps only the fastest-growing term, without constants.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Big-O notation?">
+
+An upper bound on how an algorithm's running time or memory grows as the input size n grows, ignoring constant factors and lower-order terms. It lets us compare algorithms independently of hardware: an O(n log n) sort will beat an O(n²) one for large inputs even if the O(n²) one is faster on tiny inputs.
+
+</QA>
+
+<QA q="What is the time complexity of two nested loops over the same list, and of two loops one after the other?">
+
+Nested: O(n²), because the inner loop runs n times for each of the n outer iterations. Sequential: O(n) + O(n) = O(n). If the loops are over different inputs a and b, they are O(a · b) and O(a + b).
+
+</QA>
+
+<QA q="Why is binary search O(log n)?">
+
+Each comparison halves the remaining range, so after k steps n/2ᵏ items remain; it stops when that reaches 1, i.e. k = log₂ n. For a million items that is about 20 comparisons.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Big-O of 5n² + 3n + 100?',
+      options: ['O(5n²)', 'O(n²)', 'O(n² + n)', 'O(100)'],
+      answer: 1,
+      why: 'Drop constants and smaller terms.',
+    },
+    {
+      q: '`x in my_list` is...',
+      options: ['O(1)', 'O(log n)', 'O(n)', 'O(n²)'],
+      answer: 2,
+      why: 'It may scan the whole list.',
+    },
+    {
+      q: 'An algorithm halves the input each step. It is...',
+      options: ['O(n)', 'O(log n)', 'O(n²)', 'O(1)'],
+      answer: 1,
+      why: 'log₂ n halvings reach size 1.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Code shape | Big-O |
+| --- | --- |
+| index, dict/set lookup, append | O(1) |
+| halve each step | O(log n) |
+| one loop / `in` list / `sum` / `max` | O(n) |
+| `sorted()` / merge sort / heap n pushes | O(n log n) |
+| nested loops over n | O(n²) |
+| all subsets / naive recursion fib | O(2ⁿ) |
+| all orderings | O(n!) |
+
+Rules: drop constants · keep the biggest term · nested = multiply · sequential = add
+
+</CheatSheet>

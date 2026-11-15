@@ -1,0 +1,254 @@
+---
+id: fastapi-response-models
+title: Response models
+summary: "A response model (response_model=UserOut or a return type hint) defines what the API sends back: FastAPI filters out fields not in the model, such as password hashes, validates the output and documents it; separate In and Out models are the standard pattern."
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A hospital keeps a full patient file (tests, notes, billing, insurance numbers). When you ask for a **discharge summary**, you get a printed form with only the fields meant for you. The **response model** is that form: whatever the database has, only the allowed fields leave the building.
+
+</Analogy>
+
+## Simple explanation
+
+The pattern: **different models for input and output**.
+
+```python
+class UserIn(BaseModel):          # what the client sends
+    username: str
+    email: str
+    password: str
+
+class UserOut(BaseModel):         # what the client receives
+    id: int
+    username: str
+    email: str                    # no password, no hash
+```
+
+Two ways to declare it:
+
+```python
+@app.post("/users", response_model=UserOut, status_code=201)
+def create_user(user: UserIn):
+    return row                      # dict or ORM object WITH password_hash → filtered
+
+@app.get("/users/{user_id}")
+def get_user(user_id: int) -> UserOut:    # return type hint works too
+    return row
+```
+
+What the response model does:
+
+1. **Filters**: extra fields (password_hash, internal flags) are dropped
+2. **Validates and converts** the output (a bug that returns a wrong type becomes a server error, not bad data)
+3. **Documents** the response schema in `/docs`
+
+Useful options:
+
+| Option | Effect |
+| --- | --- |
+| `response_model_exclude_unset=True` | leave out fields that were never set (defaults) |
+| `response_model_exclude_none=True` | leave out `null` fields |
+| `response_model_include={"id", "username"}` / `exclude=` | quick field selection (separate models are clearer) |
+| `response_model=list[UserOut]` | lists |
+
+**ORM objects** (SQLAlchemy rows): set `model_config = ConfigDict(from_attributes=True)` on the Out model so Pydantic can read attributes (`user.id`) instead of dict keys.
+
+A common structure: `UserBase` (shared fields) → `UserCreate(UserBase)` with password → `UserUpdate` with all optional → `UserOut(UserBase)` with id and timestamps.
+
+## Code example
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+DB = {}
+
+class UserIn(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    email: str
+
+@app.post("/users", response_model=UserOut, status_code=201)
+def create_user(user: UserIn):
+    row = {"id": len(DB) + 1, **user.model_dump(), "password_hash": "x" + user.password[::-1]}
+    DB[row["id"]] = row                  # the stored row has password + password_hash
+    return row                           # ...but they never reach the client
+
+@app.get("/users/{user_id}")
+def get_user(user_id: int) -> UserOut:
+    return DB[user_id]
+
+class Item(BaseModel):
+    name: str
+    description: str | None = None
+    price: float
+    tax: float = 0.0
+
+@app.get("/items/{i}", response_model=Item, response_model_exclude_unset=True)
+def item(i: int):
+    return {"name": "Pen", "price": 20.0}
+```
+
+```output
+POST /users {"username": "asha", "email": "asha@example.com", "password": "s3cretpass"}
+  -> 201 {"id": 1, "username": "asha", "email": "asha@example.com"}
+GET /users/1   -> 200 {"id": 1, "username": "asha", "email": "asha@example.com"}
+GET /items/1   -> 200 {"name": "Pen", "price": 20.0}
+```
+
+`password` and `password_hash` are in the stored row but not in any response. `exclude_unset` hides `description` and `tax`.
+
+<Playground kind="none">
+
+```python
+# main.py  →  fastapi dev main.py  →  /docs shows the UserOut schema under "Responses"
+from fastapi import FastAPI
+from pydantic import BaseModel, ConfigDict
+
+app = FastAPI()
+
+class UserBase(BaseModel):
+    username: str
+    email: str
+
+class UserCreate(UserBase):
+    password: str
+
+class UserOut(UserBase):
+    model_config = ConfigDict(from_attributes=True)   # also works with SQLAlchemy objects
+    id: int
+
+USERS: list[dict] = []
+
+@app.post("/users", response_model=UserOut, status_code=201)
+def create(user: UserCreate):
+    row = {"id": len(USERS) + 1, **user.model_dump(), "is_admin": False}
+    USERS.append(row)
+    return row
+
+@app.get("/users", response_model=list[UserOut])
+def list_users():
+    return USERS
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Returning the ORM object without a response model">
+
+<Wrong>
+
+```python
+@app.get("/users/{user_id}")
+def get_user(user_id: int, db: Session = Depends(get_db)):
+    return db.get(User, user_id)     # may expose password_hash, is_admin, internal columns
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.get("/users/{user_id}", response_model=UserOut)
+def get_user(user_id: int, db: Session = Depends(get_db)):
+    return db.get(User, user_id)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="One model for input and output">
+
+<Wrong>
+
+```python
+class User(BaseModel):
+    id: int
+    username: str
+    password: str
+
+@app.post("/users", response_model=User)    # clients must send an id, and get the password back
+```
+
+</Wrong>
+
+<Right>
+
+```text
+UserCreate (input, with password)  →  UserOut (output, with id, without password)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is response_model used for?">
+
+It declares the schema of the response: FastAPI validates and serialises the returned data through that model, removing any fields not declared in it (such as password hashes), and documents the response in OpenAPI. A return type annotation does the same.
+
+</QA>
+
+<QA q="How do you return SQLAlchemy objects through Pydantic?">
+
+Enable `model_config = ConfigDict(from_attributes=True)` on the output model (orm_mode in v1) so Pydantic reads attributes from the object; then return the ORM instance with `response_model=UserOut`, or use `UserOut.model_validate(obj)`.
+
+</QA>
+
+<QA q="Why use separate input and output schemas?">
+
+Inputs and outputs differ: clients should not set ids, timestamps or roles, and must never receive secrets. Separate Create, Update and Out models make each contract explicit, keep validation correct (for example all-optional fields for PATCH) and prevent accidental data leaks.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Endpoint returns a dict with password_hash; response_model=UserOut has no such field. The client gets...',
+      options: ['The hash', 'An error', 'The data without password_hash', 'Nothing'],
+      answer: 2,
+      why: 'Fields not in the model are filtered out.',
+    },
+    {
+      q: 'Return a list of users?',
+      options: ['response_model=UserOut', 'response_model=list[UserOut]', 'response_model=[]', 'many=True'],
+      answer: 1,
+      why: 'Use the list type.',
+    },
+    {
+      q: 'Let Pydantic read SQLAlchemy attributes?',
+      options: ['extra="allow"', 'from_attributes=True', 'frozen=True', 'strict=True'],
+      answer: 1,
+      why: 'v2 name for orm_mode.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Declare | `@app.get(..., response_model=UserOut)` or `-> UserOut` |
+| List | `response_model=list[UserOut]` |
+| ORM objects | `model_config = ConfigDict(from_attributes=True)` |
+| Hide defaults | `response_model_exclude_unset=True` |
+| Hide nulls | `response_model_exclude_none=True` |
+| Pattern | `UserBase` → `UserCreate` / `UserUpdate` / `UserOut` |
+
+</CheatSheet>

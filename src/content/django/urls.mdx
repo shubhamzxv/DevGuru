@@ -1,0 +1,210 @@
+---
+id: django-urls
+title: URLs
+summary: Django maps URLs to views with path() patterns in urls.py; converters like <int:pk> capture and convert parts, include() nests app URLconfs, names with app_name namespaces let you build URLs with reverse() and the url template tag instead of hard-coding them.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A building's **directory board** in the lobby: "Accounts → 3rd floor, Room 301". You do not memorise room numbers; you look up the **name**. If Accounts moves to another room, only the board changes. Named URLs are that board.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+# store/urls.py
+from django.urls import path
+from . import views
+
+app_name = "store"                     # namespace
+
+urlpatterns = [
+    path("", views.product_list, name="product-list"),
+    path("<int:pk>/", views.product_detail, name="product-detail"),
+    path("new/", views.product_create, name="product-create"),
+    path("category/<slug:slug>/", views.by_category, name="by-category"),
+]
+```
+
+```python
+# config/urls.py
+from django.urls import include, path
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("products/", include("store.urls")),      # /products/, /products/7/, ...
+    path("api/", include("store.api_urls")),
+]
+```
+
+**Path converters**
+
+| Converter | Matches | Gives |
+| --- | --- | --- |
+| `<int:pk>` | `7` | `int` |
+| `<str:name>` | any text without `/` (default) | `str` |
+| `<slug:slug>` | `clean-code` | `str` |
+| `<uuid:id>` | a UUID | `UUID` |
+| `<path:file>` | text with `/` | `str` |
+
+The captured values arrive as keyword arguments: `def product_detail(request, pk)`. `re_path()` accepts regular expressions when needed.
+
+**Build URLs by name** (never hard-code paths):
+
+```python
+from django.urls import reverse
+reverse("store:product-detail", args=[7])        # '/products/7/'
+redirect("store:product-detail", pk=7)           # in views
+```
+
+```html
+<a href="{% url 'store:product-detail' product.pk %}">{{ product.name }}</a>
+```
+
+Also: `get_absolute_url()` on models, `APPEND_SLASH` (redirects `/products` → `/products/`), patterns are matched **in order**, the query string (`?q=`) is not part of the path (read it with `request.GET`), and custom error views with `handler404`/`handler500` in the root URLconf.
+
+## Code example
+
+```python
+>>> from django.urls import reverse, resolve
+>>> reverse("store:product-detail", args=[7])
+>>> reverse("store:product-list")
+>>> resolve("/products/7/").func.__name__, resolve("/products/7/").kwargs
+```
+
+```output
+'/products/7/'
+'/products/'
+('product_detail', {'pk': 7})
+```
+
+```output
+GET /products/7/     → product_detail(request, pk=7)
+GET /products/abc/   → 404 (int converter does not match)
+GET /products        → 301 → /products/  (APPEND_SLASH)
+```
+
+<Playground kind="none">
+
+```python
+# config/urls.py — try changing the order or the converters and visit the URLs
+from django.contrib import admin
+from django.http import HttpResponse
+from django.urls import include, path
+
+def hello(request, name):
+    return HttpResponse(f"Hello, {name}!")
+
+def order_detail(request, order_id):
+    return HttpResponse(f"Order #{order_id} ({type(order_id).__name__})")
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("hello/<str:name>/", hello, name="hello"),             # /hello/asha/
+    path("orders/<int:order_id>/", order_detail, name="order"),  # /orders/42/  vs  /orders/abc/
+]
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Hard-coded URLs">
+
+<Wrong>
+
+```html
+<a href="/products/{{ product.id }}/">          <!-- breaks when the URL changes to /shop/items/7/ -->
+```
+
+</Wrong>
+
+<Right>
+
+```html
+<a href="{% url 'store:product-detail' product.pk %}">
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Generic pattern before a fixed one">
+
+<Wrong>
+
+```python
+path("<str:slug>/", views.page),
+path("about/", views.about),      # never reached
+```
+
+</Wrong>
+
+<Right>
+
+```python
+path("about/", views.about),
+path("<str:slug>/", views.page),
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does URL routing work in Django?">
+
+ROOT_URLCONF points to a module with `urlpatterns`. Django tries each `path()` or `re_path()` in order; `include()` delegates the rest of the path to another URLconf. The first match calls its view with the captured, converted parameters as keyword arguments; no match returns 404.
+
+</QA>
+
+<QA q="What is reverse() and why use URL names?">
+
+`reverse("namespace:name", args=...)` builds a URL from its name, and the `{% url %}` tag does the same in templates. Naming routes (with app namespaces) avoids hard-coded paths, so URLs can change in one place without breaking links, redirects or tests.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Capture an integer id from /products/7/?',
+      options: ['<pk>', '<int:pk>', '{pk}', ':pk'],
+      answer: 1,
+      why: 'Django path converter syntax.',
+    },
+    {
+      q: 'Build /products/7/ from its name in Python?',
+      options: ['url("store:product-detail")', 'reverse("store:product-detail", args=[7])', 'resolve(7)', 'path(7)'],
+      answer: 1,
+      why: 'reverse() builds URLs; resolve() parses them.',
+    },
+    {
+      q: 'Connect an app\'s urls.py to the project?',
+      options: ['import it in settings', 'path("products/", include("store.urls"))', 'INSTALLED_APPS', 'admin.site'],
+      answer: 1,
+      why: 'include() nests URLconfs.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Route | `path("<int:pk>/", views.detail, name="product-detail")` |
+| Namespace | `app_name = "store"` |
+| Nest | `path("products/", include("store.urls"))` |
+| Converters | `int` · `str` · `slug` · `uuid` · `path` |
+| Python URL | `reverse("store:product-detail", args=[7])` |
+| Template URL | `{% url 'store:product-detail' product.pk %}` |
+| Redirect | `redirect("store:product-detail", pk=7)` |
+| Query string | `request.GET.get("q")` |
+
+</CheatSheet>

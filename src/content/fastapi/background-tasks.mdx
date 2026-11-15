@@ -1,0 +1,199 @@
+---
+id: fastapi-background-tasks
+title: Background tasks
+summary: BackgroundTasks runs a function after the response has been sent, which is good for small jobs like sending an email or writing an audit log; heavy, slow or must-not-be-lost jobs belong in a task queue such as Celery with Redis or SQS.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+At a courier counter, the clerk gives you the **receipt immediately** and puts the parcel on the "to process" shelf. You do not wait while they weigh, sort and label it. **BackgroundTasks** is that shelf: the response goes first, the extra work happens just after.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+from fastapi import BackgroundTasks
+
+def send_email(to: str, subject: str):
+    ...                                    # slow-ish: talks to an SMTP server
+
+@app.post("/signup", status_code=201)
+def signup(email: str, tasks: BackgroundTasks):
+    # ... create the user ...
+    tasks.add_task(send_email, email, "Welcome to the shop")   # function + its arguments
+    return {"message": "Account created"}                      # sent right away
+```
+
+- Declare a parameter of type `BackgroundTasks`; FastAPI injects it
+- `tasks.add_task(func, *args, **kwargs)`: run `func` **after** the response is sent
+- `func` can be `def` (runs in the thread pool) or `async def`
+- Works in dependencies too, and several tasks run in order
+
+**When it is the right tool**: quick side jobs where losing one occasionally is acceptable: welcome emails, notifications, audit logs, cache warming, analytics events.
+
+**When you need a real task queue** (Celery + Redis/RabbitMQ, RQ, Arq, or AWS SQS + a worker):
+
+| Need | BackgroundTasks | Task queue |
+| --- | --- | --- |
+| Runs in the same process as the API | yes | no, separate workers |
+| Survives a restart / crash | **no** (lost) | yes (stored in the broker) |
+| Retries | no | yes |
+| Long jobs (minutes), CPU-heavy | no | yes |
+| Scheduling (every night) | no | yes (Celery beat) |
+| Monitoring | no | yes (Flower, dashboards) |
+
+Examples for a queue: generating PDF invoices, video processing, bulk email campaigns, payment reconciliation, anything that must not be lost.
+
+## Code example
+
+```python
+from fastapi import BackgroundTasks, FastAPI
+
+app = FastAPI()
+log = []
+
+def send_email(to: str, subject: str):
+    log.append(f"email to {to}: {subject}")
+
+@app.post("/signup", status_code=201)
+def signup(email: str, tasks: BackgroundTasks):
+    tasks.add_task(send_email, email, "Welcome to the shop")
+    log.append("response ready")
+    return {"message": "Account created"}
+```
+
+```output
+POST /signup?email=asha@example.com -> 201 {"message": "Account created"}
+log: ['response ready', 'email to asha@example.com: Welcome to the shop']
+```
+
+The order in the log shows the email ran after the response was prepared.
+
+<Playground kind="none">
+
+```python
+# main.py  →  fastapi dev main.py  →  POST /signup?email=you@example.com in /docs
+# The response returns at once; 3 seconds later the "email" line appears in the server terminal.
+import time
+from fastapi import BackgroundTasks, FastAPI
+
+app = FastAPI()
+
+def send_email(to: str, subject: str):
+    time.sleep(3)                                  # pretend SMTP is slow
+    print(f"Sent '{subject}' to {to}")
+
+@app.post("/signup", status_code=201)
+def signup(email: str, tasks: BackgroundTasks):
+    tasks.add_task(send_email, email, "Welcome to the shop")
+    return {"message": "Account created, check your inbox"}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Heavy or critical work in BackgroundTasks">
+
+<Wrong>
+
+```python
+tasks.add_task(generate_and_email_invoice_pdf, order_id)   # 2 minutes, and lost if the server restarts
+```
+
+</Wrong>
+
+<Right>
+
+```python
+generate_invoice.delay(order_id)        # Celery task: stored in Redis, retried, run by workers
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Passing the request's database session to the task">
+
+<Wrong>
+
+```python
+tasks.add_task(update_stats, db)        # the session from get_db is closed after the response
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def update_stats(order_id: int):
+    with SessionLocal() as db:          # the task opens its own session
+        ...
+tasks.add_task(update_stats, order.id)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are background tasks in FastAPI?">
+
+Functions registered with `BackgroundTasks.add_task` that FastAPI (Starlette) runs after sending the response, in the same process, so the client does not wait. They suit small, non-critical jobs such as sending emails or logging.
+
+</QA>
+
+<QA q="When would you use Celery instead of BackgroundTasks?">
+
+When jobs are long or CPU-heavy, must survive restarts, need retries, rate limiting, scheduling or monitoring, or must be scaled separately from the web servers. Celery (or RQ, Arq, SQS workers) stores tasks in a broker and processes them with independent workers.
+
+</QA>
+
+<QA q="What happens to a background task if the server crashes?">
+
+It is lost, because it only lives in the memory of that process. That is why critical work should go through a durable queue, or be recorded in the database first (an outbox table) and processed by a worker.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'When does a BackgroundTasks job run?',
+      options: ['Before the endpoint', 'After the response is sent', 'In another server', 'Every hour'],
+      answer: 1,
+      why: 'The client does not wait for it.',
+    },
+    {
+      q: 'A task must not be lost on restart. Use...',
+      options: ['BackgroundTasks', 'A task queue like Celery or SQS', 'time.sleep', 'A global list'],
+      answer: 1,
+      why: 'Queues persist tasks in a broker.',
+    },
+    {
+      q: 'How do you pass arguments?',
+      options: ['tasks.add_task(f(x))', 'tasks.add_task(f, x)', 'tasks.run(f, x)', 'f.delay(x)'],
+      answer: 1,
+      why: 'Pass the function and its arguments separately.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Inject | `def route(tasks: BackgroundTasks)` |
+| Add a job | `tasks.add_task(send_email, to, subject)` |
+| Its own DB session | `with SessionLocal() as db:` inside the task |
+| Long, critical, retried, scheduled | Celery / RQ / Arq / SQS worker |
+
+BackgroundTasks = same process, after the response, lost on crash.
+
+</CheatSheet>

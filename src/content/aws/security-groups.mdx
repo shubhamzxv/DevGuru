@@ -1,0 +1,217 @@
+---
+id: aws-security-groups
+title: Security groups and key pairs
+summary: A security group is a stateful virtual firewall on an instance or network interface with allow-only inbound and outbound rules, which can reference other security groups; network ACLs are stateless subnet-level rules; key pairs provide SSH login, though SSM Session Manager avoids open ports.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **guarded gate list** for each building: "Visitors from the main lobby may enter on floor 3; staff badges from the IT team may use the service door." Anyone not on the list is turned away, and once someone is let in, they can walk back out the same way (**stateful**). A **key pair** is the personal key to the maintenance room.
+
+</Analogy>
+
+## Simple explanation
+
+**Security group (SG)**
+
+- Attached to instances, load balancers, RDS, Lambda in a VPC, ECS tasks (any network interface)
+- Rules are **allow only**; anything not allowed is blocked
+- **Inbound** default: nothing allowed. **Outbound** default: everything allowed
+- **Stateful**: if a request is allowed in, the response goes out automatically (and vice versa)
+- A rule source can be a **CIDR** (`203.0.113.10/32`, `0.0.0.0/0`) or **another security group** (the best practice for tiers)
+- Changes apply immediately
+
+The three-tier pattern:
+
+| SG | Inbound rule |
+| --- | --- |
+| `sg-alb` | 443 from `0.0.0.0/0` |
+| `sg-app` | 8000 from `sg-alb` only |
+| `sg-db` | 5432 from `sg-app` only |
+| (admin) | 22 from your office IP only, or nothing with SSM |
+
+**Network ACL (NACL)**: a second, optional layer on the **subnet**:
+
+| | Security group | Network ACL |
+| --- | --- | --- |
+| Level | instance / ENI | subnet |
+| Rules | allow only | allow **and deny**, numbered, evaluated in order |
+| State | stateful | **stateless** (allow return traffic, ephemeral ports 1024–65535) |
+| Default | deny in, allow out | default NACL allows all |
+| Typical use | main control | block a bad IP range for a whole subnet |
+
+**Key pairs**: AWS keeps the public key and puts it on the instance; you download the private key once (`.pem`), `chmod 400` it and `ssh -i key.pem ubuntu@ip`. Lost key = no SSH (use SSM or replace the key via a new volume). Better: **SSM Session Manager** (no port 22, IAM-controlled, logged) or **EC2 Instance Connect**.
+
+## Code example
+
+```python
+import boto3
+
+ec2 = boto3.client("ec2", region_name="ap-south-1")
+sg = ec2.create_security_group(GroupName="shop-web", Description="web servers", VpcId=vpc_id)["GroupId"]
+ec2.authorize_security_group_ingress(GroupId=sg, IpPermissions=[
+    {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]},
+    {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "IpRanges": [{"CidrIp": "203.0.113.10/32", "Description": "my office"}]},
+])
+rules = ec2.describe_security_groups(GroupIds=[sg])["SecurityGroups"][0]["IpPermissions"]
+print("sg", sg, [(r["FromPort"], [i["CidrIp"] for i in r["IpRanges"]]) for r in rules])
+
+kp = ec2.create_key_pair(KeyName="shop-key", KeyType="ed25519")
+print("key:", kp["KeyName"], kp["KeyFingerprint"][:20] + "...")
+```
+
+```output
+sg sg-1437c35f1a1ff374a [(443, ['0.0.0.0/0']), (22, ['203.0.113.10/32'])]
+key: shop-key ea:d3:35:db:c0:d8:0d...
+```
+
+```bash
+# App tier accepts traffic only from the load balancer's security group
+aws ec2 authorize-security-group-ingress --group-id sg-app --protocol tcp --port 8000 --source-group sg-alb
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "internet", "label": "Internet", "icon": "🌍", "col": 0, "row": 1, "info": "Anyone, including bots scanning ports.", "example": "0.0.0.0/0" },
+    { "id": "alb", "label": "ALB (sg-alb)", "icon": "⚖️", "col": 1, "row": 1, "info": "Inbound: 443 from 0.0.0.0/0. The only public entry.", "example": "HTTPS for shop.example.com" },
+    { "id": "app", "label": "App servers (sg-app)", "icon": "🖥️", "col": 2, "row": 1, "info": "Inbound: 8000 from sg-alb ONLY (a security-group reference, not an IP).", "example": "New instances are allowed automatically." },
+    { "id": "db", "label": "RDS (sg-db)", "icon": "🗄️", "col": 3, "row": 1, "info": "Inbound: 5432 from sg-app ONLY. Not reachable from the internet at all.", "example": "Private subnet" },
+    { "id": "admin", "label": "You (SSM)", "icon": "🧑‍💻", "col": 2, "row": 0, "info": "Session Manager through IAM: no port 22 open.", "example": "aws ssm start-session --target i-..." },
+    { "id": "bot", "label": "Attacker scanning 5432", "icon": "🤖", "col": 1, "row": 2, "info": "Tries to connect to the database directly.", "example": "Blocked: no matching inbound rule." }
+  ],
+  "edges": [
+    ["internet", "alb", "443"],
+    ["alb", "app", "8000"],
+    ["app", "db", "5432"],
+    ["admin", "app", "SSM"],
+    ["bot", "db", "blocked"]
+  ],
+  "flows": [
+    {
+      "name": "A normal request",
+      "steps": [
+        ["internet", "A customer opens https://shop.example.com."],
+        ["alb", "sg-alb allows 443 from anywhere."],
+        ["app", "sg-app allows 8000 because the source is sg-alb."],
+        ["db", "sg-db allows 5432 because the source is sg-app."],
+        ["internet", "Responses flow back automatically (stateful)."]
+      ]
+    },
+    {
+      "name": "An attack",
+      "steps": [
+        ["bot", "A bot tries 5432 and 22 on every IP."],
+        ["db", "No rule allows it: dropped silently."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Database open to the world">
+
+<Wrong>
+
+```text
+sg-db inbound: 5432 from 0.0.0.0/0 "just for testing"
+```
+
+</Wrong>
+
+<Right>
+
+```text
+sg-db inbound: 5432 from sg-app; connect yourself via SSM port forwarding or a bastion.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="SSH from anywhere">
+
+<Wrong>
+
+```text
+22 from 0.0.0.0/0 with password login enabled
+```
+
+</Wrong>
+
+<Right>
+
+```text
+No port 22 at all (SSM Session Manager), or 22 from your IP /32 with key-only login.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a security group and a network ACL?">
+
+Security groups are stateful firewalls attached to network interfaces, with allow-only rules (including references to other security groups), and return traffic is automatically allowed. NACLs are stateless filters at the subnet boundary with numbered allow and deny rules evaluated in order, so return traffic (ephemeral ports) must be explicitly allowed. Security groups are the primary control; NACLs add coarse subnet-level blocks.
+
+</QA>
+
+<QA q="Why reference security groups instead of IP addresses?">
+
+Instances behind load balancers and Auto Scaling get changing IPs. A rule like "port 8000 from sg-alb" automatically covers every current and future member of that group, keeping tiers isolated without updating IP lists.
+
+</QA>
+
+<QA q="You lost the private key of an EC2 instance. What can you do?">
+
+Use SSM Session Manager or EC2 Instance Connect if available to add a new public key to authorized_keys; otherwise stop the instance, detach the root volume, attach it to another instance, edit authorized_keys, and reattach. Prevent it by using SSM instead of SSH keys.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Security groups are...',
+      options: ['Stateless', 'Stateful', 'Deny-only', 'Subnet-level'],
+      answer: 1,
+      why: 'Return traffic is allowed automatically.',
+    },
+    {
+      q: 'Which supports explicit DENY rules?',
+      options: ['Security group', 'Network ACL', 'IAM role', 'Key pair'],
+      answer: 1,
+      why: 'NACLs have allow and deny.',
+    },
+    {
+      q: 'Default inbound rule of a new security group?',
+      options: ['Allow all', 'Deny all (no rules)', 'Allow 22', 'Allow 80 and 443'],
+      answer: 1,
+      why: 'You must add inbound rules.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| SG | stateful · allow-only · per ENI · default: no inbound, all outbound |
+| SG source | CIDR or another SG (`--source-group sg-alb`) |
+| NACL | stateless · allow + deny · numbered · per subnet |
+| Tiers | ALB 443 ← world · app ← sg-alb · DB ← sg-app |
+| SSH | key pair `.pem` + `chmod 400` · prefer SSM Session Manager |
+| Never | 22 / 3306 / 5432 / 6379 from `0.0.0.0/0` |
+
+</CheatSheet>

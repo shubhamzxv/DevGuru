@@ -1,0 +1,226 @@
+---
+id: django-request-response-flow
+title: How a request flows through Django
+summary: A request goes from the web server through WSGI or ASGI into Django, passes the middleware stack, is matched by the URL resolver to a view, the view uses models and templates or serializers, and the response travels back out through the middleware in reverse order.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A letter arriving at a big office: the **gate** (nginx) lets the postman in, the **mail room** (WSGI) unpacks it, it passes **security, logging and the stamp desk** (middleware), the **receptionist** reads the address and sends it to the right desk (URL resolver), the **clerk** does the work (view), and the reply goes back out through the same desks in reverse.
+
+</Analogy>
+
+## Simple explanation
+
+```text
+Client
+  │  HTTPS
+  ▼
+nginx / load balancer          (TLS, static files, buffering)
+  ▼
+Gunicorn (WSGI) / Uvicorn (ASGI)   config/wsgi.py → get_wsgi_application()
+  ▼
+Django: HttpRequest object built
+  ▼
+Middleware (top → bottom)       Security, Session, Common, Csrf, Auth (sets request.user), Messages...
+  ▼
+URL resolver (ROOT_URLCONF)     path("products/<int:pk>/", views.product_detail) → kwargs {pk: 7}
+  ▼
+View                            product_detail(request, pk=7)
+  │── Model / ORM → database
+  │── Template / Serializer → HTML / JSON
+  ▼
+HttpResponse
+  ▼
+Middleware (bottom → top)       add headers, set cookies, gzip...
+  ▼
+Gunicorn → nginx → Client
+```
+
+Key points:
+
+- **Middleware order matters**: `SessionMiddleware` must come before `AuthenticationMiddleware` (auth reads the session); `SecurityMiddleware` first
+- If a middleware **returns a response early** (for example CSRF failure → 403), the view never runs
+- **URL resolution**: patterns are tried in order; no match → 404 (`Http404`); converters like `<int:pk>` and `<slug:slug>` validate and convert
+- Exceptions in the view are turned into 404/403/500 responses (custom `handler404`, `handler500`)
+- **Signals** may fire along the way (`request_started`, `post_save`...)
+- Database connections are reused per thread (`CONN_MAX_AGE`) and transactions can wrap each request (`ATOMIC_REQUESTS`)
+
+WSGI (`wsgi.py`) is synchronous: one request per worker thread. ASGI (`asgi.py`) allows async views and WebSockets (with Channels).
+
+## Code example
+
+```python
+# store/middleware.py: watch the flow
+import time, uuid
+
+class RequestTimingMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response          # once, at startup
+
+    def __call__(self, request):
+        request.request_id = uuid.uuid4().hex[:8]  # BEFORE the view
+        start = time.perf_counter()
+        response = self.get_response(request)      # inner middleware + URL resolver + view
+        response["X-Request-ID"] = request.request_id
+        response["X-Response-Time"] = f"{(time.perf_counter() - start) * 1000:.1f}ms"   # AFTER the view
+        return response
+```
+
+```output
+GET /products/7/    → 200, headers X-Request-ID: 3f9a1c2b, X-Response-Time: 4.2ms
+GET /products/999/  → 404 (get_object_or_404 raised Http404 inside the view)
+GET /products/new/  → 302 /accounts/login/?next=/products/new/  (@login_required, request.user set by AuthenticationMiddleware)
+POST without CSRF token (enforced) → 403  (CsrfViewMiddleware answered; the view never ran)
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "client", "label": "Browser", "icon": "🌐", "col": 0, "row": 1, "info": "Sends GET https://shop.example.com/products/7/", "example": "A customer opens a product page." },
+    { "id": "nginx", "label": "nginx", "icon": "🚪", "col": 1, "row": 1, "info": "Terminates HTTPS, serves /static/ itself, forwards the rest to Gunicorn.", "example": "proxy_pass http://127.0.0.1:8000;" },
+    { "id": "gunicorn", "label": "Gunicorn (WSGI)", "icon": "⚙️", "col": 2, "row": 1, "info": "Worker processes that call Django's WSGI application.", "example": "gunicorn config.wsgi:application -w 3" },
+    { "id": "mw", "label": "Middleware", "icon": "🧱", "col": 3, "row": 0, "info": "Security, Session, CSRF, Authentication (sets request.user)... on the way in and out.", "example": "settings.MIDDLEWARE order" },
+    { "id": "urls", "label": "URL resolver", "icon": "🧭", "col": 3, "row": 2, "info": "Finds the matching pattern and converts parameters.", "example": "<int:pk> → pk=7" },
+    { "id": "view", "label": "View", "icon": "🧑‍🍳", "col": 4, "row": 1, "info": "Runs the logic, uses the ORM, renders a template or serializer.", "example": "product_detail(request, pk=7)" },
+    { "id": "db", "label": "PostgreSQL", "icon": "🛢️", "col": 5, "row": 1, "info": "Answers the ORM's SQL.", "example": "SELECT ... WHERE id = 7" }
+  ],
+  "edges": [
+    ["client", "nginx"],
+    ["nginx", "gunicorn"],
+    ["gunicorn", "mw"],
+    ["mw", "urls"],
+    ["urls", "view"],
+    ["view", "db"]
+  ],
+  "flows": [
+    {
+      "name": "GET /products/7/",
+      "steps": [
+        ["client", "Request leaves the browser."],
+        ["nginx", "nginx ends TLS and forwards to Gunicorn."],
+        ["gunicorn", "A worker builds an HttpRequest."],
+        ["mw", "Middleware runs top to bottom; AuthenticationMiddleware sets request.user."],
+        ["urls", "products/<int:pk>/ matches; pk=7."],
+        ["view", "product_detail fetches the product."],
+        ["db", "One SELECT returns the row."],
+        ["view", "The template renders HTML into an HttpResponse."],
+        ["mw", "Middleware runs bottom to top, adding headers."],
+        ["client", "The page arrives."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Wrong middleware order">
+
+<Wrong>
+
+```python
+MIDDLEWARE = [
+    "django.contrib.auth.middleware.AuthenticationMiddleware",   # needs the session...
+    "django.contrib.sessions.middleware.SessionMiddleware",      # ...which is set up later
+]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Serving static files through Django in production">
+
+<Wrong>
+
+```text
+Every CSS and image request goes through Gunicorn workers and the middleware stack.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+collectstatic → nginx/CloudFront/S3 serves /static/ directly (or WhiteNoise for simple setups).
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain the request-response lifecycle in Django.">
+
+The web server passes the request to Gunicorn or Uvicorn, which calls Django's WSGI/ASGI handler; Django builds an HttpRequest and runs it through the middleware in order; the URL resolver matches ROOT_URLCONF patterns and calls the view with captured arguments; the view uses models, forms, templates or serializers and returns an HttpResponse, which passes back through the middleware in reverse order before being sent to the client. Exceptions become error responses via handlers.
+
+</QA>
+
+<QA q="What is the difference between WSGI and ASGI in Django?">
+
+WSGI (wsgi.py, Gunicorn, uWSGI) is the synchronous interface where each worker handles one request at a time. ASGI (asgi.py, Uvicorn, Daphne) supports async views, long-lived connections and WebSockets through Channels. Django supports both; the ORM is still mostly synchronous.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which middleware sets request.user?',
+      options: ['SessionMiddleware', 'AuthenticationMiddleware', 'CsrfViewMiddleware', 'CommonMiddleware'],
+      answer: 1,
+      why: 'It reads the user id from the session.',
+    },
+    {
+      q: 'On the way out, middleware runs in...',
+      options: ['The same order', 'Reverse order', 'Random order', 'Not at all'],
+      answer: 1,
+      why: 'Like layers of an onion.',
+    },
+    {
+      q: 'No URL pattern matches. Result?',
+      options: ['500', '404', '403', '302'],
+      answer: 1,
+      why: 'The resolver raises Http404.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Stage | Where |
+| --- | --- |
+| TLS, static | nginx / ALB / CloudFront |
+| App server | `gunicorn config.wsgi:application` · `uvicorn config.asgi:application` |
+| Middleware | `settings.MIDDLEWARE` (in: top → bottom, out: reverse) |
+| Routing | `ROOT_URLCONF` → `path()` patterns in order |
+| Logic | view → ORM / templates / serializers |
+| Errors | `Http404`, `PermissionDenied`, `handler404/500` |
+
+</CheatSheet>

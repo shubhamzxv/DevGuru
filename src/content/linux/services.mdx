@@ -1,0 +1,208 @@
+---
+id: linux-services
+title: Services (systemctl)
+summary: systemd starts and supervises background services; systemctl starts, stops, restarts, enables at boot and shows the status of services, and journalctl reads their logs.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A building's **facility manager** keeps the lifts, the water pumps and the security cameras running. If a pump stops, the manager restarts it. Every morning the manager switches on everything on the "start at opening" list.
+
+**systemd** is the facility manager of a Linux server. **systemctl** is how you give it instructions.
+
+</Analogy>
+
+## Simple explanation
+
+A **service** (unit) is a program that runs in the background: nginx, ssh, docker, cron, your API.
+
+| Command | Does |
+| --- | --- |
+| `systemctl status nginx` | running? since when? last log lines |
+| `sudo systemctl start nginx` | start now |
+| `sudo systemctl stop nginx` | stop now |
+| `sudo systemctl restart nginx` | stop + start (after config changes) |
+| `sudo systemctl reload nginx` | re-read config without dropping connections (if supported) |
+| `sudo systemctl enable nginx` | start **automatically at boot** |
+| `sudo systemctl enable --now nginx` | enable and start in one step |
+| `sudo systemctl disable nginx` | do not start at boot |
+| `systemctl is-active nginx` | prints active/inactive (handy in scripts) |
+| `systemctl list-units --type=service` | all services |
+| `journalctl -u nginx -f` | follow the service's logs |
+| `journalctl -u nginx --since "1 hour ago"` | recent logs |
+
+**start ≠ enable**: start = now; enable = at every boot. You usually want both.
+
+**Your own app as a service**: `/etc/systemd/system/shop-api.service`
+
+```ini
+[Unit]
+Description=Shop API (gunicorn)
+After=network.target
+
+[Service]
+User=deploy
+WorkingDirectory=/home/deploy/shop
+EnvironmentFile=/home/deploy/shop/.env
+ExecStart=/home/deploy/shop/.venv/bin/gunicorn shop.wsgi:application -b 127.0.0.1:8000 --workers 3
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload            # after creating or editing a unit file
+sudo systemctl enable --now shop-api
+systemctl status shop-api
+journalctl -u shop-api -f
+```
+
+`Restart=always` makes systemd restart the app if it crashes; logs go to the journal automatically (print to stdout).
+
+## Code example
+
+```bash
+systemctl status nginx
+sudo systemctl enable --now nginx
+systemctl status nginx
+```
+
+```output
+○ nginx.service - A high performance web server
+     Loaded: loaded (/lib/systemd/system/nginx.service; disabled; preset: enabled)
+     Active: inactive (dead)
+Created symlink /etc/systemd/system/multi-user.target.wants/nginx.service → /lib/systemd/system/nginx.service.
+● nginx.service - A high performance web server
+     Loaded: loaded (/lib/systemd/system/nginx.service; enabled; preset: enabled)
+     Active: active (running) since Sun 2026-11-15 09:30:00 IST; 2h ago
+   Main PID: 1810 (nginx)
+```
+
+<Playground kind="terminal">
+
+```bash
+systemctl list-units
+systemctl status nginx
+systemctl start nginx
+sudo systemctl start nginx
+systemctl is-active nginx
+systemctl is-enabled nginx
+sudo systemctl enable nginx
+sudo systemctl restart nginx
+systemctl status nginx
+systemctl status shop-api
+journalctl -u shop-api
+journalctl -u nginx -n 5
+```
+
+</Playground>
+
+Starting a service needs sudo. `is-enabled` stays `disabled` until you enable it.
+
+<Mistakes>
+
+<Mistake title="Start without enable">
+
+<Wrong>
+
+```bash
+sudo systemctl start shop-api     # works today; after the next reboot the site is down
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+sudo systemctl enable --now shop-api
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Forgetting daemon-reload">
+
+<Wrong>
+
+```bash
+sudo nano /etc/systemd/system/shop-api.service
+sudo systemctl restart shop-api      # still uses the OLD unit (with a warning)
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart shop-api
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you run a Python app as a service on Linux?">
+
+Write a systemd unit in /etc/systemd/system/app.service with a [Service] section: User, WorkingDirectory, EnvironmentFile, ExecStart pointing to gunicorn or uvicorn in the virtualenv, Restart=always; and an [Install] section with WantedBy=multi-user.target. Then `daemon-reload`, `enable --now`, check `systemctl status` and read logs with `journalctl -u app -f`. Usually nginx proxies to it.
+
+</QA>
+
+<QA q="What is the difference between systemctl start and enable?">
+
+start runs the service immediately for the current boot only. enable creates the symlinks so it starts automatically at boot, but does not start it now. `enable --now` does both.
+
+</QA>
+
+<QA q="A service fails to start. How do you debug it?">
+
+`systemctl status name` for the state and last lines, `journalctl -u name -e` or `-n 100` for full logs, check the unit file (paths, user, working directory, environment), run the ExecStart command by hand as that user, and check permissions and ports already in use (`ss -tulpn`).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which makes a service start at boot?',
+      options: ['systemctl start', 'systemctl enable', 'systemctl status', 'journalctl -f'],
+      answer: 1,
+      why: 'enable = at boot; start = now.',
+    },
+    {
+      q: 'After editing a unit file you must run...',
+      options: ['systemctl daemon-reload', 'reboot', 'apt update', 'chmod +x'],
+      answer: 0,
+      why: 'systemd re-reads unit files.',
+    },
+    {
+      q: 'Follow the logs of shop-api?',
+      options: ['tail -f shop-api', 'journalctl -u shop-api -f', 'systemctl logs shop-api', 'cat /var/shop-api'],
+      answer: 1,
+      why: 'journalctl reads the systemd journal.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| State | `systemctl status name` |
+| Now | `sudo systemctl start / stop / restart / reload name` |
+| At boot | `sudo systemctl enable --now name` · `disable` |
+| Script checks | `systemctl is-active name` · `is-enabled` |
+| After unit edit | `sudo systemctl daemon-reload` |
+| Logs | `journalctl -u name -f` · `-n 100` · `--since "1 hour ago"` |
+| Unit files | `/etc/systemd/system/*.service` |
+
+</CheatSheet>

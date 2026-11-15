@@ -1,0 +1,239 @@
+---
+id: dsa-backtracking
+title: Backtracking basics
+summary: Backtracking builds a solution step by step, tries each choice, recurses, and undoes the choice to try the next one; it generates subsets, permutations and combinations and solves constraint puzzles like N-Queens and word search, with pruning to skip branches that cannot succeed.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Finding your way through a **maze**: at each junction you pick a path and walk on. If you hit a dead end, you **walk back** to the last junction and try the next path. You keep a chalk mark of where you are (the current path) and rub it out when you step back.
+
+</Analogy>
+
+## Simple explanation
+
+The template:
+
+```python
+def backtrack(path, choices):
+    if is_complete(path):
+        results.append(path[:])        # copy! path keeps changing
+        return
+    for choice in choices:
+        if not valid(choice):          # pruning
+            continue
+        path.append(choice)            # choose
+        backtrack(path, next_choices)  # explore
+        path.pop()                     # un-choose (backtrack)
+```
+
+| Problem | Choices at each step | Count of results |
+| --- | --- | --- |
+| **Subsets** | include or skip each item / pick items after index `start` | 2ⁿ |
+| **Permutations** | any unused item | n! |
+| **Combinations** (choose k) | items after `start`, stop at length k | C(n, k) |
+| Combination sum | items from `start` (reuse allowed), stop when sum ≥ target | — |
+| N-Queens | a safe column in the next row | — |
+| Word search in a grid | 4 neighbours not yet used | — |
+| Sudoku | digits valid in the cell | — |
+
+**Pruning** makes backtracking practical: stop as soon as a partial solution cannot work (sum already too big, queen attacked, letter does not match).
+
+Time is usually exponential (it explores a tree of choices), so inputs are small (n ≤ ~20). Python's `itertools` has `combinations`, `permutations` and `product` for the simple cases — but interviews want you to write them.
+
+## Code example
+
+```python
+def subsets(nums):
+    out = []
+    def go(start, path):
+        out.append(path[:])
+        for i in range(start, len(nums)):
+            path.append(nums[i])
+            go(i + 1, path)
+            path.pop()
+    go(0, [])
+    return out
+
+def permutations(nums):
+    out, used = [], [False] * len(nums)
+    def go(path):
+        if len(path) == len(nums):
+            out.append(path[:])
+            return
+        for i, x in enumerate(nums):
+            if not used[i]:
+                used[i] = True
+                path.append(x)
+                go(path)
+                path.pop()
+                used[i] = False
+    go([])
+    return out
+
+def combination_sum(candidates, target):
+    out = []
+    def go(start, path, remaining):
+        if remaining == 0:
+            out.append(path[:])
+            return
+        for i in range(start, len(candidates)):
+            c = candidates[i]
+            if c > remaining:
+                break                     # prune: sorted, so the rest are too big
+            path.append(c)
+            go(i, path, remaining - c)    # i, not i + 1: reuse allowed
+            path.pop()
+    candidates.sort()
+    go(0, [], target)
+    return out
+
+print(subsets([1, 2, 3]))
+print(permutations([1, 2, 3]))
+print(combination_sum([2, 3, 6, 7], 7))
+```
+
+```output
+[[], [1], [1, 2], [1, 2, 3], [1, 3], [2], [2, 3], [3]]
+[[1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1]]
+[[2, 2, 3], [7]]
+```
+
+<Playground kind="python">
+
+```python
+def solve_n_queens(n):
+    solutions, cols, diag1, diag2 = [], set(), set(), set()
+    board = []
+    def place(row):
+        if row == n:
+            solutions.append(["".join("Q" if c == q else "." for c in range(n)) for q in board])
+            return
+        for col in range(n):
+            if col in cols or row - col in diag1 or row + col in diag2:
+                continue                       # attacked: prune
+            cols.add(col); diag1.add(row - col); diag2.add(row + col); board.append(col)
+            place(row + 1)
+            cols.remove(col); diag1.remove(row - col); diag2.remove(row + col); board.pop()
+    place(0)
+    return solutions
+
+result = solve_n_queens(4)
+print(len(result), "solutions")
+for row in result[0]:
+    print(row)
+
+# Try it: how many solutions for n = 6? and n = 8?
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Appending the path itself">
+
+<Wrong>
+
+```python
+results.append(path)          # every entry is the SAME list, empty at the end
+```
+
+</Wrong>
+
+<Right>
+
+```python
+results.append(path[:])       # or list(path): a snapshot
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Forgetting to undo the choice">
+
+<Wrong>
+
+```python
+path.append(x)
+go(path)
+# no path.pop() → later branches start with stale items
+```
+
+</Wrong>
+
+<Right>
+
+```python
+path.append(x)
+go(path)
+path.pop()                    # restore state for the next choice
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is backtracking?">
+
+A depth-first search over the space of partial solutions: make a choice, recurse to extend the solution, and undo the choice when the recursion returns so the next option can be tried. Invalid partial solutions are pruned early. It is used to enumerate subsets, permutations and combinations and to solve constraint problems.
+
+</QA>
+
+<QA q="Generate all subsets of a list.">
+
+Recurse with a start index and the current path: record a copy of the path, then for each index i from start, append nums[i], recurse with i + 1, and pop. This yields 2ⁿ subsets in O(n · 2ⁿ) time. Alternatively iterate over bitmasks from 0 to 2ⁿ − 1.
+
+</QA>
+
+<QA q="How does pruning help backtracking?">
+
+It cuts off branches as soon as they cannot lead to a valid answer (for example, a partial sum exceeding the target with sorted candidates, or a queen placed under attack), so far fewer nodes of the exponential search tree are visited.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Number of subsets of 4 items?',
+      options: ['8', '16', '24', '4'],
+      answer: 1,
+      why: '2⁴.',
+    },
+    {
+      q: 'Number of permutations of 4 items?',
+      options: ['16', '24', '12', '4'],
+      answer: 1,
+      why: '4! = 24.',
+    },
+    {
+      q: 'Why `path[:]` when saving a result?',
+      options: ['Speed', 'path keeps changing; store a copy', 'Sorting', 'It is required syntax'],
+      answer: 1,
+      why: 'Otherwise all results share one list.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | Code |
+| --- | --- |
+| Done? | save `path[:]` and return |
+| Choose | `path.append(x)` (+ mark used) |
+| Explore | recurse |
+| Un-choose | `path.pop()` (+ unmark) |
+| Subsets / combos | loop from `start`, recurse `i + 1` |
+| Reuse allowed | recurse with `i` |
+| Permutations | `used[]` array |
+| Prune | `break` / `continue` early |
+| Library | `itertools.combinations/permutations/product` |
+
+</CheatSheet>

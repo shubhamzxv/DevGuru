@@ -1,0 +1,214 @@
+---
+id: aws-ebs-and-efs
+title: EBS and EFS
+summary: EBS provides block-storage volumes attached to one EC2 instance in one AZ (gp3 for most workloads, io2 for heavy databases) and is backed up with snapshots; EFS is a managed NFS file system shared by many instances and containers across AZs; instance store is fast but temporary.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+**EBS** is an external **hard drive plugged into one laptop**: fast, yours alone, and it stays in the same room (AZ). A **snapshot** is a photo backup of that drive you can restore anywhere. **EFS** is a **shared office network drive**: everyone in every room can open the same folders at once, and it grows as you add files.
+
+</Analogy>
+
+## Simple explanation
+
+| | **EBS** | **EFS** | **S3** | Instance store |
+| --- | --- | --- | --- | --- |
+| Type | block (a disk) | file (NFS) | object (API) | block |
+| Attached to | one instance (Multi-Attach for io2 only) | many instances, ECS, Lambda | anything via HTTPS | that host only |
+| Scope | one AZ | Region (multi-AZ) | Region | the host |
+| Size | you provision (1 GiB–64 TiB) | grows automatically | unlimited | fixed by type |
+| Survives stop | yes | yes | yes | **no** |
+| Use | root disks, databases on EC2 | shared uploads, CMS, ML data | media, backups, static sites | cache, scratch |
+
+**EBS volume types**
+
+| Type | For |
+| --- | --- |
+| **gp3** (SSD) | default: 3,000 IOPS + 125 MB/s baseline, tune separately |
+| **io2 Block Express** | critical DBs needing high, consistent IOPS |
+| st1 / sc1 (HDD) | big sequential data / cold data |
+
+**Snapshots**: incremental backups stored in S3 (you do not see the bucket); copy across Regions; create an AMI from them; automate with **Data Lifecycle Manager** or **AWS Backup**. To move a volume to another AZ: snapshot → create a volume from it in the new AZ. Volumes can be **resized and changed type online** (then grow the filesystem: `growpart` + `resize2fs`/`xfs_growfs`). Encrypt with KMS (turn on encryption by default per Region).
+
+**EFS**: mount with NFS from instances in any AZ via mount targets; storage classes Standard and Infrequent Access with lifecycle; throughput modes (elastic is the default). Great for shared content; slower and pricier per GB than EBS for a single server; Windows shares use **FSx for Windows**, high-performance HPC uses **FSx for Lustre**.
+
+## Code example
+
+```bash
+# Create and attach a 50 GB gp3 data volume in the same AZ as the instance
+aws ec2 create-volume --availability-zone ap-south-1a --size 50 --volume-type gp3 --encrypted
+aws ec2 attach-volume --volume-id vol-0a1b2c3d4e5f67890 --instance-id i-bfb0cc7b362fd8b75 --device /dev/xvdf
+
+# On the instance: format once and mount
+lsblk
+sudo mkfs -t xfs /dev/nvme1n1
+sudo mkdir /data && sudo mount /dev/nvme1n1 /data
+df -h /data
+```
+
+```output
+NAME          SIZE TYPE MOUNTPOINT
+nvme0n1        20G disk
+└─nvme0n1p1    20G part /
+nvme1n1        50G disk
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme1n1     50G  390M   50G   1% /data
+```
+
+```bash
+# Snapshot before an upgrade
+aws ec2 create-snapshot --volume-id vol-0a1b2c3d4e5f67890 --description "before postgres 17 upgrade"
+
+# EFS on two instances (amazon-efs-utils installed)
+sudo mount -t efs -o tls fs-0123456789abcdef0:/ /mnt/shared
+```
+
+Add the mount to `/etc/fstab` (with `nofail`) so it survives reboots.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "i1", "label": "EC2 in AZ-a", "icon": "🖥️", "col": 0, "row": 0, "info": "Runs a self-managed PostgreSQL.", "example": "m7g.large" },
+    { "id": "ebs", "label": "EBS gp3 (AZ-a)", "icon": "💾", "col": 1, "row": 0, "info": "Attached only to this instance, only in AZ-a. Low-latency block disk.", "example": "/data 50 GB" },
+    { "id": "snap", "label": "Snapshot", "icon": "📸", "col": 2, "row": 0, "info": "Incremental backup kept in S3; restore into any AZ or copy to another Region.", "example": "Nightly via AWS Backup" },
+    { "id": "i2", "label": "EC2 in AZ-a", "icon": "🖥️", "col": 0, "row": 2, "info": "Web server 1.", "example": "Needs shared uploads" },
+    { "id": "i3", "label": "Task in AZ-b", "icon": "🐳", "col": 2, "row": 2, "info": "Fargate task mounting the same file system.", "example": "Same files visible" },
+    { "id": "efs", "label": "EFS file system", "icon": "🗂️", "col": 1, "row": 2, "info": "Managed NFS with a mount target in each AZ; many clients at once; grows automatically.", "example": "/mnt/shared" }
+  ],
+  "edges": [
+    ["i1", "ebs", "attached"],
+    ["ebs", "snap", "backup"],
+    ["i2", "efs", "NFS"],
+    ["i3", "efs", "NFS"]
+  ],
+  "flows": [
+    {
+      "name": "Restore after a bad upgrade",
+      "steps": [
+        ["snap", "A snapshot was taken before the upgrade."],
+        ["ebs", "The upgrade corrupts the data on the volume."],
+        ["snap", "Create a new volume from the snapshot in AZ-a."],
+        ["i1", "Swap the volumes and start PostgreSQL again."]
+      ]
+    },
+    {
+      "name": "Shared files",
+      "steps": [
+        ["i2", "Web server 1 writes /mnt/shared/report.pdf."],
+        ["efs", "The file is stored once, across AZs."],
+        ["i3", "The task in AZ-b reads it immediately."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Expecting EBS to work across AZs">
+
+<Wrong>
+
+```text
+Attach vol in ap-south-1a to an instance in ap-south-1b → error: volume and instance must be in the same AZ.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Snapshot → create a volume in the target AZ, or use EFS/S3 for data that many AZs need.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Data on the instance store">
+
+<Wrong>
+
+```text
+Database files on an i4i instance-store disk; the instance stops → all data lost.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Instance store only for caches/temp; durable data on EBS (with snapshots), RDS or S3.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between EBS, EFS and S3?">
+
+EBS is block storage attached to one EC2 instance in one AZ, like a disk, ideal for boot volumes and databases. EFS is a managed NFS file system mountable by many instances and containers across AZs, for shared files. S3 is object storage accessed over an API with virtually unlimited capacity, for media, backups and static content.
+
+</QA>
+
+<QA q="How do EBS snapshots work?">
+
+They are point-in-time, incremental backups of a volume stored durably in S3: the first copies all used blocks, later ones only changed blocks. You can restore volumes from them in any AZ of the Region, copy them to other Regions or accounts, create AMIs, and automate them with Data Lifecycle Manager or AWS Backup.
+
+</QA>
+
+<QA q="Which EBS volume type would you choose by default?">
+
+gp3: SSD with a baseline of 3,000 IOPS and 125 MB/s that can be raised independently of size, and cheaper than gp2. Choose io2 Block Express for databases requiring very high, consistent IOPS, and HDD types for large sequential workloads.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Shared folder for 6 web servers in 3 AZs?',
+      options: ['EBS gp3', 'EFS', 'Instance store', 'Snapshot'],
+      answer: 1,
+      why: 'Managed NFS across AZs.',
+    },
+    {
+      q: 'An EBS volume lives in...',
+      options: ['One AZ', 'One Region, all AZs', 'Globally', 'S3'],
+      answer: 0,
+      why: 'Use snapshots to move it.',
+    },
+    {
+      q: 'Default general-purpose SSD type?',
+      options: ['st1', 'gp3', 'sc1', 'io1'],
+      answer: 1,
+      why: 'gp3.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Service |
+| --- | --- |
+| Disk for one instance | EBS gp3 (io2 for heavy DBs) |
+| Backup a disk | snapshot · AWS Backup · DLM |
+| Move to another AZ | snapshot → new volume |
+| Grow a disk | modify-volume → `growpart` + `xfs_growfs` |
+| Shared Linux files | EFS (NFS) |
+| Windows shares / HPC | FSx for Windows / FSx for Lustre |
+| Temporary fast disk | instance store (lost on stop) |
+| Objects | S3 |
+
+</CheatSheet>

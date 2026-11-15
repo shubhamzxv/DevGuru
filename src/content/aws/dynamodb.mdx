@@ -1,0 +1,237 @@
+---
+id: aws-dynamodb
+title: DynamoDB
+summary: DynamoDB is a serverless key-value and document database with single-digit-millisecond reads at any scale; items are found by a partition key (and optional sort key), so you design tables around access patterns, use Query instead of Scan, add global secondary indexes for other lookups, and pick on-demand or provisioned capacity.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A huge **post-office sorting wall**. Every letter goes into the box for its **partition key** (the pin code), and inside a box letters are kept in order by **sort key** (date). Finding all of Asha's letters from November is instant. Asking "find every letter mentioning headphones" means opening every box (**Scan**): slow and expensive.
+
+</Analogy>
+
+## Simple explanation
+
+| Concept | Meaning |
+| --- | --- |
+| **Table** | collection of items; no fixed schema except the key |
+| **Item** | a record (up to 400 KB), attributes like JSON |
+| **Partition key (PK)** | decides which partition stores the item; must spread load |
+| **Sort key (SK)** | optional; orders items with the same PK, allows `begins_with`, `between` |
+| **GSI** | global secondary index: another PK/SK to query by (eventually consistent) |
+| **LSI** | same PK, different sort key (defined at creation) |
+
+**Operations**
+
+| Operation | Cost / speed |
+| --- | --- |
+| `GetItem` (full key) | fastest |
+| `Query` (one PK, SK conditions) | fast, reads only matching items |
+| `Scan` (whole table) | slow and expensive; avoid in request paths |
+| `PutItem`, `UpdateItem`, `DeleteItem` | with **condition expressions** for safe writes |
+| `TransactWriteItems` | all-or-nothing across items (up to 100) |
+| `BatchGetItem` / `BatchWriteItem` | many items in one call |
+
+**Design for access patterns first** (the opposite of SQL normalisation). List the questions: "get user profile", "latest orders of a user", "orders by status". Then choose keys, often in a **single table**:
+
+| PK | SK | Attributes |
+| --- | --- | --- |
+| `USER#42` | `PROFILE` | name |
+| `USER#42` | `ORDER#2026-11-14#4` | total, status |
+| `USER#42` | `ORDER#2026-11-01#1` | total, status |
+
+**Capacity**: **on-demand** (pay per request, no planning; the usual start) or **provisioned** (RCU/WCU with autoscaling; cheaper for steady load). Reads are eventually consistent by default (strongly consistent costs double, not on GSIs).
+
+Extras: **TTL** to auto-delete expired items (sessions, carts), **Streams** to trigger Lambda on changes, **DAX** in-memory cache, point-in-time recovery, global tables (multi-Region active-active).
+
+DynamoDB vs RDS: DynamoDB for known access patterns, huge scale, serverless, simple key lookups; RDS for joins, ad-hoc queries, complex transactions and reporting.
+
+## Code example
+
+```python
+import boto3
+from boto3.dynamodb.conditions import Key
+
+t = boto3.resource("dynamodb", region_name="ap-south-1").create_table(
+    TableName="orders", BillingMode="PAY_PER_REQUEST",
+    KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}],
+    AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}])
+for item in [{"pk": "USER#42", "sk": "ORDER#2026-11-01#1", "total": 450, "status": "delivered"},
+             {"pk": "USER#42", "sk": "ORDER#2026-11-14#4", "total": 848, "status": "paid"},
+             {"pk": "USER#42", "sk": "PROFILE", "name": "Asha"},
+             {"pk": "USER#7", "sk": "ORDER#2026-11-10#3", "total": 199, "status": "paid"}]:
+    t.put_item(Item=item)
+
+print("get:", t.get_item(Key={"pk": "USER#42", "sk": "PROFILE"})["Item"])
+q = t.query(KeyConditionExpression=Key("pk").eq("USER#42") & Key("sk").begins_with("ORDER#"),
+            ScanIndexForward=False)                                   # newest first
+print("query:", [(i["sk"], int(i["total"])) for i in q["Items"]])
+
+t.update_item(Key={"pk": "USER#42", "sk": "ORDER#2026-11-14#4"}, UpdateExpression="SET #s = :s",
+              ExpressionAttributeNames={"#s": "status"}, ExpressionAttributeValues={":s": "shipped"})
+print("updated:", t.get_item(Key={"pk": "USER#42", "sk": "ORDER#2026-11-14#4"})["Item"]["status"])
+
+try:
+    t.put_item(Item={"pk": "USER#42", "sk": "PROFILE", "name": "X"}, ConditionExpression="attribute_not_exists(pk)")
+except t.meta.client.exceptions.ConditionalCheckFailedException as e:
+    print("conditional:", e.response["Error"]["Code"])
+```
+
+```output
+get: {'pk': 'USER#42', 'sk': 'PROFILE', 'name': 'Asha'}
+query: [('ORDER#2026-11-14#4', 848), ('ORDER#2026-11-01#1', 450)]
+updated: shipped
+conditional: ConditionalCheckFailedException
+```
+
+(Run against a mock of AWS.) `status` is a reserved word, hence `#s`. The condition stops a second create from overwriting the profile.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "api", "label": "API request", "icon": "📨", "col": 0, "row": 1, "info": "GET /users/42/orders?latest", "example": "Lambda or FastAPI" },
+    { "id": "router", "label": "Hash(pk)", "icon": "#️⃣", "col": 1, "row": 1, "info": "DynamoDB hashes the partition key to find the right partition directly.", "example": "hash(USER#42) → partition 3" },
+    { "id": "p1", "label": "Partition 1", "icon": "📦", "col": 2, "row": 0, "info": "Holds USER#7 and others.", "example": "USER#7 / ORDER#2026-11-10#3" },
+    { "id": "p3", "label": "Partition 3", "icon": "📦", "col": 2, "row": 2, "info": "All USER#42 items, sorted by sk: ORDER#...01, ORDER#...14, PROFILE.", "example": "Query begins_with ORDER#" },
+    { "id": "gsi", "label": "GSI: status-index", "icon": "🔎", "col": 3, "row": 0, "info": "PK = status, SK = date: answers 'all paid orders today' without a Scan.", "example": "status = paid" },
+    { "id": "res", "label": "Result in ~5 ms", "icon": "⚡", "col": 3, "row": 2, "info": "Only matching items read: cost is small and stays the same at 10 or 10 million users.", "example": "2 orders, newest first" }
+  ],
+  "edges": [
+    ["api", "router"],
+    ["router", "p3", "Query"],
+    ["router", "p1"],
+    ["p3", "gsi", "projected"],
+    ["p3", "res"]
+  ],
+  "flows": [
+    {
+      "name": "Query a user's latest orders",
+      "steps": [
+        ["api", "The app asks for USER#42's orders."],
+        ["router", "pk is hashed: go straight to partition 3."],
+        ["p3", "Read items whose sk begins with ORDER#, in reverse order."],
+        ["res", "Two items return quickly; PROFILE is not read."]
+      ]
+    },
+    {
+      "name": "Orders by status",
+      "steps": [
+        ["api", "Admin wants all 'paid' orders."],
+        ["gsi", "Query the GSI with status = paid instead of scanning the table."],
+        ["res", "Only paid orders are read."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Scan with a filter">
+
+<Wrong>
+
+```python
+t.scan(FilterExpression=Attr("status").eq("paid"))   # reads (and bills) the whole table, then filters
+```
+
+</Wrong>
+
+<Right>
+
+```python
+t.query(IndexName="status-index", KeyConditionExpression=Key("status").eq("paid"))
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="A hot partition key">
+
+<Wrong>
+
+```text
+pk = "2026-11-15" for every order of the day: all writes hit one partition → throttling.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+High-cardinality keys (USER#id, ORDER#id); if needed, shard the key (DATE#2026-11-15#7) and query the shards.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are partition keys and sort keys in DynamoDB?">
+
+The partition key is hashed to choose the physical partition and, alone or with the sort key, forms the primary key. The sort key orders items sharing a partition key and enables range queries such as begins_with or between. Good partition keys have many distinct values with evenly spread traffic.
+
+</QA>
+
+<QA q="What is the difference between Query and Scan?">
+
+Query reads items for one partition key value, optionally filtered by sort-key conditions, so it touches only the needed data. Scan reads every item in the table or index and applies filters afterwards, consuming capacity for all items read; it is meant for exports and maintenance, not request paths.
+
+</QA>
+
+<QA q="When would you choose DynamoDB over a relational database?">
+
+When access patterns are known and key-based, you need predictable low latency at large or spiky scale, serverless operation with no connection limits, or global tables. Choose a relational database for complex joins, ad-hoc queries, reporting and evolving query needs.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Latest orders of one user, efficiently?',
+      options: ['Scan + filter', 'Query on pk with sk begins_with', 'BatchWrite', 'Create a new table'],
+      answer: 1,
+      why: 'Reads only that user partition.',
+    },
+    {
+      q: 'Look up items by a non-key attribute (status)?',
+      options: ['GSI', 'TTL', 'Streams', 'DAX'],
+      answer: 0,
+      why: 'Global secondary index.',
+    },
+    {
+      q: 'Auto-delete expired carts?',
+      options: ['Lifecycle rule', 'TTL attribute', 'Scan nightly', 'Streams'],
+      answer: 1,
+      why: 'TTL removes items after an epoch time.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Use |
+| --- | --- |
+| One item | `get_item(Key=...)` |
+| Items of one PK | `query(KeyConditionExpression=Key("pk").eq(..) & Key("sk").begins_with(..))` |
+| Other lookups | GSI |
+| Safe create | `ConditionExpression="attribute_not_exists(pk)"` |
+| Reserved words | `ExpressionAttributeNames={"#s": "status"}` |
+| All-or-nothing | `transact_write_items` |
+| Expire | TTL |
+| React to changes | Streams → Lambda |
+| Capacity | on-demand · provisioned + autoscaling |
+| Avoid | Scan in APIs · hot partition keys |
+
+</CheatSheet>

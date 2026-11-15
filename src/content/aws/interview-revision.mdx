@@ -1,0 +1,246 @@
+---
+id: aws-interview-revision
+title: AWS interview revision
+summary: A one-page revision of the AWS questions asked most in backend and full-stack interviews, with short answers, a service picker, a reference architecture and a cheat sheet.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The night before the exam you do not reread the textbook: you go through the formula sheet and the past papers. This page is both for AWS.
+
+</Analogy>
+
+## Simple explanation
+
+**The 24 answers to know**
+
+| Question | Short answer |
+| --- | --- |
+| Region vs AZ | Region = geographic area; AZ = one or more isolated data centres inside it; deploy across ≥ 2 AZs |
+| Shared responsibility | AWS secures the cloud (hardware, facilities); you secure what you put in it (data, IAM, OS, config) |
+| IAM user vs role | user = long-term identity for a person; role = temporary credentials assumed by services, apps, CI |
+| Policy evaluation | default deny → explicit Allow needed → explicit Deny always wins |
+| Least privilege | only the actions and resources needed; no `*:*`, no root use, MFA |
+| EC2 | virtual servers: AMI + instance type + SG + subnet + role + user data |
+| Stop vs terminate | stop keeps EBS (public IP changes); terminate deletes |
+| Security group vs NACL | SG stateful, allow-only, per ENI; NACL stateless, allow+deny, per subnet |
+| ALB vs NLB | ALB layer 7 HTTP routing by host/path; NLB layer 4 TCP/UDP, static IPs, extreme speed |
+| Auto Scaling | ASG keeps min/desired/max across AZs, replaces unhealthy, target tracking on CPU |
+| Lambda | event-driven functions, pay per ms, 15 min max, cold starts, execution role |
+| ECS / Fargate / EKS | ECS = AWS orchestrator, EKS = Kubernetes, Fargate = serverless compute for both |
+| S3 | object storage, 11 nines, private by default, presigned URLs, storage classes, lifecycle |
+| S3 vs EBS vs EFS | object API vs block disk for one instance/AZ vs shared NFS across AZs |
+| RDS Multi-AZ vs read replica | HA standby (same endpoint, auto failover) vs async readable copy for scaling |
+| Recover a bad DELETE | point-in-time restore (Multi-AZ copies the mistake) |
+| DynamoDB keys | partition key spreads data; sort key orders within it; Query not Scan; GSIs |
+| ElastiCache | Redis/Valkey in-memory cache: cache-aside, sessions, rate limits |
+| VPC public vs private | public subnet routes 0.0.0.0/0 → IGW; private uses NAT for outbound only |
+| Route 53 alias | points apex/names to AWS resources; routing policies: weighted, latency, failover |
+| CloudFront | CDN: edge caching, HTTPS, OAC for private S3, invalidations |
+| SQS vs SNS vs EventBridge | queue (one consumer, buffer) vs pub/sub push vs content-based event bus + schedules |
+| CloudWatch | metrics, logs (Insights), alarms → SNS/scaling; CloudTrail = who called which API |
+| IaC | CloudFormation templates/stacks, CDK code → CloudFormation, change sets, no click-ops |
+
+**Service picker**
+
+| You need... | Use |
+| --- | --- |
+| Run a container web app | ECS Fargate + ALB (or App Runner) |
+| Event-driven function / cron | Lambda + EventBridge Scheduler |
+| Relational DB | RDS / Aurora |
+| Key-value at any scale | DynamoDB |
+| Cache / sessions | ElastiCache |
+| Files, media, backups | S3 |
+| Host a React app | S3 + CloudFront (or Amplify Hosting) |
+| Background jobs | SQS + workers |
+| Fan-out | SNS → SQS / EventBridge rules |
+| Secrets | Secrets Manager / SSM Parameter Store |
+| DNS / certificates | Route 53 / ACM |
+| Monitoring | CloudWatch, X-Ray; audit with CloudTrail |
+
+## Code example
+
+Scenario commands worth knowing:
+
+```bash
+aws sts get-caller-identity                                 # "who am I?" — first step when debugging AccessDenied
+aws s3 ls s3://shop-media-shubham/products/ --recursive      # list objects under a prefix
+aws s3 presign s3://shop-media-shubham/invoices/2026/11/order-4.pdf --expires-in 300
+aws logs tail /ecs/shop-api --follow --filter-pattern ERROR  # live errors
+aws ecs update-service --cluster shop --service api --force-new-deployment
+aws cloudfront create-invalidation --distribution-id E2ABCDEF123456 --paths "/index.html"
+aws ssm start-session --target i-bfb0cc7b362fd8b75           # shell without SSH or port 22
+```
+
+```output
+{
+    "UserId": "AROAEXAMPLEID:shubham",
+    "Account": "123456789012",
+    "Arn": "arn:aws:sts::123456789012:assumed-role/developer/shubham"
+}
+```
+
+(The output of the first command: you are using the `developer` role in account 123456789012.)
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "user", "label": "User", "icon": "👥", "col": 0, "row": 1, "info": "Question: 'Walk me through what happens when a user opens your app on AWS.'", "example": "shop.example.com" },
+    { "id": "r53", "label": "Route 53", "icon": "📒", "col": 1, "row": 0, "info": "DNS: alias record to CloudFront.", "example": "Latency / failover routing possible" },
+    { "id": "cf", "label": "CloudFront + WAF", "icon": "🌍", "col": 1, "row": 2, "info": "Static files from S3 (OAC); /api/* to the ALB; TLS with ACM.", "example": "Edge cache" },
+    { "id": "alb", "label": "ALB", "icon": "⚖️", "col": 2, "row": 1, "info": "Public subnets in 2 AZs; health checks.", "example": "SG: 443" },
+    { "id": "ecs", "label": "ECS Fargate", "icon": "🐳", "col": 3, "row": 0, "info": "Private subnets; autoscaling; task role; secrets from Secrets Manager.", "example": "Django / FastAPI" },
+    { "id": "data", "label": "RDS + ElastiCache", "icon": "🗄️", "col": 4, "row": 0, "info": "Multi-AZ database, Redis cache, private data subnets.", "example": "SG from app only" },
+    { "id": "async", "label": "SQS → workers / Lambda", "icon": "📬", "col": 3, "row": 2, "info": "Emails, invoices, image processing; DLQ.", "example": "EventBridge for events" },
+    { "id": "cw", "label": "CloudWatch", "icon": "📈", "col": 4, "row": 2, "info": "Logs, metrics, alarms → SNS; CloudTrail audits API calls.", "example": "p99 latency alarm" }
+  ],
+  "edges": [
+    ["user", "r53", "DNS"],
+    ["user", "cf", "HTTPS"],
+    ["cf", "alb", "/api/*"],
+    ["alb", "ecs"],
+    ["ecs", "data"],
+    ["ecs", "async"],
+    ["ecs", "cw"]
+  ],
+  "flows": [
+    {
+      "name": "Answer the classic question",
+      "steps": [
+        ["user", "The user types shop.example.com."],
+        ["r53", "Route 53 resolves it to CloudFront."],
+        ["cf", "Static app served from the edge; API calls forwarded."],
+        ["alb", "ALB picks a healthy task in either AZ."],
+        ["ecs", "The task checks Redis, then queries RDS."],
+        ["async", "Slow work queued for workers."],
+        ["cw", "Everything logged and monitored; alarms page on-call."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Listing services without trade-offs">
+
+<Wrong>
+
+```text
+"I would use Lambda, DynamoDB, SQS, SNS, EventBridge, Kinesis and EKS." (no reasons)
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"ECS Fargate because the API has steady traffic and long requests; RDS because we need joins and transactions;
+SQS for emails so checkout stays fast. With spiky low traffic I would choose Lambda instead."
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Forgetting security and cost">
+
+<Wrong>
+
+```text
+Architecture answer with public databases, admin access keys in code, and no mention of cost.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Mention private subnets, SG chaining, IAM roles, encryption, Secrets Manager, and cost levers
+(right-sizing, Graviton, Savings Plans, S3 lifecycle, NAT endpoints, budgets/alerts).
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="You get AccessDenied when your app reads from S3. How do you debug it?">
+
+Check which identity is used (`aws sts get-caller-identity` or the task/instance role), then the identity policy for s3:GetObject on the right ARN (object ARN with /*), the bucket policy for explicit denies (HTTPS-only, VPC endpoint conditions), Block Public Access if relying on public access, KMS key permissions if SSE-KMS is used, SCPs/permission boundaries, and the IAM policy simulator or CloudTrail for the denied call.
+
+</QA>
+
+<QA q="How would you reduce an AWS bill?">
+
+Find spend with Cost Explorer and tags; right-size or stop idle instances; use Graviton, Savings Plans/Reserved Instances for steady load and Spot for flexible workers; set S3 lifecycle and log retention; use VPC endpoints to cut NAT traffic; cache with CloudFront/ElastiCache; delete unattached EBS volumes and old snapshots; set budgets and alerts.
+
+</QA>
+
+<QA q="Your site is slow during sales. What do you check and change on AWS?">
+
+CloudWatch: ALB latency and 5xx, target CPU/memory, RDS CPU, connections and slow queries (Performance Insights), cache hit rate, SQS backlog. Fixes: autoscaling with sensible targets, caching (CloudFront, Redis), read replicas and indexes, RDS Proxy, moving slow work to queues, and scheduled scaling before known events.
+
+</QA>
+
+<QA q="How do you deploy your application to AWS?">
+
+CI on each merge runs tests, builds a Docker image tagged with the commit and pushes to ECR; infrastructure lives in CDK/CloudFormation; the pipeline registers a new ECS task definition and updates the service with a rolling or blue/green deployment behind the ALB, runs migrations as a one-off task, and uses an OIDC role instead of stored keys; the frontend syncs to S3 and invalidates CloudFront.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which service records who deleted the bucket?',
+      options: ['CloudWatch metrics', 'CloudTrail', 'X-Ray', 'Route 53'],
+      answer: 1,
+      why: 'API call audit log.',
+    },
+    {
+      q: 'Highly available DB with automatic failover?',
+      options: ['Read replica', 'RDS Multi-AZ', 'S3 versioning', 'ElastiCache'],
+      answer: 1,
+      why: 'Standby behind the same endpoint.',
+    },
+    {
+      q: 'Background email sending without slowing checkout?',
+      options: ['SQS + worker', 'Bigger EC2', 'Route 53 weights', 'CloudFront'],
+      answer: 0,
+      why: 'Asynchronous processing.',
+    },
+    {
+      q: 'App permissions on ECS go in the...',
+      options: ['Execution role', 'Task role', 'Access keys file', 'Security group'],
+      answer: 1,
+      why: 'Execution role is for the ECS agent.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Area | Key facts |
+| --- | --- |
+| Global | Regions · ≥ 2 AZs · shared responsibility |
+| IAM | roles not keys · least privilege · explicit Deny wins · MFA |
+| Compute | EC2 (control) · ECS Fargate (containers) · Lambda (events, 15 min) |
+| Network | VPC · public/private subnets · IGW / NAT · SG stateful / NACL stateless |
+| Traffic | Route 53 · CloudFront · ALB / NLB · ASG |
+| Storage | S3 (objects) · EBS (disk) · EFS (shared) |
+| Data | RDS Multi-AZ + replicas + PITR · DynamoDB (keys, Query) · ElastiCache |
+| Messaging | SQS (queue, DLQ) · SNS (fan-out) · EventBridge (rules, cron) |
+| Ops | CloudWatch · CloudTrail · IaC (CloudFormation/CDK) · OIDC CI |
+| Debug | `aws sts get-caller-identity` · `aws logs tail` · `ssm start-session` |
+
+</CheatSheet>

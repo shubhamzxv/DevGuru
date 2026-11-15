@@ -1,0 +1,216 @@
+---
+id: django-permissions-and-groups
+title: Permissions and groups
+summary: Django creates add, change, delete and view permissions for every model; users get them directly or through groups, you check them with has_perm, permission_required and PermissionRequiredMixin, and object-level rules (only your own orders) are written in querysets or with libraries like django-guardian.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A hospital: **roles** (groups) like "Nurse", "Doctor", "Pharmacist" each come with a set of **keys** (permissions): view patient files, write prescriptions, open the medicine store. A new nurse gets the Nurse role instead of 20 individual keys.
+
+</Analogy>
+
+## Simple explanation
+
+**Automatic permissions**: for each model Django creates four, named `app_label.action_model`:
+
+```text
+store.add_product   store.change_product   store.delete_product   store.view_product
+```
+
+Custom ones in `Meta`:
+
+```python
+class Order(models.Model):
+    class Meta:
+        permissions = [("refund_order", "Can refund an order")]
+```
+
+**Groups** bundle permissions; users belong to groups:
+
+```python
+from django.contrib.auth.models import Group, Permission
+
+editors = Group.objects.create(name="Catalog editors")
+editors.permissions.add(Permission.objects.get(codename="change_product"))
+user.groups.add(editors)
+```
+
+(In practice create groups in a data migration or the admin.)
+
+**Checking**
+
+| Where | Code |
+| --- | --- |
+| Python | `user.has_perm("store.change_product")`, `user.has_perms([...])` |
+| FBV | `@permission_required("store.change_product", raise_exception=True)` |
+| CBV | `class V(PermissionRequiredMixin, UpdateView): permission_required = "store.change_product"` |
+| Template | `{% if perms.store.change_product %}Edit{% endif %}` |
+| Admin | automatic: buttons appear only with the permission |
+| DRF | `DjangoModelPermissions`, custom permission classes |
+
+Superusers pass every check. Inactive users fail every check. Permissions are cached on the user object, so reload the user after changing them.
+
+**Object-level permissions** ("only the owner may edit this order"): Django's built-in permissions are per **model**, not per row. Options:
+
+- Filter querysets by owner: `Order.objects.filter(customer=request.user)` → others get 404
+- `UserPassesTestMixin` / a check in the view
+- DRF `has_object_permission`
+- **django-guardian** or **django-rules** for full per-object permissions
+
+## Code example
+
+```python
+>>> editors = Group.objects.create(name="editors")
+>>> editors.permissions.add(Permission.objects.get(codename="change_product"))
+>>> ravi = User.objects.get(username="ravi")
+>>> ravi.has_perm("store.change_product")
+>>> ravi.groups.add(editors)
+>>> ravi = User.objects.get(pk=ravi.pk)              # reload: permissions are cached
+>>> ravi.has_perm("store.change_product"), ravi.has_perm("store.delete_product")
+>>> sorted(Permission.objects.filter(content_type__model="product").values_list("codename", flat=True))
+```
+
+```output
+False
+(True, False)
+['add_product', 'change_product', 'delete_product', 'view_product']
+```
+
+<Playground kind="none">
+
+```python
+# store/views.py
+from django.contrib.auth.decorators import permission_required
+from django.contrib.auth.mixins import PermissionRequiredMixin
+from django.shortcuts import get_object_or_404, redirect
+from django.views.decorators.http import require_POST
+from django.views.generic import UpdateView
+
+from .models import Order, Product
+
+class ProductUpdateView(PermissionRequiredMixin, UpdateView):
+    model = Product
+    fields = ["name", "price", "stock"]
+    permission_required = "store.change_product"     # 403 for logged-in users without it
+
+@require_POST
+@permission_required("store.refund_order", raise_exception=True)
+def refund(request, pk):
+    order = get_object_or_404(Order, pk=pk)
+    order.status = Order.Status.CANCELLED
+    order.save(update_fields=["status"])
+    return redirect("orders:detail", pk=pk)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Checking roles by name or is_staff everywhere">
+
+<Wrong>
+
+```python
+if request.user.username in ["asha", "ravi"] or request.user.is_staff:
+    ...
+```
+
+</Wrong>
+
+<Right>
+
+```python
+if request.user.has_perm("store.refund_order"):
+    ...
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Model permission without an ownership check">
+
+<Wrong>
+
+```python
+@permission_required("store.view_order")
+def order_detail(request, pk):
+    order = get_object_or_404(Order, pk=pk)        # any customer can read every order by changing the id
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@login_required
+def order_detail(request, pk):
+    order = get_object_or_404(Order, pk=pk, customer=request.user)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do permissions work in Django?">
+
+Each model gets add, change, delete and view permissions (plus custom ones from Meta.permissions), stored in the Permission table. They are assigned to users directly or through groups and checked with `user.has_perm("app.codename")`, `permission_required`, `PermissionRequiredMixin`, `perms` in templates and automatically in the admin; superusers have all permissions.
+
+</QA>
+
+<QA q="How do you implement object-level permissions?">
+
+Django's default backend has no per-object rules, so restrict querysets by ownership (filter by request.user), use UserPassesTestMixin or explicit checks, DRF's has_object_permission, or a package like django-guardian (per-object permission rows) or django-rules (predicate functions).
+
+</QA>
+
+<QA q="Why use groups?">
+
+They map permissions to roles (editors, support, finance), so access is managed by membership instead of per-user permission lists, which is easier to audit and change when responsibilities change.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Permission codename to edit products in app store?',
+      options: ['store.edit_product', 'store.change_product', 'product.change', 'change_store'],
+      answer: 1,
+      why: 'app_label.action_model.',
+    },
+    {
+      q: 'Show an Edit button only with the permission (template)?',
+      options: ['{% if user.is_staff %}', '{% if perms.store.change_product %}', '{% has_perm %}', '{% if admin %}'],
+      answer: 1,
+      why: 'The perms context variable.',
+    },
+    {
+      q: 'Only owners may see their orders. Simplest fix?',
+      options: ['A new permission', 'Filter the queryset by customer=request.user', 'is_superuser', 'Hide the link'],
+      answer: 1,
+      why: 'Others get 404.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Built-in perms | `add_` `change_` `delete_` `view_` + model name |
+| Custom | `Meta.permissions = [("refund_order", "Can refund")]` |
+| Group | `group.permissions.add(perm)` · `user.groups.add(group)` |
+| Check | `user.has_perm("store.change_product")` |
+| FBV / CBV | `@permission_required(...)` · `PermissionRequiredMixin` |
+| Template | `{% if perms.store.change_product %}` |
+| Per object | filter by owner · `UserPassesTestMixin` · django-guardian |
+
+</CheatSheet>

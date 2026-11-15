@@ -1,0 +1,229 @@
+---
+id: dsa-queues
+title: Queues and deque
+summary: A queue is first-in, first-out (FIFO); in Python use collections.deque for O(1) appends and pops at both ends; queues drive breadth-first search, task scheduling and buffering, and a monotonic deque gives the maximum of every sliding window in O(n).
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The **queue at a railway ticket counter**: people join at the **back** and are served from the **front**. First come, first served — **First In, First Out**. A **deque** ("deck") is a queue where people may also join or leave at either end, like a double-door bus.
+
+</Analogy>
+
+## Simple explanation
+
+| Operation | `collections.deque` | Time |
+| --- | --- | --- |
+| enqueue (back) | `q.append(x)` | O(1) |
+| dequeue (front) | `q.popleft()` | O(1) |
+| add to front | `q.appendleft(x)` | O(1) |
+| remove from back | `q.pop()` | O(1) |
+| peek | `q[0]`, `q[-1]` | O(1) |
+| fixed size buffer | `deque(maxlen=3)` | drops the oldest automatically |
+
+**Do not** use `list.pop(0)` as a queue: it is O(n). `queue.Queue` is for threads (with locks); `heapq` is a **priority** queue (smallest first, see Heaps).
+
+**Where queues appear**
+
+| Use | Note |
+| --- | --- |
+| **BFS** (graphs, trees level by level, shortest path in unweighted graphs) | the core use in interviews |
+| Task / job processing | print queues, message queues like SQS |
+| Rate limiting, recent events | keep timestamps, pop old ones from the front |
+| Sliding window maximum | monotonic deque |
+| Round-robin scheduling | pop left, push back |
+
+**Monotonic deque for window maximum**: keep indexes whose values are **decreasing**. New value → pop smaller values from the back (they can never be the maximum again); pop the front when it leaves the window; the front is always the current maximum. O(n) total.
+
+<Visual caption="Enqueue and dequeue by hand. In a queue the first item in is the first one out.">
+
+<StackQueueVisualizer mode="queue" />
+
+</Visual>
+
+## Code example
+
+```python
+from collections import deque
+
+q = deque()
+for customer in ["Asha", "Ravi", "Meera"]:
+    q.append(customer)
+print("served:", q.popleft(), "| waiting:", list(q))
+
+recent = deque(maxlen=3)              # last 3 searches
+for term in ["shoes", "watch", "bag", "phone"]:
+    recent.append(term)
+print("recent:", list(recent))
+
+def max_sliding_window(nums, k):
+    dq, out = deque(), []             # indexes, values decreasing
+    for i, x in enumerate(nums):
+        while dq and nums[dq[-1]] <= x:
+            dq.pop()                  # smaller values can never be the max now
+        dq.append(i)
+        if dq[0] <= i - k:
+            dq.popleft()              # front left the window
+        if i >= k - 1:
+            out.append(nums[dq[0]])
+    return out
+
+print(max_sliding_window([1, 3, -1, -3, 5, 3, 6, 7], 3))
+
+class RateLimiter:
+    """Allow at most `limit` requests per `window` seconds."""
+    def __init__(self, limit, window):
+        self.limit, self.window, self.times = limit, window, deque()
+    def allow(self, now):
+        while self.times and self.times[0] <= now - self.window:
+            self.times.popleft()
+        if len(self.times) < self.limit:
+            self.times.append(now)
+            return True
+        return False
+
+rl = RateLimiter(limit=3, window=10)
+print([rl.allow(t) for t in [0, 1, 2, 3, 11, 12]])
+```
+
+```output
+served: Asha | waiting: ['Ravi', 'Meera']
+recent: ['watch', 'bag', 'phone']
+[3, 3, 5, 5, 6, 7]
+[True, True, True, False, True, True]
+```
+
+<Playground kind="python">
+
+```python
+from collections import deque
+
+def bfs_levels(graph, start):
+    """Distance (in edges) from start to every reachable node."""
+    dist = {start: 0}
+    q = deque([start])
+    while q:
+        node = q.popleft()
+        for nxt in graph[node]:
+            if nxt not in dist:
+                dist[nxt] = dist[node] + 1
+                q.append(nxt)
+    return dist
+
+graph = {"A": ["B", "C"], "B": ["D"], "C": ["D", "E"], "D": ["F"], "E": ["F"], "F": []}
+print(bfs_levels(graph, "A"))
+
+# Try it: replace popleft() with pop() — what changes? (that is DFS order)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="list.pop(0) as a queue">
+
+<Wrong>
+
+```python
+queue = [start]
+node = queue.pop(0)            # O(n) per pop → BFS becomes O(V²)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+queue = deque([start])
+node = queue.popleft()         # O(1)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Marking visited too late in BFS">
+
+<Wrong>
+
+```python
+node = q.popleft()
+visited.add(node)              # the same node may be queued many times before this
+```
+
+</Wrong>
+
+<Right>
+
+```python
+if nxt not in visited:
+    visited.add(nxt)           # mark when you ENQUEUE
+    q.append(nxt)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you implement a queue in Python?">
+
+Use collections.deque: append to enqueue and popleft to dequeue, both O(1). A list's pop(0) is O(n) because elements shift. For thread-safe producer/consumer use queue.Queue; for priority ordering use heapq.
+
+</QA>
+
+<QA q="Find the maximum of every window of size k in O(n).">
+
+Keep a deque of indexes whose values are decreasing: for each new element, pop smaller values from the back, append the index, pop the front if it is outside the window, and once the first window is complete record the value at the front. Each index is added and removed once.
+
+</QA>
+
+<QA q="Implement a queue using two stacks.">
+
+Push onto an 'in' stack; to dequeue, if the 'out' stack is empty move all items from 'in' to 'out' (reversing their order), then pop from 'out'. Each element moves at most once, so operations are amortized O(1).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A queue is...',
+      options: ['LIFO', 'FIFO', 'Sorted', 'Hash-based'],
+      answer: 1,
+      why: 'First in, first out.',
+    },
+    {
+      q: 'O(1) removal from the front?',
+      options: ['list.pop(0)', 'deque.popleft()', 'list.remove(x)', 'del list[0]'],
+      answer: 1,
+      why: 'deque is double-ended.',
+    },
+    {
+      q: 'Which algorithm is built on a queue?',
+      options: ['DFS', 'BFS', 'Quick sort', 'Binary search'],
+      answer: 1,
+      why: 'Level by level.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Queue | `q = deque()` · `append` · `popleft` |
+| Both ends | `appendleft` · `pop` |
+| Last N items | `deque(maxlen=N)` |
+| BFS | `deque([start])` · mark visited on enqueue |
+| Window max | monotonic deque of indexes |
+| Rate limit | deque of timestamps |
+| Priority | `heapq` (not a FIFO) |
+| Threads | `queue.Queue` |
+
+</CheatSheet>

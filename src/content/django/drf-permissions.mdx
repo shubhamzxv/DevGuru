@@ -1,0 +1,208 @@
+---
+id: django-drf-permissions
+title: Authentication and permissions in DRF
+summary: DRF authentication classes (Session, Token, JWT) identify the caller and set request.user; permission classes (AllowAny, IsAuthenticated, IsAdminUser, IsAuthenticatedOrReadOnly, DjangoModelPermissions and custom BasePermission with has_permission and has_object_permission) decide access; throttling limits request rates.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+At a members' club: the **ID check at the door** is authentication ("who are you?": member card, guest pass). The **rules inside** are permissions ("members may use the pool; only staff may enter the kitchen; you may only open your own locker"). **Throttling** is "maximum 3 drinks per hour".
+
+</Analogy>
+
+## Simple explanation
+
+**Authentication classes** (who is calling → `request.user`, `request.auth`):
+
+| Class | Client sends | Use |
+| --- | --- | --- |
+| `SessionAuthentication` | the session cookie (+ CSRF token) | same-site browser frontends, browsable API |
+| `TokenAuthentication` | `Authorization: Token <key>` | simple tokens stored in the DB |
+| JWT (`djangorestframework-simplejwt`) | `Authorization: Bearer <jwt>` | mobile/SPA, stateless, refresh tokens |
+| `BasicAuthentication` | username:password per request | testing only |
+
+```python
+# token login endpoint
+from rest_framework.authtoken.views import obtain_auth_token
+path("api/token/", obtain_auth_token)       # POST username + password → {"token": "..."}
+```
+
+**Permission classes**
+
+| Class | Allows |
+| --- | --- |
+| `AllowAny` | everyone (the default if you set nothing!) |
+| `IsAuthenticated` | logged-in users |
+| `IsAdminUser` | `is_staff` users |
+| `IsAuthenticatedOrReadOnly` | anyone can read, logged-in can write |
+| `DjangoModelPermissions` | Django's add/change/delete permissions per model |
+
+**Custom permissions**
+
+```python
+from rest_framework import permissions
+
+class IsAdminOrReadOnly(permissions.BasePermission):
+    def has_permission(self, request, view):                 # every request
+        if request.method in permissions.SAFE_METHODS:       # GET, HEAD, OPTIONS
+            return True
+        return bool(request.user and request.user.is_staff)
+
+class IsOwnerOrStaff(permissions.BasePermission):
+    def has_object_permission(self, request, view, obj):     # only when get_object() is called
+        return request.user.is_staff or obj.customer == request.user
+```
+
+Use them per view (`permission_classes = [...]`), per action (`@action(permission_classes=[...])`) or as a default in settings. Combine with `&`, `|`, `~`.
+
+Status codes: no or bad credentials → **401** (with `WWW-Authenticate`); authenticated but not allowed → **403**; filtered out by `get_queryset` → **404** (does not reveal the object exists).
+
+**Throttling**
+
+```python
+REST_FRAMEWORK = {
+    "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.AnonRateThrottle", "rest_framework.throttling.UserRateThrottle"],
+    "DEFAULT_THROTTLE_RATES": {"anon": "60/min", "user": "1000/day"},
+}
+```
+
+Exceeding it returns **429** with `Retry-After`. Use a shared cache (Redis) so limits work across servers.
+
+## Code example
+
+```output
+POST /api/products/ (no credentials)                    → 401 {"detail": "Authentication credentials were not provided."}
+POST /api/token/ {"username": "asha", "password": "..."} → 200 {"token": "ce429c6a..."}
+POST /api/products/ Authorization: Token <admin token>   → 201 (IsAdminOrReadOnly allows staff)
+GET  /api/products/ (no credentials)                     → 200 (SAFE_METHODS are open)
+GET  /api/orders/ (no credentials)                       → 401
+GET  /api/orders/ Authorization: Token <asha's token>    → 200 {"count": 2, ...}
+GET  /api/orders/3/ (ravi's order, as asha)              → 404 (get_queryset hides it)
+```
+
+<Playground kind="http">
+
+```http
+GET /admin
+Authorization: Bearer paste-your-token-here
+```
+
+</Playground>
+
+The mock API returns 401 for `/me` without a token and 403 for `/admin` even with one: the same authentication vs permission difference.
+
+<Mistakes>
+
+<Mistake title="Only has_object_permission">
+
+<Wrong>
+
+```python
+class IsOwner(BasePermission):
+    def has_object_permission(self, request, view, obj):
+        return obj.customer == request.user
+# The LIST endpoint never calls it: everyone sees all orders.
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def get_queryset(self):
+    return Order.objects.filter(customer=self.request.user)     # lists and detail lookups both restricted
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Relying on AllowAny by default">
+
+<Wrong>
+
+```python
+REST_FRAMEWORK = {"DEFAULT_AUTHENTICATION_CLASSES": [...]}   # no default permission → AllowAny
+```
+
+</Wrong>
+
+<Right>
+
+```python
+REST_FRAMEWORK = {"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"]}
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between authentication and permission classes in DRF?">
+
+Authentication classes run first and try to identify the request (session cookie, token, JWT), setting request.user and request.auth. Permission classes then decide whether that user may perform the action: has_permission for every request and has_object_permission for object-level checks when get_object() is used.
+
+</QA>
+
+<QA q="Session, Token or JWT authentication: which and when?">
+
+Session authentication for browser frontends on the same site (cookies, CSRF). DRF Token for simple server-stored tokens, easy to revoke but one per user. JWT (simplejwt) for SPAs, mobile apps and multiple services: stateless verification, short-lived access tokens with refresh tokens, harder to revoke instantly.
+
+</QA>
+
+<QA q="Why might has_object_permission not be called?">
+
+It is only checked when the view calls `self.get_object()` (retrieve, update, destroy, custom detail actions). List views and custom code that fetch objects directly bypass it, so filter querysets by user as well.
+
+</QA>
+
+<QA q="What is throttling in DRF?">
+
+Rate limiting per client: AnonRateThrottle by IP, UserRateThrottle by user, ScopedRateThrottle per view scope, with rates like 100/hour stored in the cache; exceeding them returns 429 Too Many Requests with Retry-After.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Authenticated user without permission gets...',
+      options: ['401', '403', '404', '429'],
+      answer: 1,
+      why: '401 = not authenticated.',
+    },
+    {
+      q: 'Anyone may read, only logged-in users may write?',
+      options: ['AllowAny', 'IsAuthenticatedOrReadOnly', 'IsAdminUser', 'DjangoModelPermissions'],
+      answer: 1,
+      why: 'SAFE_METHODS open, others need login.',
+    },
+    {
+      q: 'Header for DRF TokenAuthentication?',
+      options: ['Authorization: Bearer <key>', 'Authorization: Token <key>', 'X-Token: <key>', 'Cookie: token=<key>'],
+      answer: 1,
+      why: 'JWT libraries use Bearer.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Default safe | `"DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"]` |
+| Per view | `permission_classes = [IsAuthenticated, IsOwnerOrStaff]` |
+| Custom | `class P(BasePermission): has_permission / has_object_permission` |
+| Read vs write | `request.method in permissions.SAFE_METHODS` |
+| Token login | `path("api/token/", obtain_auth_token)` |
+| JWT | `djangorestframework-simplejwt` |
+| Rate limit | `AnonRateThrottle` · `UserRateThrottle` · rates in settings |
+
+401 no credentials · 403 not allowed · 404 hidden by queryset · 429 throttled
+
+</CheatSheet>

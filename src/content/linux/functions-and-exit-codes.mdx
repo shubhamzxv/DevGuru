@@ -1,0 +1,225 @@
+---
+id: linux-functions-and-exit-codes
+title: Functions and exit codes
+summary: Bash functions group commands under a name and take arguments as $1, $2; every command returns an exit code (0 = success, anything else = failure) available as $?, which scripts use with &&, ||, if and exit.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+In a restaurant, "make tea" is one instruction that hides several steps (boil water, add leaves, strain). That is a **function**. After each order the kitchen rings a bell: one ring = done fine, two rings = something went wrong. That bell is the **exit code**.
+
+</Analogy>
+
+## Simple explanation
+
+**Functions**
+
+```bash
+log() {
+  echo "[$(date +%T)] $*"
+}
+
+backup_file() {
+  local file=$1               # local: only inside the function
+  local dest=${2:-/tmp}
+  if [ ! -f "$file" ]; then
+    log "missing: $file"
+    return 1                  # failure
+  fi
+  cp "$file" "$dest/"
+  log "copied $file to $dest"
+}
+
+backup_file notes.txt ~/backups
+```
+
+- Define before use; call like a command: `backup_file a.txt`
+- Arguments: `$1`, `$2`, `$@`, `$#` (inside the function they are the function's arguments)
+- `local` keeps variables inside the function
+- `return N` sets the function's exit code; to give back **data**, `echo` it and capture: `result=$(my_function)`
+
+**Exit codes**
+
+| Code | Meaning |
+| --- | --- |
+| `0` | success |
+| `1` | general error |
+| `2` | misuse (bad arguments) |
+| `126` | found but not executable |
+| `127` | command not found |
+| `130` | stopped by Ctrl+C |
+| `137` | killed (SIGKILL, often out of memory) |
+
+```bash
+grep -q ERROR app.log
+echo $?                   # 0 if found, 1 if not
+```
+
+Using them:
+
+```bash
+mkdir -p build && cp -r src build/        # && = only on success
+ping -c1 db || echo "database host unreachable"
+if ! systemctl is-active --quiet nginx; then sudo systemctl start nginx; fi
+exit 0                                     # end the script with a code
+```
+
+CI/CD pipelines, cron monitors, Docker health checks and systemd all read exit codes: **a script that fails must exit non-zero**, or the failure is invisible.
+
+`trap` runs cleanup when the script ends or fails:
+
+```bash
+trap 'rm -f /tmp/deploy.lock' EXIT
+```
+
+## Code example
+
+```bash
+check_file() {
+  if [ -f "$1" ]; then
+    echo "ok: $1"
+  else
+    echo "missing: $1"
+    return 1
+  fi
+}
+check_file notes.txt; echo "status $?"
+check_file secret.txt; echo "status $?"
+```
+
+```output
+ok: notes.txt
+status 0
+missing: secret.txt
+status 1
+```
+
+<Playground kind="terminal">
+
+```bash
+log() { echo "[$(date +%T)] $1"; }
+log "starting deploy"
+check_file() { if [ -f "$1" ]; then echo "ok: $1"; else echo "missing: $1"; return 1; fi; }
+check_file notes.txt; echo "status $?"
+check_file secret.txt; echo "status $?"
+check_file secret.txt || echo "create it first"
+count_errors() { grep -c ERROR "$1"; }
+n=$(count_errors logs/app.log)
+echo "app.log has $n errors"
+ls /nowhere; echo "ls exit code: $?"
+notacommand; echo "exit code: $?"
+grep -q ERROR logs/app.log && echo "alert the on-call"
+```
+
+</Playground>
+
+`$?` is 1 for a missing file and 127 for an unknown command. `$(count_errors ...)` captures what the function prints.
+
+<Mistakes>
+
+<Mistake title="Using return to give back data">
+
+<Wrong>
+
+```bash
+get_count() { return $(wc -l < file); }    # exit codes are only 0-255, and mean success/failure
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+get_count() { wc -l < file; }
+count=$(get_count)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="A failing script that exits 0">
+
+<Wrong>
+
+```bash
+python3 migrate.py || echo "migration failed"     # the script continues and finally exits 0: CI shows green
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+python3 migrate.py || { echo "migration failed" >&2; exit 1; }
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is an exit code and how do you check it?">
+
+Every process ends with a number from 0 to 255: 0 means success, non-zero means failure (with conventions such as 127 command not found). The shell stores the last one in `$?`; `&&`, `||`, `if` and `set -e` all act on it, and CI systems treat non-zero as a failed step.
+
+</QA>
+
+<QA q="How do you return a value from a Bash function?">
+
+Print it to stdout and capture it with command substitution, `value=$(func args)`. `return` only sets the numeric exit status, which should indicate success or failure. Global variables also work but are harder to follow.
+
+</QA>
+
+<QA q="What is trap used for?">
+
+`trap 'commands' SIGNAL` runs commands when the script receives a signal or exits (EXIT, ERR, INT, TERM), typically to clean up temporary files and locks, or to log failures, even when the script stops early.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Exit code of a successful command?',
+      options: ['1', '0', '255', '-1'],
+      answer: 1,
+      why: '0 = success.',
+    },
+    {
+      q: 'Exit code 127 means...',
+      options: ['Out of memory', 'Command not found', 'Permission denied', 'Success'],
+      answer: 1,
+      why: '126 not executable, 127 not found.',
+    },
+    {
+      q: 'Keep a variable inside a function?',
+      options: ['export', 'local', 'private', 'var'],
+      answer: 1,
+      why: 'local limits its scope.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Piece | Syntax |
+| --- | --- |
+| Define | `name() { ...; }` |
+| Arguments | `$1 $2 $@ $#` |
+| Local variable | `local x=$1` |
+| Status | `return 0` / `return 1` |
+| Output as value | `v=$(name args)` |
+| Last status | `$?` |
+| On success / failure | `a && b` · `a \|\| b` |
+| Fail the script | `exit 1` · `set -e` |
+| Cleanup | `trap 'rm -f /tmp/lock' EXIT` |
+
+Codes: 0 ok · 1 error · 2 misuse · 126 not executable · 127 not found · 130 Ctrl+C · 137 killed
+
+</CheatSheet>

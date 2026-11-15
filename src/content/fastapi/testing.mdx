@@ -1,0 +1,255 @@
+---
+id: fastapi-testing
+title: Testing with TestClient
+summary: TestClient calls your FastAPI app in-process like real HTTP requests, pytest fixtures set up clients and test data, app.dependency_overrides swaps the database or the logged-in user for fakes, and tests check status codes, JSON and side effects.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A car factory does not test new brakes by selling the car. It puts the car on a **test rig**: wheels on rollers, a fake road, sensors everywhere. **TestClient** is the test rig for your API: real requests, no real server, and you can swap parts (the database, the logged-in user) for test versions.
+
+</Analogy>
+
+## Simple explanation
+
+```bash
+pip install pytest httpx
+pytest -q
+```
+
+**TestClient** (from Starlette, uses httpx) sends requests straight into the app:
+
+```python
+from fastapi.testclient import TestClient
+from main import app
+
+client = TestClient(app)
+
+def test_health():
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok"}
+```
+
+**Replace dependencies** so tests do not need the real database or a real login:
+
+```python
+app.dependency_overrides[get_db] = lambda: fake_db
+app.dependency_overrides[get_current_user] = lambda: "asha"
+...
+app.dependency_overrides.clear()     # always clean up
+```
+
+**pytest fixtures** set this up for each test; `@pytest.mark.parametrize` runs one test with many inputs.
+
+What to test for each endpoint:
+
+1. The **happy path**: status code, response JSON, and the side effect (row created)
+2. **Validation**: bad input → 422
+3. **Business rules**: "max 10 per order" → 400, duplicates → 409
+4. **Auth**: no token → 401, wrong role → 403
+5. **Not found** → 404
+
+Real database in tests: use a separate test database (SQLite in memory or a PostgreSQL container via Docker/testcontainers), create tables per session, and wrap each test in a transaction that is rolled back. For `async` code use `httpx.AsyncClient` with `ASGITransport` and `pytest-asyncio`/`anyio`. Run tests in CI (GitHub Actions) on every pull request; measure with `pytest --cov`.
+
+## Code example
+
+`main.py`:
+
+```python
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel
+
+app = FastAPI()
+
+class OrderIn(BaseModel):
+    product_id: int
+    quantity: int = 1
+
+def get_db():
+    raise RuntimeError("the real database is not available in tests")
+
+def get_current_user():
+    raise HTTPException(401, "Not authenticated")
+
+@app.post("/orders", status_code=201)
+def create_order(order: OrderIn, db: dict = Depends(get_db), user: str = Depends(get_current_user)):
+    if order.quantity > 10:
+        raise HTTPException(400, "Max 10 items per order")
+    order_id = len(db["orders"]) + 1
+    db["orders"].append({"id": order_id, "user": user, **order.model_dump()})
+    return {"id": order_id, "user": user}
+```
+
+`test_orders.py`:
+
+```python
+import pytest
+from fastapi.testclient import TestClient
+from main import app, get_current_user, get_db
+
+@pytest.fixture
+def fake_db():
+    return {"orders": []}
+
+@pytest.fixture
+def client(fake_db):
+    app.dependency_overrides[get_db] = lambda: fake_db
+    app.dependency_overrides[get_current_user] = lambda: "asha"
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+def test_create_order(client, fake_db):
+    response = client.post("/orders", json={"product_id": 7, "quantity": 2})
+    assert response.status_code == 201
+    assert response.json() == {"id": 1, "user": "asha"}
+    assert fake_db["orders"][0]["quantity"] == 2          # the side effect happened
+
+def test_rejects_big_orders(client):
+    response = client.post("/orders", json={"product_id": 7, "quantity": 50})
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Max 10 items per order"
+
+@pytest.mark.parametrize("body", [{}, {"product_id": "x"}, {"product_id": 1, "quantity": "many"}])
+def test_validation_errors(client, body):
+    assert client.post("/orders", json=body).status_code == 422
+
+def test_requires_login(fake_db):
+    app.dependency_overrides[get_db] = lambda: fake_db      # real auth, fake database
+    response = TestClient(app).post("/orders", json={"product_id": 7})
+    app.dependency_overrides.clear()
+    assert response.status_code == 401
+```
+
+```output
+$ pytest -v
+test_orders.py::test_create_order PASSED
+test_orders.py::test_rejects_big_orders PASSED
+test_orders.py::test_validation_errors[body0] PASSED
+test_orders.py::test_validation_errors[body1] PASSED
+test_orders.py::test_validation_errors[body2] PASSED
+test_orders.py::test_requires_login PASSED
+6 passed in 0.21s
+```
+
+<Playground kind="none">
+
+```bash
+# Save the two files above in one folder, then:
+pip install "fastapi[standard]" pytest
+pytest -v
+# Break something on purpose (change 10 to 5 in main.py) and run pytest again to see a failure.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Tests that use the real database">
+
+<Wrong>
+
+```python
+def test_create_user():
+    client.post("/users", json={...})      # writes into the development (or production!) database
+```
+
+</Wrong>
+
+<Right>
+
+```python
+app.dependency_overrides[get_db] = get_test_db     # test database or fake, cleaned per test
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Forgetting to clear overrides">
+
+<Wrong>
+
+```python
+app.dependency_overrides[get_current_user] = lambda: admin_user
+# never cleared: later tests silently run as admin and the 401/403 tests pass for the wrong reason
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@pytest.fixture
+def client():
+    app.dependency_overrides[...] = ...
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you test FastAPI endpoints?">
+
+With pytest and TestClient, which sends requests to the app in-process. Fixtures build the client and test data, `app.dependency_overrides` replaces dependencies such as the database session and current user, and assertions check status codes, response bodies and side effects. Async code can use httpx.AsyncClient with ASGITransport.
+
+</QA>
+
+<QA q="How do you test an endpoint that needs authentication?">
+
+Override the get_current_user dependency to return a test user, so the endpoint logic is tested without tokens; separately test the auth itself by calling the endpoint without or with an invalid token and asserting 401, and with a real token from the login endpoint for an end-to-end check.
+
+</QA>
+
+<QA q="What should a test database setup look like?">
+
+An isolated database (SQLite in memory or a PostgreSQL container matching production), schema created by migrations or create_all at session start, each test running inside a transaction rolled back afterwards (or tables truncated), and factories or fixtures for test data, all wired in through dependency overrides.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Replace get_db in tests?',
+      options: ['Monkey-patch the module', 'app.dependency_overrides[get_db] = fake', 'Edit main.py', 'Use a global flag'],
+      answer: 1,
+      why: 'Built-in override mechanism.',
+    },
+    {
+      q: 'Does TestClient need uvicorn running?',
+      options: ['Yes', 'No, it calls the app in-process', 'Only for POST', 'Only on Windows'],
+      answer: 1,
+      why: 'It talks to the ASGI app directly.',
+    },
+    {
+      q: 'Run one test with many inputs?',
+      options: ['A for loop in main.py', '@pytest.mark.parametrize', 'Copy the test', 'pytest --many'],
+      answer: 1,
+      why: 'Each case is reported separately.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Client | `client = TestClient(app)` |
+| Request | `client.post("/orders", json={...}, headers={...})` |
+| Assert | `r.status_code == 201` · `r.json() == {...}` |
+| Override | `app.dependency_overrides[get_db] = lambda: fake_db` |
+| Clean up | `app.dependency_overrides.clear()` |
+| Many inputs | `@pytest.mark.parametrize("body", [...])` |
+| Async | `httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test")` |
+| Run | `pytest -v` · `pytest --cov=app` |
+
+</CheatSheet>

@@ -1,0 +1,199 @@
+---
+id: linux-file-commands
+title: Files and folders (touch, mkdir, cp, mv, rm)
+summary: touch creates files, mkdir creates folders, cp copies, mv moves or renames, and rm deletes permanently, with -r for folders.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Your desk drawer: **touch** puts a new blank page in, **mkdir** adds a new folder, **cp** photocopies a page, **mv** moves a page to another folder (or writes a new title on it), and **rm** puts it through the shredder. There is no "undo" for the shredder.
+
+</Analogy>
+
+## Simple explanation
+
+| Command | Does | Example |
+| --- | --- | --- |
+| `touch file` | create an empty file (or update its time) | `touch notes.md` |
+| `mkdir dir` | create a folder | `mkdir backups` |
+| `mkdir -p a/b/c` | create nested folders, no error if they exist | `mkdir -p project/src/api` |
+| `cp src dest` | copy a file | `cp app.py app.py.bak` |
+| `cp -r dir dest` | copy a folder with everything inside | `cp -r app app-copy` |
+| `mv src dest` | move **or rename** | `mv old.txt new.txt`, `mv app.log logs/` |
+| `rm file` | delete a file | `rm notes.bak` |
+| `rm -r dir` | delete a folder and its contents | `rm -r build` |
+| `rm -i file` | ask before deleting | safer when unsure |
+| `rmdir dir` | delete an **empty** folder | |
+
+Useful extras:
+
+- `cp -i` and `mv -i` ask before overwriting; `cp -p` keeps timestamps and permissions
+- Wildcards: `*` any characters, `?` one character: `cp *.py backup/`, `rm log-2026-??.txt`
+- Several at once: `mkdir logs data tmp`, `rm a.txt b.txt`
+- `ln -s /opt/app/current app` creates a **symbolic link** (shortcut)
+
+**`rm` is permanent**: there is no recycle bin in the terminal. Before `rm -r` with wildcards, run `ls` with the same pattern to see what would go. And never `rm -rf /` or `rm -rf $DIR/` with an empty variable.
+
+## Code example
+
+```bash
+mkdir -p project/src
+touch project/src/main.py project/README.md
+cp project/README.md project/README.bak
+mv project/README.bak project/OLD-README.md
+ls -R project
+rm project/OLD-README.md
+```
+
+```output
+project:
+README.md  OLD-README.md  src
+
+project/src:
+main.py
+```
+
+<Playground kind="terminal">
+
+```bash
+mkdir -p project/src/api
+touch project/src/main.py project/README.md
+tree project
+cp notes.txt notes.bak
+mv notes.bak project/
+mv project/notes.bak project/old-notes.txt
+ls project
+cp -r project project-copy
+rmdir project-copy
+rm -r project-copy
+ls
+```
+
+</Playground>
+
+`rmdir` refuses because the folder is not empty; `rm -r` deletes it with everything inside.
+
+<Mistakes>
+
+<Mistake title="Forgetting -r for folders">
+
+<Wrong>
+
+```bash
+cp app app-backup
+# cp: -r not specified; omitting directory 'app'
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+cp -r app app-backup
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Dangerous rm with a variable">
+
+<Wrong>
+
+```bash
+rm -rf $BUILD_DIR/*      # if BUILD_DIR is empty this becomes rm -rf /*
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+rm -rf "${BUILD_DIR:?BUILD_DIR is not set}"/*   # stops with an error if the variable is empty
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="mv overwriting silently">
+
+<Wrong>
+
+```bash
+mv config.yaml backup/config.yaml    # replaces an existing backup without asking
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+mv -i config.yaml backup/config.yaml   # asks first
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you rename a file in Linux?">
+
+With `mv`: `mv oldname newname`. Moving within the same folder to a new name is a rename. There is also a `rename` utility for bulk renames with patterns.
+
+</QA>
+
+<QA q="What is the difference between rm, rm -r and rmdir?">
+
+`rm` deletes files. `rm -r` deletes folders recursively with all contents (`-f` also skips prompts and errors). `rmdir` deletes only empty folders, which makes it a safe way to clean up empty directories.
+
+</QA>
+
+<QA q="What is the difference between a hard link and a symbolic link?">
+
+A symbolic link (`ln -s`) is a small file that points to a path; it breaks if the target is moved or deleted and can cross filesystems and point to folders. A hard link is another name for the same inode (the same data on disk); deleting one name keeps the data while other links exist, and it cannot span filesystems or point to directories.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command renames a.txt to b.txt?',
+      options: ['cp a.txt b.txt', 'mv a.txt b.txt', 'rename-file a b', 'touch b.txt'],
+      answer: 1,
+      why: 'mv moves or renames.',
+    },
+    {
+      q: 'Create a/b/c in one command?',
+      options: ['mkdir a/b/c', 'mkdir -p a/b/c', 'touch a/b/c', 'cd a/b/c'],
+      answer: 1,
+      why: '-p creates parent folders as needed.',
+    },
+    {
+      q: 'Can you undo rm in the terminal?',
+      options: ['Yes, from the recycle bin', 'No', 'With rm -u', 'With ctrl+z'],
+      answer: 1,
+      why: 'Deleted files are gone unless you have backups.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| New file / folder | `touch f` · `mkdir -p a/b` |
+| Copy file / folder | `cp a b` · `cp -r dir dir2` |
+| Move / rename | `mv a dir/` · `mv old new` |
+| Delete file / folder | `rm f` · `rm -r dir` · `rmdir emptydir` |
+| Ask first | `-i` on cp, mv, rm |
+| Shortcut | `ln -s target linkname` |
+| Wildcards | `*.py` · `log-??.txt` |
+
+</CheatSheet>

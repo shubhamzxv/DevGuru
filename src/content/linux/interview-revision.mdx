@@ -1,0 +1,232 @@
+---
+id: linux-interview-revision
+title: Linux interview revision
+summary: A one-page revision of the Linux questions asked most in backend interviews, with short answers, troubleshooting scenarios and a cheat sheet.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Before an exam you revise the formula sheet and the past papers, not the whole textbook. This page is both for Linux.
+
+</Analogy>
+
+## Simple explanation
+
+**The 20 answers to know**
+
+| Question | Short answer |
+| --- | --- |
+| Kernel vs shell vs distro | kernel = core; shell = command interpreter (Bash); distro = kernel + tools (Ubuntu) |
+| Absolute vs relative path | from `/` vs from the current folder |
+| Where are configs / logs | `/etc` / `/var/log` (and `journalctl`) |
+| chmod 755 / 644 | rwxr-xr-x (scripts, dirs) / rw-r--r-- (files) |
+| chmod vs chown | permissions vs owner |
+| Hard vs soft link | same inode vs pointer to a path |
+| sudo vs su | one command as root, logged / switch user with their password |
+| Find a process | `ps aux \| grep name`, `pgrep -a`, `top` |
+| SIGTERM vs SIGKILL | polite 15, can clean up / forced 9 |
+| Port in use | `sudo ss -tulpn \| grep :8000` (`lsof -i :8000`) |
+| Disk full | `df -h`, then `du -h --max-depth=1 \| sort -h` |
+| Memory | `free -h`, read *available*; OOM killer → exit 137 |
+| Search text | `grep -rn "text" .` |
+| Find files | `find / -name "*.log" -size +100M -mtime +7` |
+| Top IPs in a log | `awk '{print $1}' access.log \| sort \| uniq -c \| sort -rn \| head` |
+| Replace in file | `sed -i 's/old/new/g' file` |
+| > vs >> / 2>&1 | overwrite vs append / errors to where output goes |
+| Run app as a service | systemd unit, `enable --now`, `journalctl -u` |
+| Schedule a job | cron `30 2 * * * /abs/path/script.sh >> log 2>&1` |
+| SSH keys | public key in `authorized_keys`, private key `chmod 600` |
+
+**Scenario questions: say the steps**
+
+- "**The site is down**": `systemctl status nginx app` → `journalctl -u app -n 100` → `ss -tulpn` (listening?) → `curl -i localhost:8000/health` → `df -h` and `free -h` → security group / firewall
+- "**Server is slow**": `uptime` (load vs `nproc`) → `top`/`htop` (CPU or memory hog?) → `free -h` (swapping?) → `df -h` and `iostat` (disk) → app logs for slow queries
+- "**Disk is full**": `df -h` → `du -sh /var/* | sort -h` → rotate/truncate logs, `journalctl --vacuum-size`, `docker system prune` → `lsof +L1` for deleted-but-open files → add logrotate and alerts
+- "**Permission denied**": `ls -l` file and folders, `id` (groups?), owner with `chown`, minimum `chmod`, never 777
+- "**Cron job did not run**": `crontab -l`, absolute paths, log redirection, `grep CRON /var/log/syslog`, environment variables
+- "**Deploy by hand**": `ssh` → `cd app && git pull` → `source .venv/bin/activate && pip install -r requirements.txt` → `python manage.py migrate` → `sudo systemctl restart app` → `curl` health check
+
+## Code example
+
+A small health-check script that uses most of the track:
+
+```bash
+#!/bin/bash
+set -uo pipefail
+
+check() {
+  local name=$1
+  if systemctl is-active --quiet "$name"; then
+    echo "OK    $name"
+  else
+    echo "DOWN  $name"
+    return 1
+  fi
+}
+
+failed=0
+for service in nginx shop-api cron; do
+  check "$service" || failed=$((failed + 1))
+done
+
+disk=$(df -h / | awk 'NR == 2 {print $5}' | tr -d %)
+[ "$disk" -gt 80 ] && echo "WARN  disk at ${disk}%"
+
+errors=$(grep -c ERROR /var/log/shop/app.log || true)
+echo "INFO  $errors errors in the app log"
+
+exit $failed
+```
+
+```output
+DOWN  nginx
+OK    shop-api
+OK    cron
+INFO  2 errors in the app log
+```
+
+<Playground kind="terminal">
+
+```bash
+uptime
+free -h
+df -h
+ss -tulpn
+systemctl status shop-api
+systemctl is-active nginx || sudo systemctl start nginx
+for s in nginx shop-api cron; do echo "$s: $(systemctl is-active $s)"; done
+grep -c ERROR logs/app.log
+awk '{print $1}' logs/access.log | sort | uniq -c | sort -rn | head -3
+awk '$8 >= 500 {print $6}' logs/access.log
+grep "Failed password" /var/log/auth.log | awk '{print $11}' | sort | uniq -c
+find . -name "*.log" -size +300c
+journalctl -u shop-api -n 5
+crontab -l
+```
+
+</Playground>
+
+Practice round: an on-call "first five minutes" on a server: load, memory, disk, ports, services, errors, busiest IPs, failing paths, attackers, big files, logs and cron.
+
+<Mistakes>
+
+<Mistake title="Jumping to reboot">
+
+<Wrong>
+
+```text
+"The site was slow, so I rebooted the server."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"I checked load, memory and disk, found the process using 100% CPU, read its logs,
+ restarted only that service, and added an alert so we catch it earlier next time."
+```
+
+</Right>
+
+Interviewers want a method, not a restart button.
+
+</Mistake>
+
+<Mistake title="chmod 777 as the fix">
+
+<Wrong>
+
+```text
+"I got Permission denied, so I ran chmod -R 777."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"I checked the owner and the user the service runs as, fixed the owner with chown,
+ and gave 644 to files and 755 to folders."
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What happens when you type ls and press Enter?">
+
+The shell reads the line, expands variables and wildcards, finds `ls` by searching PATH (after checking aliases, functions and builtins), forks a child process and execs /usr/bin/ls in it with the arguments, waits for it to finish, and stores its exit status in $?. ls uses system calls to read the directory and writes the result to stdout, which the terminal displays.
+
+</QA>
+
+<QA q="How do you check the logs of a service on Linux?">
+
+For systemd services, `journalctl -u name` with `-f` to follow, `-n 100` for the last lines or `--since "1 hour ago"`; for others, the files under /var/log (for example /var/log/nginx/error.log or /var/log/syslog), using tail -f, grep and less.
+
+</QA>
+
+<QA q="How do you find which process is listening on port 80 and stop it?">
+
+`sudo ss -tulpn | grep ':80 '` (or `sudo lsof -i :80`) gives the process and PID. If it is a service, `sudo systemctl stop name`; otherwise `kill <pid>` and only `kill -9` if needed.
+
+</QA>
+
+<QA q="What is the difference between a process and a thread?">
+
+A process is a running program with its own memory space and resources, identified by a PID. Threads are units of execution inside a process that share its memory, so they are cheaper to create and communicate faster but need synchronisation; one crashing thread can bring down the whole process.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command shows which process uses port 8000?',
+      options: ['df -h', 'sudo ss -tulpn | grep :8000', 'free -h', 'chmod 8000'],
+      answer: 1,
+      why: 'ss lists listening sockets with processes.',
+    },
+    {
+      q: 'Service logs for shop-api?',
+      options: ['cat shop-api', 'journalctl -u shop-api', 'ps shop-api', 'crontab -l'],
+      answer: 1,
+      why: 'systemd journal.',
+    },
+    {
+      q: 'Best first step when the disk is full?',
+      options: ['rm -rf /var', 'df -h then du to find big folders', 'reboot', 'chmod 777 /'],
+      answer: 1,
+      why: 'Measure before deleting.',
+    },
+    {
+      q: 'Exit code 127?',
+      options: ['Success', 'Command not found', 'Killed', 'Permission denied'],
+      answer: 1,
+      why: '127 = not found.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Area | Commands |
+| --- | --- |
+| Files | `ls -la` `cd` `cp -r` `mv` `rm -r` `mkdir -p` `find` |
+| Reading | `cat` `less` `head` `tail -f` `grep -rn` |
+| Text | `cut` `awk` `sed -i` `sort` `uniq -c` `wc -l` |
+| Rights | `chmod 755/644/600` `chown` `sudo` `id` |
+| Processes | `ps aux` `top` `kill` `kill -9` |
+| Services | `systemctl status/restart/enable --now` `journalctl -u -f` |
+| Resources | `df -h` `du -sh` `free -h` `uptime` `nproc` |
+| Network | `ss -tulpn` `curl -i` `ping` `dig` `ssh` `scp` |
+| Scripts | `#!/bin/bash` `set -euo pipefail` `$1` `$?` `if [ ]` `for` |
+| Schedule | `crontab -e` `*/5 * * * *` |
+
+</CheatSheet>

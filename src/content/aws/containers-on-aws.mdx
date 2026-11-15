@@ -1,0 +1,233 @@
+---
+id: aws-containers-on-aws
+title: Containers on AWS (ECS, Fargate) overview
+summary: Docker images are stored in ECR and run on ECS (AWS's orchestrator) or EKS (Kubernetes); ECS runs task definitions as services behind a load balancer, on EC2 instances you manage or on Fargate where AWS runs the servers, and App Runner is the simplest option for a single web service.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+You have packed your app in a standard shipping container (the Docker image). Now you need a **port**: **ECR** is the warehouse where containers are stored, **ECS** is the port authority that decides which ship carries which container and replaces broken ones, **Fargate** means you rent space on AWS's ships without owning any, and **EKS** is a Kubernetes-run port.
+
+</Analogy>
+
+## Simple explanation
+
+| Service | Role |
+| --- | --- |
+| **ECR** | private image registry (scanning, lifecycle rules) |
+| **ECS** | AWS's container orchestrator: simple, deeply integrated |
+| **EKS** | managed Kubernetes control plane |
+| **Fargate** | serverless compute for ECS/EKS: no EC2 instances to manage |
+| **App Runner** | give it an image or repo, get an HTTPS URL with autoscaling |
+| **Lambda (container image)** | functions packaged as images |
+
+**ECS building blocks**
+
+| Piece | What |
+| --- | --- |
+| **Cluster** | logical group of capacity (Fargate and/or EC2) |
+| **Task definition** | the "docker run" recipe: image, CPU/memory, ports, env vars, secrets, log config, task role |
+| **Task** | one running copy of a task definition |
+| **Service** | keeps N tasks running, replaces failed ones, registers them with an ALB target group, rolling deploys, autoscaling |
+
+Launch types: **Fargate** (pay per task vCPU/memory per second, no servers, the usual default) or **EC2** (you manage an ASG of container instances; cheaper at large steady scale, GPUs, more control).
+
+**Typical setup for a Django/FastAPI API**
+
+```text
+GitHub Actions → docker build → push to ECR (tag = git SHA)
+→ register a new task definition revision → update the ECS service
+→ ECS starts new tasks, ALB health checks pass, old tasks drain and stop (rolling update)
+```
+
+Separate services from the same image: `web` (gunicorn), `worker` (celery), `beat`; migrations as a one-off task (`aws ecs run-task`).
+
+Networking: `awsvpc` mode gives each task its own ENI and security group; tasks in **private subnets**, ALB in public subnets; secrets from **Secrets Manager/SSM** injected as env vars; logs to **CloudWatch** with the `awslogs` driver.
+
+ECS vs EKS: ECS for most teams on AWS (simpler, no cluster upgrades); EKS when you need the Kubernetes ecosystem or portability.
+
+## Code example
+
+A Fargate task definition (part):
+
+```json
+{
+  "family": "shop-api",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::123456789012:role/shop-api-task",
+  "containerDefinitions": [{
+    "name": "api",
+    "image": "123456789012.dkr.ecr.ap-south-1.amazonaws.com/shop-api:7c8d9e0",
+    "portMappings": [{"containerPort": 8000}],
+    "environment": [{"name": "DJANGO_DEBUG", "value": "false"}],
+    "secrets": [{"name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:ap-south-1:123456789012:secret:shop/db-AbC123"}],
+    "logConfiguration": {"logDriver": "awslogs", "options": {"awslogs-group": "/ecs/shop-api", "awslogs-region": "ap-south-1", "awslogs-stream-prefix": "api"}}
+  }]
+}
+```
+
+```bash
+aws ecs register-task-definition --cli-input-json file://taskdef.json
+aws ecs update-service --cluster shop --service api --task-definition shop-api --force-new-deployment
+aws ecs describe-services --cluster shop --services api --query "services[0].deployments[].{status:status,running:runningCount,desired:desiredCount}"
+```
+
+```output
+[
+    {"status": "PRIMARY", "running": 1, "desired": 2},
+    {"status": "ACTIVE",  "running": 2, "desired": 0}
+]
+```
+
+Mid-deploy: the new revision (PRIMARY) is starting while the old one (ACTIVE) drains.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "ci", "label": "GitHub Actions", "icon": "🤖", "col": 0, "row": 0, "info": "Builds the image on every merge to main, tags it with the git SHA.", "example": "docker build -t shop-api:7c8d9e0 ." },
+    { "id": "ecr", "label": "ECR repository", "icon": "📦", "col": 1, "row": 0, "info": "Private registry; scans images; lifecycle keeps the last 20.", "example": "123456789012.dkr.ecr.ap-south-1.amazonaws.com/shop-api" },
+    { "id": "alb", "label": "ALB", "icon": "⚖️", "col": 0, "row": 2, "info": "Public entry; target group of type ip (one target per task).", "example": "api.shop.example.com" },
+    { "id": "svc", "label": "ECS service (Fargate)", "icon": "🧭", "col": 1, "row": 2, "info": "Keeps desired tasks running, rolling deploys, autoscaling on CPU or requests.", "example": "desired 2, min healthy 100%, max 200%" },
+    { "id": "t1", "label": "Task (AZ-a)", "icon": "🐳", "col": 2, "row": 1, "info": "Container from the task definition, own ENI and security group, private subnet.", "example": "0.5 vCPU, 1 GB" },
+    { "id": "t2", "label": "Task (AZ-b)", "icon": "🐳", "col": 2, "row": 3, "info": "Second copy in another AZ.", "example": "Same image tag" },
+    { "id": "secrets", "label": "Secrets Manager", "icon": "🔐", "col": 3, "row": 1, "info": "DB password injected at start by the execution role.", "example": "shop/db" },
+    { "id": "rds", "label": "RDS", "icon": "🗄️", "col": 3, "row": 3, "info": "The database the tasks connect to.", "example": "PostgreSQL Multi-AZ" }
+  ],
+  "edges": [
+    ["ci", "ecr", "push"],
+    ["ecr", "svc", "pull image"],
+    ["alb", "t1"],
+    ["alb", "t2"],
+    ["svc", "t1", "runs"],
+    ["svc", "t2", "runs"],
+    ["secrets", "t1", "env"],
+    ["t2", "rds"]
+  ],
+  "flows": [
+    {
+      "name": "Deploy a new version",
+      "steps": [
+        ["ci", "Merge to main → build and test."],
+        ["ecr", "Push shop-api:7c8d9e0."],
+        ["svc", "New task definition revision; the service starts new tasks."],
+        ["t1", "New task pulls the image and secrets, passes the ALB health check."],
+        ["alb", "Traffic shifts to new tasks; old tasks drain and stop."],
+        ["svc", "Deployment complete; a failure would roll back (circuit breaker)."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using latest as the image tag">
+
+<Wrong>
+
+```text
+Task definition image: shop-api:latest — you cannot tell what runs, and new tasks may pull a different build.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Immutable tags (git SHA) and ECR tag immutability; roll back by pointing the service to the previous revision.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Mixing up the two roles">
+
+<Wrong>
+
+```text
+App permissions (S3, SQS) put on the execution role; the code still gets AccessDenied.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Execution role: pull image, read secrets, write logs. Task role: what YOUR code calls.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between ECS, EKS and Fargate?">
+
+ECS is AWS's own container orchestrator; EKS is managed Kubernetes. Fargate is a serverless compute engine that runs containers for either without you managing EC2 instances; the alternative is the EC2 launch type where you run and patch the container hosts.
+
+</QA>
+
+<QA q="What are a task definition, a task and a service in ECS?">
+
+A task definition is a versioned blueprint describing containers (image, CPU, memory, ports, environment, secrets, logging, roles). A task is a running instance of it. A service maintains a desired number of tasks, integrates with load balancers, performs rolling or blue/green deployments and scales automatically.
+
+</QA>
+
+<QA q="How would you deploy a Django or FastAPI app on AWS with containers?">
+
+Build the image in CI, push it to ECR with a commit tag, define a Fargate task definition with secrets from Secrets Manager and logs to CloudWatch, run it as an ECS service in private subnets across two AZs behind an ALB with health checks and autoscaling, run migrations as a one-off task, use RDS and ElastiCache, and deploy by updating the service to the new revision.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Run containers without managing servers?',
+      options: ['ECS on EC2', 'Fargate', 'EBS', 'AMI'],
+      answer: 1,
+      why: 'Serverless compute for containers.',
+    },
+    {
+      q: 'Where are private images stored?',
+      options: ['S3 only', 'ECR', 'CloudFront', 'EFS'],
+      answer: 1,
+      why: 'Elastic Container Registry.',
+    },
+    {
+      q: 'Which ECS object keeps 2 tasks running behind an ALB?',
+      options: ['Task definition', 'Service', 'Cluster', 'Container'],
+      answer: 1,
+      why: 'Services maintain desired count.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Service |
+| --- | --- |
+| Image registry | ECR |
+| Orchestrator | ECS (simple) · EKS (Kubernetes) |
+| No servers | Fargate |
+| Simplest web app | App Runner |
+| Blueprint | task definition (image, cpu, memory, env, secrets, logs, roles) |
+| Keep N running | ECS service + ALB target group (type ip) |
+| Roles | execution role (agent) · task role (app) |
+| Deploy | new revision → `update-service` (rolling / blue-green) |
+
+</CheatSheet>

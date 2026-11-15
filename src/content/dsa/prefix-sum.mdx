@@ -1,0 +1,225 @@
+---
+id: dsa-prefix-sum
+title: Prefix sum
+summary: A prefix-sum array stores running totals so the sum of any range is one subtraction (O(1) per query after O(n) setup); combined with a hash map of earlier prefix sums it counts subarrays with a given sum, even with negative numbers, and it extends to 2-D grids and difference arrays.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **bank passbook** shows the running balance after every entry. To know how much you spent between 3 March and 20 March, you do not add up every entry: you subtract the balance on 2 March from the balance on 20 March. Prefix sums are running balances for any list.
+
+</Analogy>
+
+## Simple explanation
+
+```text
+a      = [3, 1, 4, 1, 5]
+prefix = [0, 3, 4, 8, 9, 14]      prefix[i] = sum of the first i items (prefix[0] = 0)
+
+sum(a[l..r]) = prefix[r + 1] - prefix[l]
+sum(a[1..3]) = prefix[4] - prefix[1] = 9 - 3 = 6   (1 + 4 + 1)
+```
+
+- Build once: **O(n)** (`itertools.accumulate`)
+- Each range sum: **O(1)**
+- The leading 0 removes special cases for ranges that start at index 0
+
+**Prefix sum + hash map** (the important interview pattern): a subarray `(i, j]` sums to k exactly when `prefix[j] - prefix[i] = k`, i.e. an earlier prefix equals `current - k`. Keep a dict of how many times each prefix value appeared:
+
+| Problem | Idea |
+| --- | --- |
+| Range sum queries | prefix array |
+| Count subarrays with sum = k (negatives allowed) | dict of prefix counts, start with `{0: 1}` |
+| Longest subarray with sum = k | dict prefix → first index |
+| Equal 0s and 1s | treat 0 as −1, find equal prefixes |
+| Subarray sum divisible by k | dict of `prefix % k` |
+| Product of array except self | prefix and suffix products |
+| 2-D grid region sums | 2-D prefix (inclusion–exclusion) |
+| Many range additions | **difference array**: `d[l] += x; d[r+1] -= x`, then prefix-sum it |
+
+## Code example
+
+```python
+from itertools import accumulate
+from collections import defaultdict
+
+a = [3, 1, 4, 1, 5]
+prefix = [0, *accumulate(a)]
+print("prefix:", prefix)
+range_sum = lambda l, r: prefix[r + 1] - prefix[l]
+print("sum a[1..3] =", range_sum(1, 3), " sum a[0..4] =", range_sum(0, 4))
+
+def count_subarrays_sum_k(nums, k):
+    seen = defaultdict(int)
+    seen[0] = 1                      # the empty prefix
+    total = count = 0
+    for x in nums:
+        total += x
+        count += seen[total - k]     # earlier prefixes that make a k-sum ending here
+        seen[total] += 1
+    return count
+
+print(count_subarrays_sum_k([1, 1, 1], 2))
+print(count_subarrays_sum_k([3, 4, 7, 2, -3, 1, 4, 2], 7))
+
+def product_except_self(nums):
+    n = len(nums)
+    out = [1] * n
+    left = 1
+    for i in range(n):               # product of everything to the left
+        out[i] = left
+        left *= nums[i]
+    right = 1
+    for i in range(n - 1, -1, -1):   # times everything to the right
+        out[i] *= right
+        right *= nums[i]
+    return out
+
+print(product_except_self([1, 2, 3, 4]))
+
+diff = [0] * 6                       # 5 days of bookings + 1 spare
+for l, r, seats in [(0, 2, 10), (1, 3, 20), (2, 4, 25)]:
+    diff[l] += seats
+    diff[r + 1] -= seats
+print("seats per day:", list(accumulate(diff))[:5])
+```
+
+```output
+prefix: [0, 3, 4, 8, 9, 14]
+sum a[1..3] = 6  sum a[0..4] = 14
+2
+4
+[24, 12, 8, 6]
+seats per day: [10, 30, 55, 45, 25]
+```
+
+<Playground kind="python">
+
+```python
+grid = [
+    [3, 0, 1, 4],
+    [5, 6, 3, 2],
+    [1, 2, 0, 1],
+]
+R, C = len(grid), len(grid[0])
+P = [[0] * (C + 1) for _ in range(R + 1)]
+for r in range(R):
+    for c in range(C):
+        P[r + 1][c + 1] = grid[r][c] + P[r][c + 1] + P[r + 1][c] - P[r][c]
+
+def region(r1, c1, r2, c2):          # inclusive corners
+    return P[r2 + 1][c2 + 1] - P[r1][c2 + 1] - P[r2 + 1][c1] + P[r1][c1]
+
+print(region(0, 0, 1, 1))            # 3 + 0 + 5 + 6
+print(region(1, 1, 2, 3))            # 6 + 3 + 2 + 2 + 0 + 1
+
+# Try it: check a few regions by hand.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Off-by-one without the leading zero">
+
+<Wrong>
+
+```python
+prefix = list(accumulate(a))          # prefix[i] includes a[i]
+range_sum = prefix[r] - prefix[l]     # misses a[l]; breaks for l = 0
+```
+
+</Wrong>
+
+<Right>
+
+```python
+prefix = [0, *accumulate(a)]
+range_sum = prefix[r + 1] - prefix[l]
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Forgetting seen[0] = 1">
+
+<Wrong>
+
+```python
+seen = defaultdict(int)               # subarrays starting at index 0 are never counted
+```
+
+</Wrong>
+
+<Right>
+
+```python
+seen = defaultdict(int); seen[0] = 1  # the empty prefix
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a prefix sum and why use it?">
+
+An array where each entry is the total of all elements before it (with a leading 0). After O(n) preprocessing, the sum of any range l..r is prefix[r+1] − prefix[l] in O(1), which is useful when there are many range queries.
+
+</QA>
+
+<QA q="Count subarrays whose sum equals k (numbers may be negative).">
+
+Scan once keeping the running prefix sum and a hash map counting how many times each prefix value has occurred, starting with `{0: 1}`. At each position add the count of (current − k) to the answer, then record the current prefix. O(n) time and space; a sliding window would fail because of negatives.
+
+</QA>
+
+<QA q="What is a difference array?">
+
+The inverse of a prefix sum: to add x to every element in l..r, do d[l] += x and d[r+1] −= x; after all updates, one prefix-sum pass produces the final array. It turns many range updates into O(1) each plus O(n) at the end.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'prefix = [0, 3, 4, 8, 9, 14]. Sum of a[2..4]?',
+      options: ['10', '11', '14', '6'],
+      answer: 0,
+      why: 'prefix[5] − prefix[2] = 14 − 4.',
+    },
+    {
+      q: 'Count subarrays with sum k (negatives allowed) uses...',
+      options: ['Sliding window', 'Prefix sums + hash map', 'Binary search', 'Sorting'],
+      answer: 1,
+      why: 'Look up current − k.',
+    },
+    {
+      q: 'Range query time after building prefix sums?',
+      options: ['O(1)', 'O(log n)', 'O(n)', 'O(n²)'],
+      answer: 0,
+      why: 'One subtraction.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Build | `prefix = [0, *accumulate(a)]` |
+| Range sum l..r | `prefix[r+1] - prefix[l]` |
+| Count sum = k | `seen = {0: 1}` · `count += seen[total - k]` |
+| Longest sum = k | first index of each prefix |
+| Divisible by k | key `total % k` |
+| 2-D | `P[r+1][c+1] = g + P[r][c+1] + P[r+1][c] - P[r][c]` |
+| Range updates | difference array → prefix sum |
+
+</CheatSheet>

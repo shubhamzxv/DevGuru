@@ -1,0 +1,202 @@
+---
+id: fastapi-what-is-fastapi
+title: What is FastAPI?
+summary: FastAPI is a modern Python web framework for building APIs, using type hints to validate data with Pydantic, generate OpenAPI docs automatically and support async code, while running on an ASGI server such as Uvicorn.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A smart **receptionist** at a hospital. You fill in a form; the receptionist checks every field at once ("age must be a number", "phone is missing"), sends you back if something is wrong, and only passes complete forms to the doctor. A notice board on the wall (the docs) lists every department and what each form needs.
+
+**FastAPI** is that receptionist for your Python code: your **type hints** are the form rules.
+
+</Analogy>
+
+## Simple explanation
+
+FastAPI (2018, by Sebastián Ramírez) is built on two libraries:
+
+- **Starlette**: the web part (routing, requests, responses, WebSockets, middleware)
+- **Pydantic**: the data part (validation and serialisation from type hints)
+
+What you get from simply writing type hints:
+
+| Feature | What it means |
+| --- | --- |
+| **Validation** | `book_id: int` → "abc" is rejected with a clear 422 error |
+| **Conversion** | `"42"` from the URL becomes the integer `42` |
+| **Automatic docs** | Swagger UI at `/docs`, ReDoc at `/redoc`, from the OpenAPI schema |
+| **Editor support** | autocomplete and type checks everywhere |
+| **Async** | `async def` routes for high-concurrency I/O |
+| **Dependency injection** | `Depends()` for auth, DB sessions, settings |
+| **Speed** | one of the fastest Python frameworks (ASGI) |
+
+**ASGI vs WSGI**: Django and Flask were built on WSGI (one request per worker at a time, synchronous). FastAPI uses **ASGI**, which supports `async`/`await`, so one worker can wait on many slow I/O operations (database, HTTP calls) at once. You run it with an ASGI server: **Uvicorn** (or Gunicorn with Uvicorn workers, or Hypercorn).
+
+When to choose FastAPI:
+
+- JSON **APIs and microservices**, ML model serving, backends for React or mobile apps
+- When you want typed request/response contracts and docs for frontend teams
+
+When Django may fit better: a full website with admin panel, ORM, auth, forms and templates out of the box (see "FastAPI vs Django").
+
+## Code example
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI(title="Shop API")
+
+class Order(BaseModel):
+    product_id: int
+    quantity: int = 1
+
+@app.get("/books/{book_id}")
+def get_book(book_id: int):                 # validated and converted to int
+    return {"id": book_id}
+
+@app.post("/orders", status_code=201)
+def create_order(order: Order):             # JSON body validated by Pydantic
+    return {"received": order}
+```
+
+```output
+GET  /books/2                          -> 200 {"id": 2}
+GET  /books/abc                        -> 422 {"detail": [{"type": "int_parsing", "loc": ["path", "book_id"], "msg": "Input should be a valid integer, unable to parse string as an integer", "input": "abc"}]}
+POST /orders {"product_id": 7}         -> 201 {"received": {"product_id": 7, "quantity": 1}}
+```
+
+You wrote no `if not isinstance(...)` checks: the type hints did the validation.
+
+<Playground kind="none">
+
+```python
+# Save as main.py, then run:
+#   pip install "fastapi[standard]"
+#   fastapi dev main.py          (or: uvicorn main:app --reload)
+# Open http://127.0.0.1:8000/docs and try both endpoints.
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI(title="Shop API")
+
+class Order(BaseModel):
+    product_id: int
+    quantity: int = 1
+
+@app.get("/books/{book_id}")
+def get_book(book_id: int):
+    return {"id": book_id}
+
+@app.post("/orders", status_code=201)
+def create_order(order: Order):
+    return {"received": order}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Running FastAPI with python main.py">
+
+<Wrong>
+
+```bash
+python main.py        # nothing happens: the file only creates the app object
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+fastapi dev main.py              # development, auto-reload
+uvicorn main:app --reload        # same with Uvicorn directly (module:variable)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Thinking FastAPI is always faster">
+
+<Wrong>
+
+```text
+"We switched to FastAPI, so the slow SQL queries are fast now."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+FastAPI makes the framework part fast and handles many waiting requests well;
+slow queries, missing indexes and blocking code inside async routes are still slow.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is FastAPI and why is it popular?">
+
+A Python framework for building APIs on Starlette and Pydantic. Type hints drive request validation, conversion, serialisation and automatic OpenAPI documentation; it supports async code on ASGI, has a simple dependency injection system and is among the fastest Python frameworks, which makes it productive and popular for microservices and ML APIs.
+
+</QA>
+
+<QA q="What is the difference between WSGI and ASGI?">
+
+WSGI is the older synchronous interface between Python web apps and servers: each request occupies a worker until it finishes. ASGI is its asynchronous successor, supporting async/await, long-lived connections such as WebSockets and many concurrent I/O-bound requests per worker. FastAPI is ASGI and runs on servers such as Uvicorn.
+
+</QA>
+
+<QA q="What are Starlette and Pydantic in FastAPI?">
+
+Starlette provides the web layer: routing, request and response objects, middleware, background tasks and WebSockets. Pydantic provides data validation and serialisation based on type hints, used for path, query and body parameters and response models.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which library validates the data in FastAPI?',
+      options: ['Starlette', 'Pydantic', 'Uvicorn', 'SQLAlchemy'],
+      answer: 1,
+      why: 'Pydantic models and type hints.',
+    },
+    {
+      q: 'Where are the automatic interactive docs?',
+      options: ['/admin', '/docs', '/swagger.json', '/api'],
+      answer: 1,
+      why: 'Swagger UI at /docs, ReDoc at /redoc.',
+    },
+    {
+      q: 'Which server runs a FastAPI app?',
+      options: ['Apache mod_wsgi', 'Uvicorn (ASGI)', 'Tomcat', 'IIS'],
+      answer: 1,
+      why: 'FastAPI is ASGI.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Value |
+| --- | --- |
+| Install | `pip install "fastapi[standard]"` |
+| Run (dev) | `fastapi dev main.py` · `uvicorn main:app --reload` |
+| Docs | `/docs` (Swagger) · `/redoc` · `/openapi.json` |
+| Built on | Starlette (web) + Pydantic (data) |
+| Interface | ASGI (async) |
+| Bad input | automatic **422** with details |
+
+</CheatSheet>

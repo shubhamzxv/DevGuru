@@ -1,0 +1,231 @@
+---
+id: aws-infrastructure-as-code
+title: Infrastructure as code (CloudFormation, CDK)
+summary: Infrastructure as code describes AWS resources in versioned files so environments can be created, reviewed and repeated exactly; CloudFormation deploys YAML/JSON templates as stacks with change sets and rollbacks, CDK generates those templates from TypeScript or Python code, SAM simplifies serverless templates, and Terraform is the popular multi-cloud alternative.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Building a house from an **architect's blueprint** instead of instructions shouted across the site. The blueprint (template) is reviewed, stored, and can build an identical house in another city (staging, another Region). To change the house you edit the blueprint, see a list of what will change (change set), then the builders apply only those changes — and undo them if something goes wrong (rollback).
+
+</Analogy>
+
+## Simple explanation
+
+**Why IaC**: repeatable environments (dev = staging = prod), code review and history in Git, no "click-ops" drift, disaster recovery, documentation for free.
+
+| Tool | Language | Notes |
+| --- | --- | --- |
+| **CloudFormation** | YAML / JSON templates | AWS native; stacks, change sets, rollback, drift detection, StackSets |
+| **CDK** | TypeScript, Python, Java, Go, C# | real code with loops and classes; **constructs** with good defaults; `cdk synth` → CloudFormation |
+| **SAM** | CloudFormation + shortcuts | serverless (`AWS::Serverless::Function`, `HttpApi`), `sam local invoke`, `sam deploy` |
+| **Terraform / OpenTofu** | HCL | multi-cloud; plan/apply; state file (S3 + locking) |
+
+**CloudFormation template parts**: `Parameters` (inputs like Env), `Mappings`, `Conditions`, **`Resources`** (the only required part), `Outputs` (values for other stacks/people). Intrinsic functions: `!Ref`, `!GetAtt`, `!Sub`, `!If`, `!ImportValue`.
+
+**Lifecycle**: create stack → update with a **change set** (preview: add / modify / **replace** / remove) → automatic **rollback** on failure → delete stack (removes resources, except those with `DeletionPolicy: Retain`, use it for databases and buckets).
+
+**CDK in a few lines (Python)**:
+
+```python
+from aws_cdk import App, Stack, Duration, RemovalPolicy, aws_s3 as s3, aws_sqs as sqs
+
+class ShopStack(Stack):
+    def __init__(self, scope, id, *, env_name: str, **kw):
+        super().__init__(scope, id, **kw)
+        s3.Bucket(self, "Media", versioned=True, enforce_ssl=True,
+                  block_public_access=s3.BlockPublicAccess.BLOCK_ALL, removal_policy=RemovalPolicy.RETAIN)
+        dlq = sqs.Queue(self, "JobsDlq")
+        sqs.Queue(self, "Jobs", visibility_timeout=Duration.seconds(60),
+                  dead_letter_queue=sqs.DeadLetterQueue(max_receive_count=3, queue=dlq))
+
+app = App()
+ShopStack(app, "shop-dev", env_name="dev")
+ShopStack(app, "shop-prod", env_name="prod")
+app.synth()
+```
+
+```bash
+cdk bootstrap      # once per account/Region
+cdk diff shop-dev  # what will change
+cdk deploy shop-dev
+```
+
+**Good practices**: one stack per lifecycle (network, data, app), parameters/contexts per environment, no secrets in templates (Secrets Manager references), deploy from CI with a role, run `cfn-lint`/`cdk-nag`/Checkov, detect drift, protect stateful resources (`Retain`, termination protection).
+
+## Code example
+
+A CloudFormation template created as a stack:
+
+```python
+import boto3, json
+
+tpl = {
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Parameters": {"Env": {"Type": "String", "Default": "dev"}},
+  "Resources": {
+    "Media": {"Type": "AWS::S3::Bucket", "Properties": {
+        "BucketName": {"Fn::Sub": "shop-media-${Env}"}, "VersioningConfiguration": {"Status": "Enabled"}}},
+    "Jobs": {"Type": "AWS::SQS::Queue", "Properties": {
+        "QueueName": {"Fn::Sub": "shop-jobs-${Env}"}, "VisibilityTimeout": 60}}},
+  "Outputs": {"BucketName": {"Value": {"Ref": "Media"}}, "QueueUrl": {"Value": {"Ref": "Jobs"}}},
+}
+cf = boto3.client("cloudformation", region_name="ap-south-1")
+cf.create_stack(StackName="shop-dev", TemplateBody=json.dumps(tpl),
+                Parameters=[{"ParameterKey": "Env", "ParameterValue": "dev"}])
+s = cf.describe_stacks(StackName="shop-dev")["Stacks"][0]
+print("stack:", s["StackName"], s["StackStatus"])
+print("outputs:", {o["OutputKey"]: o["OutputValue"] for o in s["Outputs"]})
+print("resources:", [(r["LogicalResourceId"], r["ResourceType"])
+                     for r in cf.list_stack_resources(StackName="shop-dev")["StackResourceSummaries"]])
+```
+
+```output
+stack: shop-dev CREATE_COMPLETE
+outputs: {'BucketName': 'shop-media-dev', 'QueueUrl': 'https://sqs.ap-south-1.amazonaws.com/123456789012/shop-jobs-dev'}
+resources: [('Media', 'AWS::S3::Bucket'), ('Jobs', 'AWS::SQS::Queue')]
+```
+
+(Run against a mock of AWS.) The same file with `Env=prod` creates an identical production stack.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "code", "label": "CDK / template in Git", "icon": "📄", "col": 0, "row": 1, "info": "Infrastructure reviewed in pull requests like app code.", "example": "infra/shop_stack.py" },
+    { "id": "ci", "label": "CI pipeline", "icon": "🤖", "col": 1, "row": 1, "info": "Lints (cfn-lint, cdk-nag), synthesizes, shows the diff, deploys with a deploy role.", "example": "GitHub Actions + OIDC role" },
+    { "id": "cs", "label": "Change set", "icon": "📝", "col": 2, "row": 0, "info": "Preview: what is added, modified or REPLACED. Replacement of a database = danger.", "example": "Modify: Jobs VisibilityTimeout 30 → 60" },
+    { "id": "cfn", "label": "CloudFormation", "icon": "🏗️", "col": 2, "row": 2, "info": "Creates/updates resources in dependency order; rolls back automatically on failure.", "example": "UPDATE_COMPLETE" },
+    { "id": "dev", "label": "Stack shop-dev", "icon": "🧪", "col": 3, "row": 0, "info": "Same template, Env=dev.", "example": "shop-media-dev" },
+    { "id": "prod", "label": "Stack shop-prod", "icon": "🏭", "col": 3, "row": 2, "info": "Same template, Env=prod; termination protection; Retain on data.", "example": "shop-media-prod" }
+  ],
+  "edges": [
+    ["code", "ci", "push"],
+    ["ci", "cs", "create change set"],
+    ["cs", "cfn", "execute"],
+    ["cfn", "dev"],
+    ["cfn", "prod"]
+  ],
+  "flows": [
+    {
+      "name": "Change the queue timeout",
+      "steps": [
+        ["code", "Edit visibility_timeout 30 → 60 in a pull request."],
+        ["ci", "cdk diff shows one modified property."],
+        ["cs", "Reviewers approve the change set."],
+        ["cfn", "CloudFormation updates only the queue."],
+        ["dev", "Deployed to dev first, tested."],
+        ["prod", "Same change promoted to prod."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Editing resources by hand after deploying with IaC">
+
+<Wrong>
+
+```text
+Change the security group in the console during an incident; the next deploy reverts it (or fails) — drift.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Change the template and deploy; for emergencies, fix by hand AND update the code immediately; run drift detection.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Renaming a stateful resource carelessly">
+
+<Wrong>
+
+```text
+Rename the RDS logical id or change an immutable property → change set says "Replacement" → new empty database.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Read change sets before applying, DeletionPolicy/UpdateReplacePolicy: Retain on databases and buckets, snapshots first.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is infrastructure as code and why use it?">
+
+Defining infrastructure in machine-readable, versioned files instead of manual console steps. It makes environments reproducible and consistent, enables code review, history and rollback, automates deployment through CI/CD, documents the architecture and speeds up disaster recovery.
+
+</QA>
+
+<QA q="What is the difference between CloudFormation and CDK?">
+
+CloudFormation is the AWS service that provisions resources from declarative YAML/JSON templates as stacks. CDK is a framework where you write infrastructure in a programming language using reusable constructs; it synthesizes CloudFormation templates which CloudFormation then deploys, so CDK adds abstraction and logic but uses CloudFormation underneath.
+
+</QA>
+
+<QA q="What is a change set and what is drift?">
+
+A change set is a preview of how a stack update will add, modify, replace or delete resources, reviewed before executing. Drift is the difference between the template's expected configuration and the actual resources after manual or external changes; CloudFormation drift detection reports it.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Preview what a stack update will change?',
+      options: ['Change set', 'Snapshot', 'Invalidation', 'Alarm'],
+      answer: 0,
+      why: 'Shows add/modify/replace/delete.',
+    },
+    {
+      q: 'CDK produces...',
+      options: ['Terraform state', 'CloudFormation templates', 'Docker images', 'AMIs'],
+      answer: 1,
+      why: '`cdk synth`.',
+    },
+    {
+      q: 'Keep the database when the stack is deleted?',
+      options: ['DeletionPolicy: Retain', 'Outputs', 'Parameters', 'Mappings'],
+      answer: 0,
+      why: 'Also UpdateReplacePolicy.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Tool / item | Remember |
+| --- | --- |
+| CloudFormation | templates → stacks · change sets · rollback · drift |
+| Template | Parameters · Resources (required) · Outputs · `!Ref` `!GetAtt` `!Sub` |
+| CDK | code → `cdk synth` → CloudFormation · `bootstrap`, `diff`, `deploy` |
+| SAM | serverless shortcuts · `sam build` / `sam deploy` / `sam local` |
+| Terraform | HCL · plan/apply · state in S3 + lock |
+| Safety | Retain policies · termination protection · read change sets |
+| Quality | `cfn-lint` · `cdk-nag` · Checkov |
+| Never | secrets in templates · console edits without code |
+
+</CheatSheet>

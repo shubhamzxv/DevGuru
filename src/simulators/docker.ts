@@ -213,6 +213,13 @@ export class DockerEngine {
 
   constructor(private readonly shell: ShellSimulator) {}
 
+  /** Host ports published by running containers (for ss). */
+  publishedPorts(): number[] {
+    return this.containers
+      .filter((c) => c.status === 'running')
+      .flatMap((c) => c.ports.map(([h]) => h));
+  }
+
   /** Lines for `ps` on the host. */
   runningProcesses(): string[] {
     return this.containers

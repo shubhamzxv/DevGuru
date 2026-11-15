@@ -1,0 +1,221 @@
+---
+id: django-api-views
+title: APIView and generic views
+summary: APIView is DRF's base class with get, post, put and delete methods, request.data and Response; generic views such as ListCreateAPIView and RetrieveUpdateDestroyAPIView combine a queryset and a serializer to give standard endpoints with a few lines, customised through get_queryset, get_serializer_class and perform_create.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+**APIView** is a blank order counter: you decide everything the clerk says and does. **Generic views** are counters with a standard procedure already printed: "take order, check it, save it, give receipt". You only tell them which menu (queryset) and which form (serializer) to use.
+
+</Analogy>
+
+## Simple explanation
+
+**APIView**: explicit methods, DRF features included (auth, permissions, throttling, parsing, error handling):
+
+```python
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+class CategoryList(APIView):
+    def get(self, request):
+        data = CategorySerializer(Category.objects.all(), many=True).data
+        return Response(data)
+
+    def post(self, request):
+        serializer = CategorySerializer(data=request.data)     # JSON, form or multipart
+        serializer.is_valid(raise_exception=True)              # → 400 with errors
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+```
+
+The function-based equivalent is `@api_view(["GET", "POST"])`.
+
+**Generic views**: queryset + serializer, done:
+
+| Class | Methods | Use |
+| --- | --- | --- |
+| `ListAPIView` | GET list | read-only list |
+| `CreateAPIView` | POST | create only |
+| `ListCreateAPIView` | GET list, POST | collection endpoint |
+| `RetrieveAPIView` | GET one | detail |
+| `RetrieveUpdateDestroyAPIView` | GET, PUT, PATCH, DELETE one | detail endpoint |
+
+```python
+class ProductListCreate(generics.ListCreateAPIView):
+    queryset = Product.objects.select_related("category")
+    serializer_class = ProductSerializer
+
+class ProductDetail(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Product.objects.select_related("category")
+    serializer_class = ProductSerializer          # looks up by pk from the URL; 404 if missing
+```
+
+```python
+urlpatterns = [
+    path("v0/products/", ProductListCreate.as_view()),
+    path("v0/products/<int:pk>/", ProductDetail.as_view()),
+]
+```
+
+**Hooks to customise**
+
+| Hook | Typical use |
+| --- | --- |
+| `get_queryset()` | limit rows to the user: `Order.objects.filter(customer=self.request.user)` |
+| `get_serializer_class()` | different serializer for list/detail or read/write |
+| `perform_create(serializer)` | `serializer.save(customer=self.request.user)` |
+| `perform_update` / `perform_destroy` | side effects, soft delete |
+| `permission_classes`, `pagination_class`, `filter_backends` | per-view settings |
+| `lookup_field = "slug"` | use `/products/<slug>/` |
+
+Generic views are built from **mixins** (`ListModelMixin`, `CreateModelMixin`...) + `GenericAPIView`; ViewSets (next topic) combine them further.
+
+## Code example
+
+```output
+GET    /api/categories/                       → 200 [{"id": 1, "name": "Books", "slug": "books"}, {"id": 2, "name": "Electronics", ...}, {"id": 3, "name": "Toys", ...}]
+POST   /api/categories/ {"name": "Toys"}      → 400 {"name": ["category with this name already exists."], "slug": ["This field is required."]}
+GET    /api/v0/products/                      → 200 {"count": 7, "next": ".../api/v0/products/?page=2", "previous": null, "results": [...3 items...]}
+GET    /api/v0/products/1/                    → 200 {"id": 1, "name": "Clean Code", "price": "450.00", ...}
+PATCH  /api/v0/products/1/ {"price": "420"}   → 200 {..., "price": "420.00", ...}
+GET    /api/v0/products/99/                   → 404 {"detail": "No Product matches the given query."}
+```
+
+The `unique` constraint on `Category.name` became a validation error automatically.
+
+<Playground kind="none">
+
+```python
+# store/api.py — orders that belong to the logged-in user
+from rest_framework import generics, permissions
+
+from .models import Order
+from .serializers import OrderSerializer
+
+class MyOrders(generics.ListCreateAPIView):
+    serializer_class = OrderSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):                                  # only my orders
+        return (Order.objects.filter(customer=self.request.user)
+                .select_related("customer").prefetch_related("items__product").order_by("-created_at"))
+
+    def perform_create(self, serializer):                    # owner from the request, not the body
+        serializer.save(customer=self.request.user)
+
+# urls.py: path("api/my-orders/", MyOrders.as_view())
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Trusting the owner from the request body">
+
+<Wrong>
+
+```python
+class OrderCreate(generics.CreateAPIView):
+    serializer_class = OrderSerializer      # with "customer" writable: anyone can create orders for anyone
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def perform_create(self, serializer):
+    serializer.save(customer=self.request.user)   # and make customer read-only in the serializer
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="queryset = Order.objects.all() on a user endpoint">
+
+<Wrong>
+
+```python
+class OrderDetail(generics.RetrieveAPIView):
+    queryset = Order.objects.all()          # /orders/3/ shows ravi's order to asha
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def get_queryset(self):
+    return Order.objects.filter(customer=self.request.user)   # others' ids → 404
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between APIView and generic views?">
+
+APIView gives you HTTP-method handlers with DRF's request parsing, response rendering, authentication, permissions and throttling, but you write all logic. Generic views (built on GenericAPIView plus mixins) implement standard list, create, retrieve, update and destroy behaviour from a queryset and serializer, with hooks such as get_queryset, get_serializer_class and perform_create for customisation.
+
+</QA>
+
+<QA q="How do you set the current user as owner when creating through DRF?">
+
+Override `perform_create(self, serializer)` and call `serializer.save(owner=self.request.user)`, keeping the owner field read-only in the serializer so clients cannot set it.
+
+</QA>
+
+<QA q="What does get_queryset() give you over the queryset attribute?">
+
+It runs per request, so it can depend on the user, query parameters or URL kwargs (tenant, ownership, filters), and it avoids accidental caching of a class-level queryset; detail lookups also use it, so restricting it enforces object visibility (404 for others' objects).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Endpoint for GET one, PUT, PATCH and DELETE?',
+      options: ['ListCreateAPIView', 'RetrieveUpdateDestroyAPIView', 'CreateAPIView', 'APIView only'],
+      answer: 1,
+      why: 'Detail operations.',
+    },
+    {
+      q: 'Parsed JSON body in DRF?',
+      options: ['request.POST', 'request.data', 'request.body only', 'request.json'],
+      answer: 1,
+      why: 'DRF parses JSON, forms and multipart into request.data.',
+    },
+    {
+      q: 'Limit rows to the logged-in user?',
+      options: ['perform_create', 'get_queryset', 'serializer_class', 'pagination_class'],
+      answer: 1,
+      why: 'Filter by request.user.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Custom endpoint | `class X(APIView): def get(self, request): return Response(...)` |
+| Function style | `@api_view(["GET", "POST"])` |
+| Collection | `generics.ListCreateAPIView` |
+| One item | `generics.RetrieveUpdateDestroyAPIView` |
+| Per-user rows | `def get_queryset(self): ...filter(owner=self.request.user)` |
+| Set owner | `def perform_create(self, s): s.save(owner=self.request.user)` |
+| Different serializers | `def get_serializer_class(self): ...` |
+| Validate input | `s.is_valid(raise_exception=True)` |
+
+</CheatSheet>

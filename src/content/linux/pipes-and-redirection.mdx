@@ -1,0 +1,213 @@
+---
+id: linux-pipes-and-redirection
+title: Pipes and redirection
+summary: A pipe (|) sends one command's output into the next command; redirection sends output to a file (> replaces, >> appends), reads input from a file (<), and handles errors separately (2>, 2>&1, /dev/null).
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A factory assembly line: one machine cuts, the next paints, the next packs. Each does one small job and passes the item along a **conveyor belt (pipe)**. At the end, the belt can drop items into a **box (file)** instead of onto the floor (the screen).
+
+</Analogy>
+
+## Simple explanation
+
+Every command has three streams:
+
+| Stream | Number | Default |
+| --- | --- | --- |
+| **stdin** (input) | 0 | keyboard |
+| **stdout** (output) | 1 | screen |
+| **stderr** (errors) | 2 | screen |
+
+**Redirection**
+
+| Syntax | Meaning |
+| --- | --- |
+| `cmd > file` | stdout into file (**replaces** the content) |
+| `cmd >> file` | stdout **appended** to file |
+| `cmd < file` | file as stdin |
+| `cmd 2> errors.txt` | only errors into a file |
+| `cmd > all.log 2>&1` | output **and** errors into one file (order matters) |
+| `cmd &> all.log` | same, Bash shortcut |
+| `cmd > /dev/null 2>&1` | throw everything away (silent) |
+
+`/dev/null` is the black hole: anything written there disappears.
+
+**Pipes**: `cmd1 | cmd2` connects stdout of cmd1 to stdin of cmd2. Only stdout flows through; errors still go to the screen (use `2>&1 |` to include them).
+
+Real pipelines you will use:
+
+```bash
+grep ERROR app.log | wc -l                           # count errors
+ps aux | grep gunicorn                               # find a process
+cat access.log | awk '{print $1}' | sort | uniq -c | sort -rn | head   # top IPs
+history | grep docker                                # find an old command
+journalctl -u shop-api | tail -n 50
+echo "127.0.0.1 shop.local" | sudo tee -a /etc/hosts # tee: write to file AND screen
+```
+
+**Chaining** (not pipes, but often used together):
+
+| Syntax | Runs the next command... |
+| --- | --- |
+| `a ; b` | always |
+| `a && b` | only if `a` succeeded (exit status 0) |
+| `a \|\| b` | only if `a` failed |
+
+```bash
+cd /var/www/shop && git pull && sudo systemctl restart shop-api
+mkdir backups 2>/dev/null || echo "backups already exists"
+```
+
+## Code example
+
+```bash
+grep ERROR logs/app.log > errors.txt
+echo "checked at 09:30" >> errors.txt
+cat errors.txt
+grep -c INFO logs/app.log
+awk '{print $1}' logs/access.log | sort | uniq -c | sort -rn | head -3
+```
+
+```output
+2026-11-15 09:02:42 ERROR Database connection lost
+2026-11-15 09:05:17 ERROR Payment service timeout
+checked at 09:30
+4
+      3 192.168.1.10
+      3 10.0.0.5
+      2 192.168.1.11
+```
+
+<Playground kind="terminal">
+
+```bash
+grep ERROR logs/app.log > errors.txt
+cat errors.txt
+echo "checked at 09:30" >> errors.txt
+cat errors.txt
+grep ERROR logs/app.log | wc -l
+awk '{print $1}' logs/access.log | sort | uniq -c | sort -rn | head -3
+ls missing-folder 2> /dev/null || echo "not there"
+cd app && ls && cd ..
+ls missing && echo "never printed"
+history | grep grep
+```
+
+</Playground>
+
+`>` created the file, `>>` added a line, the pipe counted errors, and the IP pipeline found the busiest clients.
+
+<Mistakes>
+
+<Mistake title="Using > when you meant >>">
+
+<Wrong>
+
+```bash
+echo "new line" > important.conf     # the whole file is now just "new line"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+echo "new line" >> important.conf
+```
+
+</Right>
+
+Tip: `set -o noclobber` makes `>` refuse to overwrite existing files.
+
+</Mistake>
+
+<Mistake title="Wrong order of 2>&1">
+
+<Wrong>
+
+```bash
+cmd 2>&1 > out.log       # errors still go to the screen
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+cmd > out.log 2>&1       # first stdout to the file, then stderr to where stdout goes
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between > and >>?">
+
+Both redirect standard output to a file. `>` truncates the file (creating it if needed) and writes the new output; `>>` appends to the end of the existing content.
+
+</QA>
+
+<QA q="What does 2>&1 mean?">
+
+Redirect file descriptor 2 (stderr) to wherever file descriptor 1 (stdout) currently points. Written after `> file`, it sends both output and errors into that file; it is common in cron jobs: `cmd >> /var/log/job.log 2>&1`.
+
+</QA>
+
+<QA q="What is a pipe?">
+
+The `|` operator connects the standard output of one process to the standard input of the next, so small single-purpose tools can be combined, for example `grep ERROR app.log | sort | uniq -c`. The processes run at the same time and the data streams through without temporary files.
+
+</QA>
+
+<QA q="What is the difference between && and ;?">
+
+With `;` the next command always runs. With `&&` it runs only if the previous command exited with status 0, so a failure stops the chain; `||` runs the next command only on failure.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Append "hello" to notes.txt?',
+      options: ['echo hello > notes.txt', 'echo hello >> notes.txt', 'echo hello | notes.txt', 'echo hello < notes.txt'],
+      answer: 1,
+      why: '>> appends.',
+    },
+    {
+      q: 'Hide both output and errors?',
+      options: ['> /dev/null', '> /dev/null 2>&1', '2> /dev/null only', '| null'],
+      answer: 1,
+      why: 'stdout to null, then stderr to the same place.',
+    },
+    {
+      q: 'deploy.sh && restart.sh runs restart.sh when...',
+      options: ['Always', 'deploy.sh succeeded', 'deploy.sh failed', 'Never'],
+      answer: 1,
+      why: '&& continues only on success.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Syntax | Meaning |
+| --- | --- |
+| `a \| b` | output of a → input of b |
+| `> f` / `>> f` | write / append stdout |
+| `< f` | read stdin from file |
+| `2> f` | errors to file |
+| `> f 2>&1` · `&> f` | everything to file |
+| `> /dev/null 2>&1` | silence |
+| `\| tee f` · `\| tee -a f` | to file and screen |
+| `;` `&&` `\|\|` | always / on success / on failure |
+
+</CheatSheet>

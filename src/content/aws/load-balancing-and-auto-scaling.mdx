@@ -1,0 +1,235 @@
+---
+id: aws-load-balancing-and-auto-scaling
+title: Load balancers and Auto Scaling
+summary: Elastic Load Balancing spreads traffic over healthy targets (ALB for HTTP with path and host routing, NLB for TCP/UDP at very high speed), and an Auto Scaling group keeps a minimum number of instances across AZs, replaces unhealthy ones and adds or removes instances with scaling policies such as target tracking on CPU.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A busy **railway ticket hall**: a **supervisor at the entrance** (load balancer) sends each passenger to a counter that is open and not overloaded, and skips counters whose clerk is on break (health checks). The **station manager** (Auto Scaling) opens more counters at rush hour, closes some at night, and replaces a clerk who falls sick.
+
+</Analogy>
+
+## Simple explanation
+
+**Load balancer types**
+
+| Type | Layer | Routes by | Use |
+| --- | --- | --- | --- |
+| **ALB** (Application) | 7, HTTP/HTTPS | host, path, headers, query | web apps, APIs, microservices, gRPC, WebSockets |
+| **NLB** (Network) | 4, TCP/UDP/TLS | port | extreme performance, static IPs, non-HTTP |
+| **GWLB** (Gateway) | 3 | — | firewalls/appliances |
+
+**ALB pieces**: **listener** (port 443 with an ACM certificate, port 80 redirecting to 443) → **rules** (`/api/*` → api targets, `admin.shop.com` → admin targets) → **target groups** (EC2 instances, IPs for ECS/Fargate, Lambda) with **health checks** (`GET /health` every 30 s; unhealthy targets get no traffic).
+
+Other features: TLS termination, sticky sessions (avoid if possible), connection draining (deregistration delay), WAF integration, access logs to S3, cross-zone balancing.
+
+**Auto Scaling group (ASG)**
+
+| Setting | Meaning |
+| --- | --- |
+| Launch template | AMI, instance type, SG, role, user data |
+| Subnets | one per AZ (spread instances) |
+| Min / Desired / Max | e.g. 2 / 2 / 6 |
+| Health checks | EC2 status or **ELB** health (replace instances failing `/health`) |
+| Scaling policies | target tracking (keep CPU at 50%), step, scheduled (more before 9 AM), predictive |
+
+How they work together: ASG registers new instances in the target group; ALB sends traffic only to healthy ones; unhealthy instances are terminated and replaced.
+
+For this to work, servers must be **stateless** (sessions in Redis/DynamoDB, files in S3) and boot automatically (golden AMI or user data, or containers).
+
+Updates without downtime: **instance refresh** (replace instances gradually with a new launch template) or blue/green with two target groups.
+
+## Code example
+
+```python
+import boto3
+
+elb = boto3.client("elbv2", region_name="ap-south-1")
+lb = elb.create_load_balancer(Name="shop-alb", Subnets=subnets, Scheme="internet-facing", Type="application")["LoadBalancers"][0]
+tg = elb.create_target_group(Name="shop-api", Protocol="HTTP", Port=8000, VpcId=vpc,
+                             HealthCheckPath="/health", TargetType="instance")["TargetGroups"][0]
+print("alb:", lb["DNSName"], lb["Scheme"], lb["Type"])
+print("target group:", tg["TargetGroupName"], tg["Port"], tg["HealthCheckPath"])
+
+asg = boto3.client("autoscaling", region_name="ap-south-1")
+asg.create_auto_scaling_group(
+    AutoScalingGroupName="shop-api-asg", LaunchTemplate={"LaunchTemplateId": lt_id},
+    MinSize=2, MaxSize=6, DesiredCapacity=2, VPCZoneIdentifier=",".join(subnets),
+    TargetGroupARNs=[tg["TargetGroupArn"]], HealthCheckType="ELB",
+)
+asg.put_scaling_policy(AutoScalingGroupName="shop-api-asg", PolicyName="cpu-50", PolicyType="TargetTrackingScaling",
+                       TargetTrackingConfiguration={"PredefinedMetricSpecification": {"PredefinedMetricType": "ASGAverageCPUUtilization"},
+                                                    "TargetValue": 50.0})
+g = asg.describe_auto_scaling_groups(AutoScalingGroupNames=["shop-api-asg"])["AutoScalingGroups"][0]
+print("asg min/desired/max:", g["MinSize"], g["DesiredCapacity"], g["MaxSize"], "-", len(g["Instances"]), "instances")
+asg.set_desired_capacity(AutoScalingGroupName="shop-api-asg", DesiredCapacity=4)   # what the policy does at high CPU
+g = asg.describe_auto_scaling_groups(AutoScalingGroupNames=["shop-api-asg"])["AutoScalingGroups"][0]
+print("after scale-out:", g["DesiredCapacity"], "desired -", len(g["Instances"]), "instances")
+```
+
+```output
+alb: shop-alb-1.ap-south-1.elb.amazonaws.com internet-facing application
+target group: shop-api 8000 /health
+asg min/desired/max: 2 2 6 - 2 instances
+after scale-out: 4 desired - 4 instances
+```
+
+(Run against a mock of AWS.) Point `shop.example.com` at the ALB DNS name with a Route 53 alias record.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "users", "label": "Users", "icon": "👥", "col": 0, "row": 1, "info": "Traffic rises during a sale.", "example": "10× normal at 8 PM" },
+    { "id": "alb", "label": "ALB :443", "icon": "⚖️", "col": 1, "row": 1, "info": "TLS with an ACM certificate; routes /api/* to the shop-api target group; only healthy targets receive traffic.", "example": "Health check GET /health" },
+    { "id": "i1", "label": "Instance AZ-a", "icon": "🖥️", "col": 2, "row": 0, "info": "Registered by the ASG.", "example": "CPU 85%" },
+    { "id": "i2", "label": "Instance AZ-b", "icon": "🖥️", "col": 2, "row": 2, "info": "Registered by the ASG in the other AZ.", "example": "CPU 80%" },
+    { "id": "asg", "label": "Auto Scaling group", "icon": "📈", "col": 3, "row": 1, "info": "Min 2, desired 2, max 6. Target tracking keeps average CPU near 50%.", "example": "Adds 2 instances at high CPU" },
+    { "id": "cw", "label": "CloudWatch alarm", "icon": "⏰", "col": 3, "row": 0, "info": "Created by the target-tracking policy; fires the scale-out.", "example": "ASGAverageCPUUtilization > 50" },
+    { "id": "i3", "label": "New instances", "icon": "🆕", "col": 2, "row": 1, "info": "Launched from the launch template, pass the health check, then get traffic.", "example": "Ready in ~2 minutes" }
+  ],
+  "edges": [
+    ["users", "alb"],
+    ["alb", "i1"],
+    ["alb", "i2"],
+    ["alb", "i3"],
+    ["cw", "asg", "scale out"],
+    ["asg", "i3", "launches"]
+  ],
+  "flows": [
+    {
+      "name": "Sale traffic",
+      "steps": [
+        ["users", "Traffic jumps at 8 PM."],
+        ["alb", "The ALB spreads requests over the two instances."],
+        ["i1", "CPU climbs to 85%."],
+        ["cw", "The target-tracking alarm fires."],
+        ["asg", "Desired capacity goes from 2 to 4."],
+        ["i3", "New instances boot and pass /health."],
+        ["alb", "Traffic is spread over 4 instances; CPU returns near 50%."],
+        ["asg", "Later, with low CPU, it scales back to 2."]
+      ]
+    },
+    {
+      "name": "An instance breaks",
+      "steps": [
+        ["i2", "The app crashes; /health returns 500."],
+        ["alb", "After a few failed checks the ALB stops sending it traffic."],
+        ["asg", "ELB health check type: the ASG terminates and replaces it."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Health check that always says OK">
+
+<Wrong>
+
+```python
+@app.get("/health")
+def health():
+    return {"ok": True}      # even when the database is down, broken instances keep getting traffic
+```
+
+</Wrong>
+
+<Right>
+
+```text
+A cheap liveness /health for the load balancer plus a readiness check (DB, cache reachable) used during deploys,
+and alarms on the target group's unhealthy host count.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Stateful instances in an ASG">
+
+<Wrong>
+
+```text
+Sessions in local memory, uploads on local disk: users get logged out or lose files when the ASG scales in.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Sessions in ElastiCache/DynamoDB, files in S3, database in RDS; any instance can be removed.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between ALB and NLB?">
+
+ALB works at layer 7 for HTTP/HTTPS: content-based routing by host, path and headers, TLS termination, WebSockets, gRPC, Lambda targets and WAF. NLB works at layer 4 for TCP/UDP/TLS with ultra-low latency, millions of requests per second, static IPs or Elastic IPs and preservation of client IPs, for non-HTTP or extreme-throughput workloads.
+
+</QA>
+
+<QA q="How does Auto Scaling work with a load balancer?">
+
+The Auto Scaling group launches instances from a launch template across subnets in several AZs and registers them in the load balancer's target group. The load balancer health-checks targets and routes only to healthy ones; with ELB health checks the ASG replaces unhealthy instances. Scaling policies (target tracking, step, scheduled, predictive) change the desired capacity based on CloudWatch metrics.
+
+</QA>
+
+<QA q="How do you deploy a new version to an Auto Scaling group with no downtime?">
+
+Update the launch template (new AMI or user data) and run an instance refresh with a minimum healthy percentage, or use blue/green with a second ASG and target group and switch the listener (CodeDeploy can automate it); connection draining lets in-flight requests finish.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Route /api/* and /admin/* to different services over HTTPS?',
+      options: ['NLB', 'ALB', 'Route 53 only', 'Security group'],
+      answer: 1,
+      why: 'Layer 7 path-based routing.',
+    },
+    {
+      q: 'Keep average CPU at 50% automatically?',
+      options: ['Scheduled scaling', 'Target tracking policy', 'Manual desired count', 'Spot only'],
+      answer: 1,
+      why: 'It creates the CloudWatch alarms for you.',
+    },
+    {
+      q: 'ALB sends no traffic to an instance when...',
+      options: ['It is in another AZ', 'It fails health checks', 'CPU is 40%', 'It has a public IP'],
+      answer: 1,
+      why: 'Only healthy targets receive requests.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Piece | Remember |
+| --- | --- |
+| ALB | L7 HTTP/HTTPS · host/path rules · targets: instance, IP, Lambda |
+| NLB | L4 TCP/UDP · static IP · very fast |
+| Listener | 443 + ACM cert · 80 → redirect 443 |
+| Target group | port + health check (`/health`) |
+| ASG | launch template · subnets in ≥ 2 AZs · min/desired/max |
+| Scaling | target tracking · step · scheduled · predictive |
+| Health | ELB health check type replaces bad instances |
+| Deploy | instance refresh · blue/green |
+
+</CheatSheet>

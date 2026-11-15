@@ -1,0 +1,228 @@
+---
+id: django-authentication
+title: Authentication (users, login, logout)
+summary: django.contrib.auth provides the User model, hashed passwords, authenticate, login and logout, ready-made views and URLs for login, logout and password reset, the login_required decorator and LoginRequiredMixin, and a custom user model for extra fields.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+An office **reception desk**: you sign in once with your ID (login), get a visitor badge (the session cookie), and every guard after that just checks the badge. When you leave, the badge is cut (logout). Django's auth app is that whole reception system, ready made.
+
+</Analogy>
+
+## Simple explanation
+
+**Users**
+
+```python
+from django.contrib.auth import get_user_model
+User = get_user_model()
+
+user = User.objects.create_user("asha", "asha@example.com", "s3cretpass")   # hashes the password
+User.objects.create_superuser("admin", "admin@example.com", "adminpass")
+user.check_password("s3cretpass")      # True
+user.set_password("n3w-pass"); user.save()
+```
+
+Passwords are stored as **hashes** (`pbkdf2_sha256$1500000$...`, Argon2 optional), never as text.
+
+**Logging in by hand**
+
+```python
+from django.contrib.auth import authenticate, login, logout
+
+user = authenticate(request, username=username, password=password)   # None if wrong
+if user is not None:
+    login(request, user)        # stores the user id in the session, rotates the session key
+logout(request)                  # clears the session
+```
+
+**Ready-made views**: add the URLs and write templates (`registration/login.html`, ...):
+
+```python
+path("accounts/", include("django.contrib.auth.urls"))
+# login/ logout/ password_change/ password_reset/ reset/<uidb64>/<token>/ ...
+```
+
+```python
+LOGIN_URL = "/accounts/login/"
+LOGIN_REDIRECT_URL = "/products/"
+LOGOUT_REDIRECT_URL = "/"
+```
+
+**Protecting pages**
+
+```python
+@login_required                         # FBV → redirect to LOGIN_URL?next=/original/path/
+def checkout(request): ...
+
+class OrderListView(LoginRequiredMixin, ListView): ...   # CBV
+```
+
+In templates: `{% if user.is_authenticated %}Hi {{ user.username }}{% endif %}`. In views: `request.user` (an `AnonymousUser` when not logged in).
+
+**Custom user model**: start every new project with one, even if empty, so you can add fields later:
+
+```python
+# accounts/models.py
+from django.contrib.auth.models import AbstractUser
+
+class User(AbstractUser):
+    phone = models.CharField(max_length=15, blank=True)
+
+# settings.py
+AUTH_USER_MODEL = "accounts.User"
+```
+
+`AbstractBaseUser` gives full control (for example email instead of username as the login field).
+
+For APIs see DRF authentication (tokens, JWT); for social login use django-allauth.
+
+## Code example
+
+```python
+>>> c = Client()
+>>> c.get("/products/new/")                      # protected view, anonymous
+>>> c.login(username="asha", password="nope"), c.login(username="asha", password="s3cretpass")
+>>> c.get("/products/new/").status_code
+>>> c.session.get("_auth_user_id")
+>>> User.objects.get(username="asha").password[:40]
+```
+
+```output
+<HttpResponseRedirect status_code=302, "text/html; charset=utf-8", url="/accounts/login/?next=/products/new/">
+(False, True)
+200
+'1'
+'pbkdf2_sha256$1500000$AUHRJKQArjP3YRM1AE...'
+```
+
+The page header switches from "Log in" to "Hi asha" because `AuthenticationMiddleware` puts the user on every request.
+
+<Playground kind="none">
+
+```python
+# accounts/views.py — signup that logs the new user in
+from django.contrib.auth import login
+from django.contrib.auth.forms import UserCreationForm
+from django.shortcuts import redirect, render
+
+def signup(request):
+    form = UserCreationForm(request.POST or None)     # username + password1 + password2, with validators
+    if request.method == "POST" and form.is_valid():
+        user = form.save()
+        login(request, user)
+        return redirect("store:product-list")
+    return render(request, "registration/signup.html", {"form": form})
+
+# urls.py: path("accounts/signup/", signup, name="signup"),
+#          path("accounts/", include("django.contrib.auth.urls")),
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Saving passwords directly">
+
+<Wrong>
+
+```python
+User.objects.create(username="asha", password="s3cretpass")   # stored as plain text; login never works
+```
+
+</Wrong>
+
+<Right>
+
+```python
+User.objects.create_user("asha", password="s3cretpass")      # or user.set_password(...)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Referencing User directly in models">
+
+<Wrong>
+
+```python
+from django.contrib.auth.models import User
+owner = models.ForeignKey(User, on_delete=models.CASCADE)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does authentication work in Django?">
+
+django.contrib.auth provides the User model and authentication backends. `authenticate()` checks credentials against the hashed password; `login()` stores the user's id and a hash in the session (cookie sessionid) and rotates the key; AuthenticationMiddleware loads `request.user` on each request; `logout()` flushes the session. Decorators and mixins protect views.
+
+</QA>
+
+<QA q="How are passwords stored in Django?">
+
+As salted, iterated hashes in the format algorithm$iterations$salt$hash, PBKDF2-SHA256 by default with Argon2 and bcrypt available through PASSWORD_HASHERS; hashes are upgraded automatically when users log in, and password validators enforce length and common-password rules.
+
+</QA>
+
+<QA q="Why use a custom user model?">
+
+Changing AUTH_USER_MODEL after the first migrations is hard, and almost every project eventually needs extra fields or a different login field (email, phone). Starting with `class User(AbstractUser)` costs nothing and keeps that flexibility.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Create a user with a hashed password?',
+      options: ['User.objects.create(password=...)', 'User.objects.create_user(...)', 'User(password=...).save()', 'raw SQL'],
+      answer: 1,
+      why: 'create_user hashes the password.',
+    },
+    {
+      q: 'authenticate() with a wrong password returns...',
+      options: ['False', 'None', 'An error page', 'AnonymousUser'],
+      answer: 1,
+      why: 'None means invalid credentials.',
+    },
+    {
+      q: 'Protect a class-based view?',
+      options: ['@login_required on the class', 'LoginRequiredMixin first in the bases', 'csrf_exempt', 'AUTH_USER_MODEL'],
+      answer: 1,
+      why: 'Mixins go first.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| User model | `get_user_model()` · `settings.AUTH_USER_MODEL` in FKs |
+| Create | `User.objects.create_user(name, email, password)` |
+| Check / change | `user.check_password(p)` · `user.set_password(p)` |
+| Login / logout | `authenticate(request, username=, password=)` → `login(request, user)` · `logout(request)` |
+| Built-in views | `include("django.contrib.auth.urls")` |
+| Protect | `@login_required` · `LoginRequiredMixin` |
+| Settings | `LOGIN_URL` · `LOGIN_REDIRECT_URL` · `LOGOUT_REDIRECT_URL` |
+| Custom user | `class User(AbstractUser)` + `AUTH_USER_MODEL` |
+
+</CheatSheet>

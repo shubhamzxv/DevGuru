@@ -1,0 +1,206 @@
+---
+id: django-security
+title: Security (CSRF, XSS, SQL injection)
+summary: Django protects against CSRF with tokens and CsrfViewMiddleware, against XSS by auto-escaping templates, against SQL injection with parameterised ORM queries, and against clickjacking with X-Frame-Options; you complete it with HTTPS settings, secure cookies, HSTS, strong passwords, permission checks and manage.py check --deploy.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A bank branch has several separate locks: a **guard who checks the visitor slip was issued here** (CSRF), **glass that stops anyone passing things over the counter** (XSS escaping), **forms that only accept printed boxes, not free writing** (parameterised SQL), and **no unmarked side doors** (clickjacking headers). Django installs all of them; you must not remove them.
+
+</Analogy>
+
+## Simple explanation
+
+**CSRF (Cross-Site Request Forgery)**: an evil site makes your logged-in browser submit a form to your shop ("change email", "place order").
+
+- Defence: a secret **CSRF token** in every POST form (`{% csrf_token %}`) checked by `CsrfViewMiddleware`, plus `SameSite` cookies
+- JavaScript `fetch` must send the `X-CSRFToken` header (read from the `csrftoken` cookie)
+- Missing/invalid token → **403**. Use `@csrf_exempt` only for signed webhooks
+- Token-authenticated APIs (DRF Token/JWT in headers) are not vulnerable in the same way; DRF's SessionAuthentication still enforces CSRF
+
+**XSS (Cross-Site Scripting)**: an attacker stores `<script>` in a review and it runs in other users' browsers.
+
+- Defence: templates **auto-escape** variables. Never `|safe` / `mark_safe` user input; sanitize allowed HTML with `bleach`/`nh3`; set a **Content-Security-Policy**; HttpOnly cookies
+
+**SQL injection**: user input becomes part of the SQL.
+
+```python
+# Safe: the ORM and params send values separately
+Product.objects.filter(name__icontains=q)
+Product.objects.raw("SELECT * FROM store_product WHERE name = %s", [q])
+cursor.execute("SELECT ... WHERE id = %s", [product_id])
+
+# UNSAFE: string formatting
+cursor.execute(f"SELECT * FROM store_product WHERE name = '{q}'")      # q = "x' OR '1'='1"
+Product.objects.extra(where=[f"name = '{q}'"])
+```
+
+**Clickjacking**: your page in an invisible iframe. `XFrameOptionsMiddleware` sends `X-Frame-Options: DENY`.
+
+**Production settings** (verified by `python manage.py check --deploy`):
+
+```python
+DEBUG = False
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
+ALLOWED_HOSTS = ["shop.example.com"]
+SECURE_SSL_REDIRECT = True
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")   # behind a load balancer
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
+SECURE_HSTS_SECONDS = 31536000
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+CSRF_TRUSTED_ORIGINS = ["https://shop.example.com"]
+```
+
+More: password validators and Argon2, rate-limit login (django-axes), object-level permission checks (IDOR: `/orders/3/` must check ownership), validate uploads, keep dependencies patched (`pip-audit`, Dependabot), never log secrets, admin on a secret URL with 2FA.
+
+## Code example
+
+```output
+POST /products/ping/  with CSRF checks and no token
+  Forbidden (CSRF cookie not set.): /products/ping/   → 403
+
+Template: {{ html }} with html = "<script>alert(1)</script>"
+  → &lt;script&gt;alert(1)&lt;/script&gt;      (shown as text, not executed)
+
+GET /api/orders/3/ as asha (order belongs to ravi)
+  → 404 {"detail": "No Order matches the given query."}     (no IDOR)
+
+$ python manage.py check --deploy
+  (security.W004) You have not set a value for the SECURE_HSTS_SECONDS setting
+  (security.W008) Your SECURE_SSL_REDIRECT setting is not set to True
+  (security.W012) SESSION_COOKIE_SECURE is not set to True
+  (security.W018) You should not have DEBUG set to True in deployment
+  ...
+System check identified 8 issues (0 silenced).
+```
+
+<Playground kind="sql">
+
+```sql
+CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, is_admin INTEGER);
+INSERT INTO users VALUES (1, 'asha', 0), (2, 'ravi', 0), (3, 'admin', 1);
+
+-- What f"... WHERE username = '{q}'" builds when q = x' OR '1'='1
+SELECT * FROM users WHERE username = 'x' OR '1'='1';
+-- Every row leaks. With parameters, the whole input is one value:
+SELECT * FROM users WHERE username = 'x'' OR ''1''=''1';
+```
+
+</Playground>
+
+The first query returns every user (the injection worked); the second, where the input is treated as plain text, returns nothing.
+
+<Mistakes>
+
+<Mistake title="csrf_exempt to make an error go away">
+
+<Wrong>
+
+```python
+@csrf_exempt                        # "the form gave 403, so I disabled CSRF"
+def change_email(request): ...
+```
+
+</Wrong>
+
+<Right>
+
+```html
+<form method="post">{% csrf_token %}...</form>     <!-- or send X-CSRFToken from JavaScript -->
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Formatting user input into SQL">
+
+<Wrong>
+
+```python
+cursor.execute(f"SELECT * FROM store_product ORDER BY {request.GET['sort']}")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+allowed = {"price", "name", "-price"}
+sort = request.GET.get("sort", "name")
+products = Product.objects.order_by(sort if sort in allowed else "name")
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does Django protect against CSRF?">
+
+CsrfViewMiddleware requires that unsafe requests (POST, PUT, PATCH, DELETE) carry a token matching the csrftoken cookie, sent as a hidden form field via `{% csrf_token %}` or the X-CSRFToken header, and checks Origin/Referer for HTTPS; an attacker's site cannot read or forge the token, so forged requests fail with 403. SameSite cookies add another layer.
+
+</QA>
+
+<QA q="How does the ORM prevent SQL injection, and when can it still happen?">
+
+The ORM builds parameterised queries, sending user values separately from the SQL text so they are never interpreted as SQL. Injection is still possible if you build raw SQL with string formatting in raw(), extra(), RawSQL or cursor.execute, or pass unvalidated input as identifiers such as order_by fields; always use parameters and whitelists.
+
+</QA>
+
+<QA q="What Django settings do you change for a secure production deployment?">
+
+DEBUG False, SECRET_KEY from the environment, ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS set, SECURE_SSL_REDIRECT and SECURE_PROXY_SSL_HEADER behind a load balancer, secure and HttpOnly cookies, HSTS, X-Frame-Options and content type nosniff, strong password hashers and validators, then verify with `manage.py check --deploy`.
+
+</QA>
+
+<QA q="What is IDOR?">
+
+Insecure Direct Object Reference: accessing another user's object by changing an id in the URL (/orders/3/). Prevent it by scoping queries to the user (`get_object_or_404(Order, pk=pk, customer=request.user)`) or object-level permission checks.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which template tag protects POST forms against CSRF?',
+      options: ['{% secure %}', '{% csrf_token %}', '{% safe %}', '{% autoescape %}'],
+      answer: 1,
+      why: 'Adds the hidden token field.',
+    },
+    {
+      q: 'Which is safe from SQL injection?',
+      options: ['cursor.execute(f"...{q}")', 'Product.objects.filter(name=q)', 'extra(where=[q])', '"..." + q'],
+      answer: 1,
+      why: 'ORM values are parameterised.',
+    },
+    {
+      q: 'User review with <script> is displayed with {{ review.text }}. Result?',
+      options: ['Script runs', 'Escaped, shown as text', 'Server error', 'Deleted'],
+      answer: 1,
+      why: 'Auto-escaping blocks XSS.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Threat | Django defence | Your job |
+| --- | --- | --- |
+| CSRF | CsrfViewMiddleware + token | `{% csrf_token %}`, X-CSRFToken in JS, no casual `csrf_exempt` |
+| XSS | auto-escaping | no `\|safe` on user data, CSP, sanitize HTML |
+| SQL injection | parameterised ORM | params in raw SQL, whitelist sort fields |
+| Clickjacking | XFrameOptionsMiddleware | keep it enabled |
+| IDOR | — | filter by owner, object permissions |
+| Transport | SECURE_* settings | HTTPS, HSTS, secure cookies |
+| Check | `manage.py check --deploy` | run it in CI |
+
+</CheatSheet>

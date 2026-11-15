@@ -1,0 +1,188 @@
+---
+id: linux-sudo
+title: sudo
+summary: sudo runs a single command as root (or another user) after checking that you are allowed in /etc/sudoers, and logs it; it is safer than logging in as root.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+In a bank, a clerk cannot open the vault alone. For one specific task, the manager comes, checks the clerk's name in the register, unlocks the vault **for that task only**, and writes it in the log book.
+
+**sudo** is that manager: "**s**uper**u**ser **do** this one command".
+
+</Analogy>
+
+## Simple explanation
+
+```bash
+sudo apt update                      # run as root
+sudo -u postgres psql                # run as another user
+sudo -i                              # open a root shell (use rarely)
+sudo !!                              # repeat the last command with sudo
+```
+
+How it works:
+
+1. You type `sudo command`
+2. sudo checks `/etc/sudoers` (and `/etc/sudoers.d/*`): are you allowed? Usually "members of the `sudo` group (Ubuntu) or `wheel` group (Amazon Linux/RHEL) may run anything"
+3. It asks for **your own** password (not root's), remembered for about 15 minutes
+4. It runs the command as root and **logs** it (`/var/log/auth.log`)
+
+On EC2 the default user (`ubuntu`, `ec2-user`) has passwordless sudo.
+
+What needs sudo: installing software, editing files in `/etc`, managing services, ports below 1024, other users' files, `chown`.
+
+What should **not** use sudo: your app, `pip install` into the system Python, `npm install`, `git` in your home folder. Using sudo there creates root-owned files that later cause "Permission denied".
+
+Editing sudoers: always with **`sudo visudo`**, which checks the syntax (a typo in sudoers can lock everyone out of sudo). A rule example:
+
+```text
+deploy ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart shop-api
+```
+
+Lets the `deploy` user run exactly that one command as root without a password: perfect for a CI deploy step.
+
+## Code example
+
+```bash
+apt update
+sudo apt update
+whoami
+sudo whoami
+```
+
+```output
+E: Could not open lock file /var/lib/apt/lists/lock - open (13: Permission denied)
+Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease
+Reading package lists... Done
+guru
+root
+```
+
+<Playground kind="terminal">
+
+```bash
+whoami
+sudo whoami
+id
+sudo id
+apt update
+sudo apt update
+cat /var/log/auth.log
+echo "test" > /etc/motd
+echo "Welcome to the shop server" | sudo tee /etc/motd
+cat /etc/motd
+```
+
+</Playground>
+
+`/var/log/auth.log` records every sudo command. Plain `>` into `/etc` fails; `sudo tee` works.
+
+<Mistakes>
+
+<Mistake title="sudo for pip and git in your home folder">
+
+<Wrong>
+
+```bash
+sudo pip install requests          # breaks the system Python, root-owned files
+sudo git clone ... ~/shop          # later: Permission denied when you git pull
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate && pip install requests
+git clone ... ~/shop
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Editing /etc/sudoers with a normal editor">
+
+<Wrong>
+
+```bash
+sudo nano /etc/sudoers     # a syntax error = nobody can use sudo any more
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+sudo visudo                       # checks before saving
+sudo visudo -f /etc/sudoers.d/deploy
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between su and sudo?">
+
+`su` switches to another user (root by default) and needs that user's password, giving a full shell. `sudo` runs a single command with elevated rights after checking the sudoers policy, asks for your own password, can be limited to specific commands, and logs every use, so it is preferred.
+
+</QA>
+
+<QA q="How do you give a user permission to run only one command as root?">
+
+Add a rule with `sudo visudo -f /etc/sudoers.d/<file>` such as `deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart shop-api`, using full paths. The user can then run exactly that command with sudo.
+
+</QA>
+
+<QA q="Why should you not work as root all the time?">
+
+Any mistake or malicious script runs with full power (deleting system files, changing permissions), there is no record of who did what, and files created become root-owned. Least privilege with sudo for specific tasks limits damage and leaves an audit trail.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which password does sudo ask for?',
+      options: ["root's", 'Your own', 'None ever', "The server's"],
+      answer: 1,
+      why: 'sudo verifies you, then checks sudoers.',
+    },
+    {
+      q: 'How should you edit sudoers?',
+      options: ['nano /etc/sudoers', 'sudo visudo', 'echo >> /etc/sudoers', 'chmod 777 /etc/sudoers'],
+      answer: 1,
+      why: 'visudo validates the syntax.',
+    },
+    {
+      q: 'Where are sudo commands logged on Ubuntu?',
+      options: ['/var/log/auth.log', '/etc/sudoers', '~/.bashrc', '/tmp/sudo'],
+      answer: 0,
+      why: 'Authentication events go to auth.log.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| One command as root | `sudo cmd` |
+| As another user | `sudo -u postgres psql` |
+| Root shell | `sudo -i` |
+| Repeat last with sudo | `sudo !!` |
+| Write a root file | `echo x \| sudo tee /etc/file` |
+| Edit rules | `sudo visudo` |
+| What may I run? | `sudo -l` |
+
+Ubuntu admin group: `sudo` · RHEL/Amazon Linux: `wheel`
+
+</CheatSheet>

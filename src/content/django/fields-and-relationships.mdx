@@ -1,0 +1,212 @@
+---
+id: django-fields-and-relationships
+title: Fields and relationships
+summary: Django fields map Python types to columns (CharField, DecimalField, DateTimeField, JSONField...), and relationships connect models with ForeignKey (many-to-one), OneToOneField and ManyToManyField, with on_delete and related_name controlling deletes and reverse access.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A school register: each **student** belongs to one **class** (ForeignKey: many students → one class), has exactly one **ID card** (OneToOne), and joins many **clubs** while each club has many students (ManyToMany).
+
+</Analogy>
+
+## Simple explanation
+
+**Common fields**
+
+| Field | Use |
+| --- | --- |
+| `CharField(max_length=100)` | short text |
+| `TextField()` | long text |
+| `SlugField(unique=True)` | URL-friendly text: `clean-code` |
+| `EmailField`, `URLField` | validated text |
+| `IntegerField`, `PositiveIntegerField`, `BigIntegerField` | numbers |
+| `DecimalField(max_digits=8, decimal_places=2)` | money |
+| `BooleanField(default=False)` | yes/no |
+| `DateField`, `DateTimeField(auto_now_add=True)`, `auto_now=True` | created / updated timestamps |
+| `JSONField(default=dict)` | flexible extra data |
+| `UUIDField(default=uuid.uuid4)` | public ids |
+| `FileField`, `ImageField(upload_to="products/")` | uploads (stored in MEDIA or S3) |
+
+Options on any field: `null`, `blank`, `default`, `unique`, `db_index`, `choices`, `validators`, `help_text`, `verbose_name`, `editable`.
+
+**Relationships**
+
+```python
+class Product(models.Model):
+    category = models.ForeignKey(Category, on_delete=models.PROTECT, related_name="products")   # many → one
+    tags = models.ManyToManyField(Tag, blank=True, related_name="products")                    # many ↔ many
+
+class Profile(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")  # one ↔ one
+
+class OrderItem(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
+```
+
+**on_delete** (what happens to children when the parent is deleted):
+
+| Option | Effect | Example |
+| --- | --- | --- |
+| `CASCADE` | delete children too | order → its items |
+| `PROTECT` | refuse to delete the parent | category with products |
+| `SET_NULL` | set the FK to NULL (needs `null=True`) | product's "created_by" user |
+| `SET_DEFAULT` / `SET(...)` | set a value | |
+| `RESTRICT` | like PROTECT, but allows deleting through a CASCADE path | |
+| `DO_NOTHING` | leave it to the database | rare |
+
+**related_name** names the reverse side: `category.products.all()`, `order.items.all()`, `user.profile`, `tag.products.all()`. Without it Django uses `product_set`.
+
+**ManyToMany with extra data**: use a `through` model, e.g. `OrderItem` is really "Order ↔ Product with quantity and price".
+
+Always reference the user model with `settings.AUTH_USER_MODEL` (or `get_user_model()`), not `User` directly.
+
+## Code example
+
+```python
+>>> books = Category.objects.get(slug="books")
+>>> books.products.count()                              # reverse FK through related_name
+>>> list(Tag.objects.get(name="bestseller").products.values_list("name", flat=True))   # M2M
+>>> asha = User.objects.get(username="asha")
+>>> asha.profile.city                                    # OneToOne
+>>> list(User.objects.filter(orders__items__product__name="Headphones").values_list("username", flat=True))
+>>> books.delete()
+```
+
+```output
+3
+['Clean Code', 'Headphones']
+'Delhi'
+['asha']
+django.db.models.deletion.ProtectedError: ("Cannot delete some instances of model 'Category' because they are referenced through protected foreign keys: 'Product.category'.", ...)
+```
+
+The double underscores follow relationships across tables (User → Order → OrderItem → Product) in one query.
+
+<Playground kind="sql">
+
+```sql
+CREATE TABLE category (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
+CREATE TABLE product (id INTEGER PRIMARY KEY, name TEXT, category_id INTEGER REFERENCES category(id));
+CREATE TABLE tag (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
+-- ManyToMany = a join table that Django creates for you
+CREATE TABLE product_tags (id INTEGER PRIMARY KEY, product_id INTEGER REFERENCES product(id), tag_id INTEGER REFERENCES tag(id));
+
+INSERT INTO category VALUES (1, 'Books'), (2, 'Electronics');
+INSERT INTO product VALUES (1, 'Clean Code', 1), (2, 'Headphones', 2), (3, 'Fluent Python', 1);
+INSERT INTO tag VALUES (1, 'bestseller'), (2, 'python');
+INSERT INTO product_tags (product_id, tag_id) VALUES (1, 1), (2, 1), (3, 2);
+
+-- books.products.all()
+SELECT name FROM product WHERE category_id = 1;
+-- Tag 'bestseller'.products.all()
+SELECT p.name FROM product p JOIN product_tags pt ON pt.product_id = p.id JOIN tag t ON t.id = pt.tag_id WHERE t.name = 'bestseller';
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="CASCADE everywhere">
+
+<Wrong>
+
+```python
+category = models.ForeignKey(Category, on_delete=models.CASCADE)   # deleting "Books" silently deletes every book and its order lines
+```
+
+</Wrong>
+
+<Right>
+
+```python
+category = models.ForeignKey(Category, on_delete=models.PROTECT, related_name="products")
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Importing User directly">
+
+<Wrong>
+
+```python
+from django.contrib.auth.models import User
+customer = models.ForeignKey(User, on_delete=models.CASCADE)    # breaks with a custom user model
+```
+
+</Wrong>
+
+<Right>
+
+```python
+customer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="orders")
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain ForeignKey, OneToOneField and ManyToManyField.">
+
+ForeignKey is many-to-one: many products belong to one category (a category_id column on product). OneToOneField is a unique ForeignKey: each user has exactly one profile. ManyToManyField is many-to-many through a join table: products and tags; a custom `through` model adds fields to the relationship, like quantity on order lines.
+
+</QA>
+
+<QA q="What are the on_delete options and when do you use them?">
+
+CASCADE deletes dependants (order items with the order), PROTECT blocks deleting a referenced parent (categories in use), SET_NULL keeps the child but clears the link (audit fields), SET_DEFAULT/SET assign a value, RESTRICT is a stricter PROTECT that allows cascades through another path, and DO_NOTHING leaves integrity to the database.
+
+</QA>
+
+<QA q="What is related_name?">
+
+The attribute name for the reverse relation from the target model, for example `category.products` instead of the default `category.product_set`; it is also used in lookups (`Category.objects.filter(products__price__lt=500)`) and must be unique per target model.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Each user has exactly one profile. Use...',
+      options: ['ForeignKey', 'OneToOneField', 'ManyToManyField', 'JSONField'],
+      answer: 1,
+      why: 'One-to-one.',
+    },
+    {
+      q: 'Prevent deleting a category that still has products?',
+      options: ['CASCADE', 'PROTECT', 'SET_NULL', 'DO_NOTHING'],
+      answer: 1,
+      why: 'Raises ProtectedError.',
+    },
+    {
+      q: 'With related_name="items", access an order\'s lines with...',
+      options: ['order.orderitem_set', 'order.items.all()', 'OrderItem.order', 'order.lines'],
+      answer: 1,
+      why: 'related_name names the reverse manager.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Relation | Code | Reverse |
+| --- | --- | --- |
+| many → one | `ForeignKey(Category, on_delete=PROTECT, related_name="products")` | `category.products` |
+| one ↔ one | `OneToOneField(settings.AUTH_USER_MODEL, on_delete=CASCADE, related_name="profile")` | `user.profile` |
+| many ↔ many | `ManyToManyField(Tag, related_name="products")` | `tag.products` |
+| M2M with data | `ManyToManyField(..., through="OrderItem")` | |
+| Across tables | `filter(orders__items__product__name="X")` | |
+
+on_delete: CASCADE · PROTECT · SET_NULL · SET_DEFAULT · RESTRICT · DO_NOTHING
+
+</CheatSheet>

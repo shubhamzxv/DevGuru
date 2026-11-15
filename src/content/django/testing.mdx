@@ -1,0 +1,247 @@
+---
+id: django-testing
+title: Testing Django apps
+summary: Django's TestCase runs each test in a transaction on a separate test database, the test Client and DRF's APIClient/APITestCase send requests, setUpTestData creates shared data once, and helpers like assertContains, assertRedirects and assertNumQueries check pages, redirects and query counts; pytest-django is a popular alternative runner.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **driving test track**: a separate road (test database) where nothing you do affects real traffic, reset after every candidate (rolled-back transaction), with an examiner checking each manoeuvre (assertions).
+
+</Analogy>
+
+## Simple explanation
+
+```bash
+python manage.py test                 # finds tests*.py in every app
+python manage.py test store -v 2      # one app, verbose
+```
+
+**Test classes**
+
+| Class | Use |
+| --- | --- |
+| `SimpleTestCase` | no database |
+| `TestCase` | database; each test wrapped in a transaction and rolled back (fast) |
+| `TransactionTestCase` | tests that need real commits (`on_commit`, multiple connections) |
+| `LiveServerTestCase` | a real server (Selenium/Playwright) |
+| DRF `APITestCase` | `self.client` is an `APIClient` |
+
+**Data**: `setUpTestData(cls)` runs once per class (fast); `setUp(self)` before every test. Libraries: **factory_boy** for test data, **model_bakery**.
+
+**Useful assertions**
+
+| Assertion | Checks |
+| --- | --- |
+| `assertEqual(r.status_code, 200)` | status |
+| `assertContains(r, "Clean Code")` | text in the response (and 200) |
+| `assertTemplateUsed(r, "store/product_list.html")` | template |
+| `assertRedirects(r, "/accounts/login/?next=...")` | redirect target |
+| `assertQuerySetEqual(qs, [...])` | queryset contents |
+| `assertNumQueries(3)` | exact query count (catches N+1) |
+| `assertRaises(ValidationError)` | exceptions |
+
+**Clients**: `self.client.get/post(...)`, `self.client.login(...)` or `force_login(user)`; in DRF `self.client.force_authenticate(user)` and `format="json"`.
+
+Mock external services (`unittest.mock.patch("orders.services.gateway.charge")`), use `override_settings` for settings, `django.core.mail.outbox` for emails (the test runner uses an in-memory email backend). Run tests in CI on every pull request; measure with `coverage run manage.py test`.
+
+**pytest-django** alternative: plain `assert`, fixtures (`client`, `db`, `django_user_model`), `@pytest.mark.django_db`, parametrize.
+
+## Code example
+
+```python
+from decimal import Decimal
+from django.test import TestCase
+from django.urls import reverse
+from rest_framework.test import APITestCase
+
+class ProductModelTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.books = Category.objects.create(name="Books", slug="books")
+        cls.product = Product.objects.create(name="Clean Code", category=cls.books, price=Decimal("450.00"), stock=3)
+
+    def test_str(self):
+        self.assertEqual(str(self.product), "Clean Code (₹450.00)")
+
+    def test_in_stock_queryset(self):
+        Product.objects.create(name="Old Book", category=self.books, price=Decimal("10"), stock=0)
+        self.assertQuerySetEqual(Product.objects.in_stock(), [self.product])
+
+class ProductViewTests(TestCase):
+    def setUp(self):
+        books = Category.objects.create(name="Books", slug="books")
+        Product.objects.create(name="Clean Code", category=books, price=Decimal("450"), stock=3)
+
+    def test_list_page_shows_products(self):
+        response = self.client.get(reverse("store:product-list"))
+        self.assertContains(response, "Clean Code")
+        self.assertTemplateUsed(response, "store/product_list.html")
+
+    def test_create_requires_login(self):
+        response = self.client.get(reverse("store:product-create"))
+        self.assertRedirects(response, "/accounts/login/?next=/products/new/", fetch_redirect_response=False)
+
+class OrderApiTests(APITestCase):
+    def setUp(self):
+        self.asha = User.objects.create_user("asha", password="s3cretpass")
+        ravi = User.objects.create_user("ravi", password="s3cretpass")
+        Order.objects.create(customer=self.asha)
+        self.ravi_order = Order.objects.create(customer=ravi)
+
+    def test_anonymous_gets_401(self):
+        self.assertEqual(self.client.get("/api/orders/").status_code, 401)
+
+    def test_user_sees_only_own_orders(self):
+        self.client.force_authenticate(self.asha)
+        self.assertEqual(self.client.get("/api/orders/").json()["count"], 1)
+
+    def test_cannot_read_other_users_order(self):
+        self.client.force_authenticate(self.asha)
+        self.assertEqual(self.client.get(f"/api/orders/{self.ravi_order.pk}/").status_code, 404)
+
+    def test_query_count(self):
+        self.client.force_authenticate(self.asha)
+        with self.assertNumQueries(3):          # count + orders (with customer) + items: no N+1
+            self.client.get("/api/orders/")
+```
+
+```output
+$ python manage.py test store -v 2
+test_anonymous_gets_401 ... ok
+test_cannot_read_other_users_order ... ok
+test_query_count ... ok
+test_user_sees_only_own_orders ... ok
+test_in_stock_queryset ... ok
+test_str ... ok
+test_create_requires_login ... ok
+test_list_page_shows_products ... ok
+Ran 8 tests in 1.572s
+OK
+```
+
+While writing these, three tests failed first: `Decimal("450")` printed as `₹450` not `₹450.00`, the real query count was 3 not 4, and `assertRedirects` tried to load a login template that did not exist. That is exactly what tests are for.
+
+<Playground kind="none">
+
+```python
+# pytest-django style (pip install pytest pytest-django; pytest.ini: DJANGO_SETTINGS_MODULE = config.settings)
+import pytest
+from rest_framework.test import APIClient
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("price,ok", [("399", True), ("0", False), ("-5", False)])
+def test_product_price_validation(admin_user, price, ok):
+    client = APIClient()
+    client.force_authenticate(admin_user)
+    response = client.post("/api/products/", {"name": "Mouse", "price": price, "stock": 1, "category": 1}, format="json")
+    assert (response.status_code == 201) is ok
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Tests that depend on each other or on real services">
+
+<Wrong>
+
+```text
+test_2 uses the order created in test_1; the checkout test calls the real payment gateway.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Each test creates its own data (setUp / factories); external calls are mocked with unittest.mock.patch.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Only testing the happy path">
+
+<Wrong>
+
+```text
+One test: logged-in admin creates a valid product → 201.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Also: anonymous → 401, normal user → 403, invalid price → 400, other user's object → 404, query count fixed.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you test a Django application?">
+
+With django.test.TestCase (or pytest-django): each test runs in a transaction on a test database that is rolled back afterwards. Use the test Client or DRF APIClient to call views and APIs, factories or setUpTestData for data, assertions such as assertContains, assertRedirects, assertTemplateUsed and assertNumQueries, mock external services, and run the suite with coverage in CI.
+
+</QA>
+
+<QA q="What is the difference between TestCase and TransactionTestCase?">
+
+TestCase wraps each test in a transaction (and the class in an outer one) and rolls back, which is fast but means on_commit callbacks do not run unless you use captureOnCommitCallbacks. TransactionTestCase truncates tables after each test and allows real commits, needed for testing transaction behaviour, but it is slower.
+
+</QA>
+
+<QA q="How do you catch N+1 queries in tests?">
+
+Wrap the request in `assertNumQueries(n)` (or django-assert-num-queries / pytest-django's django_assert_num_queries); if someone removes a select_related or adds a lazy relation in a serializer, the count changes and the test fails.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Create shared data once per test class?',
+      options: ['setUp', 'setUpTestData', '__init__', 'tearDown'],
+      answer: 1,
+      why: 'Faster: runs once, rolled back per test.',
+    },
+    {
+      q: 'Log a user in without a password in a DRF test?',
+      options: ['client.login()', 'client.force_authenticate(user)', 'request.user = user', 'Token.create()'],
+      answer: 1,
+      why: 'Skips authentication for the test client.',
+    },
+    {
+      q: 'Lock the number of SQL queries of an endpoint?',
+      options: ['assertNumQueries', 'assertContains', 'assertRedirects', 'assertTemplateUsed'],
+      answer: 0,
+      why: 'Catches N+1 regressions.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Run | `python manage.py test [app] -v 2` · `pytest` |
+| DB test | `class T(TestCase)` · DRF `APITestCase` |
+| Data | `setUpTestData(cls)` · `setUp(self)` · factory_boy |
+| Requests | `self.client.get(url)` · `post(url, data, format="json")` |
+| Login | `client.force_login(u)` · `client.force_authenticate(u)` |
+| Assert | `assertContains` · `assertRedirects` · `assertTemplateUsed` · `assertNumQueries` |
+| Mock | `@patch("app.services.gateway.charge")` |
+| Emails | `django.core.mail.outbox` |
+| Coverage | `coverage run manage.py test && coverage report` |
+
+</CheatSheet>

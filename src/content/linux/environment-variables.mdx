@@ -1,0 +1,235 @@
+---
+id: linux-environment-variables
+title: Environment variables
+summary: Environment variables are named values (PATH, HOME, DATABASE_URL) that the shell passes to programs; set them with export, make them permanent in ~/.bashrc or /etc/environment, and read them in Python with os.environ.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A hotel gives every guest a **welcome card** at check-in: Wi-Fi password, breakfast time, room number. Every service in the hotel can read the card instead of asking again.
+
+**Environment variables** are that card: every program started from your shell receives a copy.
+
+</Analogy>
+
+## Simple explanation
+
+```bash
+NAME=value          # shell variable: only this shell sees it
+export NAME=value   # environment variable: programs started from here see it too
+echo $NAME          # read it
+env                 # list all environment variables
+unset NAME          # remove it
+```
+
+No spaces around `=`: `PORT=8000` works, `PORT = 8000` runs a command called PORT.
+
+Important built-in ones:
+
+| Variable | Meaning |
+| --- | --- |
+| `PATH` | folders searched for commands, separated by `:` |
+| `HOME` | your home folder (`~`) |
+| `USER` | your user name |
+| `SHELL` | your shell, `/bin/bash` |
+| `PWD` | current folder |
+| `LANG` | language and encoding |
+| `EDITOR` | editor used by git, crontab |
+
+**PATH**: when you type `gunicorn`, the shell looks in each PATH folder in order. "command not found" often means the folder is not in PATH.
+
+```bash
+echo $PATH
+export PATH="$HOME/.local/bin:$PATH"     # add a folder in front
+which python3                            # which file runs
+```
+
+**Making it permanent**
+
+| Where | Applies to |
+| --- | --- |
+| `~/.bashrc` | your interactive shells (`source ~/.bashrc` to reload) |
+| `~/.profile` / `~/.bash_profile` | your login shells |
+| `/etc/environment` | all users (simple `KEY=value` lines) |
+| systemd `Environment=` / `EnvironmentFile=` | a service |
+| `.env` file + python-dotenv / Docker `--env-file` | an app |
+
+**One command only**: `DEBUG=true python3 app.py` sets it just for that command.
+
+**In Python**
+
+```python
+import os
+
+db_url = os.environ["DATABASE_URL"]            # KeyError if missing: fail fast
+debug = os.getenv("DEBUG", "false") == "true"  # default if missing
+```
+
+Secrets (passwords, API keys) belong in environment variables or a secrets manager, never in code or git.
+
+## Code example
+
+```bash
+APP_ENV=staging
+bash -c 'echo "child sees: $APP_ENV"'
+export APP_ENV=staging
+bash -c 'echo "child sees: $APP_ENV"'
+echo $PATH
+```
+
+```output
+child sees:
+child sees: staging
+/usr/local/bin:/usr/bin:/bin
+```
+
+Without `export`, a child process does not see the variable.
+
+<Playground kind="terminal">
+
+```bash
+echo $HOME
+echo $USER
+echo $PATH
+env
+GREETING=namaste
+echo $GREETING
+export DATABASE_URL=postgres://shop:secret@localhost:5432/shop
+printenv DATABASE_URL
+echo "Connecting to ${DATABASE_URL}"
+export PATH="$HOME/.local/bin:$PATH"
+echo $PATH
+echo "Port is ${PORT:-8000}"
+which curl
+which gunicorn
+```
+
+</Playground>
+
+`${PORT:-8000}` prints a default when PORT is not set. `which gunicorn` finds nothing because it is not installed in any PATH folder.
+
+<Mistakes>
+
+<Mistake title="Spaces around =">
+
+<Wrong>
+
+```bash
+PORT = 8000
+# PORT: command not found
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+export PORT=8000
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Overwriting PATH">
+
+<Wrong>
+
+```bash
+export PATH=/opt/myapp/bin       # now ls, cd helpers, python... are "not found"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+export PATH="/opt/myapp/bin:$PATH"
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Expecting a variable in cron or systemd">
+
+<Wrong>
+
+```text
+export DATABASE_URL=... in ~/.bashrc, then the cron job / systemd service cannot see it.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Set it where that program starts: EnvironmentFile= in the unit, or at the top of the crontab / script.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a shell variable and an environment variable?">
+
+A shell variable (`NAME=value`) exists only in the current shell. An exported variable (`export NAME=value`) becomes part of the environment that is copied to every child process the shell starts. Children cannot change their parent's environment.
+
+</QA>
+
+<QA q="What is PATH and how do you add a directory to it?">
+
+PATH is a colon-separated list of directories the shell searches, in order, to find commands. Add one with `export PATH="/new/dir:$PATH"` (keeping the old value), and make it permanent in ~/.bashrc or ~/.profile. `which` or `type` shows which file a command resolves to.
+
+</QA>
+
+<QA q="Why do apps read configuration from environment variables?">
+
+It separates configuration from code (twelve-factor apps): the same build runs in development, staging and production with different values, secrets stay out of source control, and platforms such as Docker, systemd, ECS and Kubernetes can inject them.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Make a variable visible to programs you start?',
+      options: ['NAME=v', 'export NAME=v', 'set NAME v', 'env NAME'],
+      answer: 1,
+      why: 'export puts it into the environment.',
+    },
+    {
+      q: 'Add ~/bin to PATH correctly?',
+      options: ['export PATH=~/bin', 'export PATH="$HOME/bin:$PATH"', 'PATH + ~/bin', 'path add ~/bin'],
+      answer: 1,
+      why: 'Keep the existing PATH.',
+    },
+    {
+      q: 'Read a variable with a default in Python?',
+      options: ['os.environ.DEBUG', 'os.getenv("DEBUG", "false")', 'env("DEBUG")', 'sys.DEBUG'],
+      answer: 1,
+      why: 'getenv returns the default if missing.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| Set for this shell + children | `export NAME=value` |
+| One command only | `NAME=value command` |
+| Read | `echo $NAME` · `printenv NAME` |
+| Default | `${NAME:-default}` |
+| List / remove | `env` · `unset NAME` |
+| Add to PATH | `export PATH="$HOME/.local/bin:$PATH"` |
+| Permanent | `~/.bashrc` then `source ~/.bashrc` |
+| Python | `os.environ["X"]` · `os.getenv("X", "d")` |
+
+</CheatSheet>

@@ -1,0 +1,242 @@
+---
+id: dsa-two-pointers
+title: Two pointers
+summary: The two-pointer technique moves two indexes through a list, either from both ends towards the middle (pair sums in a sorted list, palindromes, container with most water) or in the same direction at different speeds (removing duplicates, merging), turning many O(n²) pair searches into O(n).
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Two people searching a **sorted bookshelf** for two books whose prices add up to ₹500. One starts at the cheap end, one at the expensive end. If the total is too high, the right person steps left to a cheaper book; if it is too low, the left person steps right. They never need to try every pair.
+
+</Analogy>
+
+## Simple explanation
+
+**Opposite ends** (`left = 0`, `right = n - 1`, move inward):
+
+```text
+while left < right:
+    look at a[left], a[right]
+    decide which side to move (based on sortedness or a rule)
+```
+
+Works for: pair with a target sum in a **sorted** list, valid palindrome, reverse in place, container with most water, 3-sum (fix one, two-pointer the rest).
+
+**Same direction** (slow writer + fast reader):
+
+```text
+slow = 0
+for fast in range(n):
+    if a[fast] should be kept:
+        a[slow] = a[fast]; slow += 1
+```
+
+Works for: remove duplicates from a sorted list, remove an element, move zeros, merging two sorted lists, linked-list fast/slow (cycle, middle).
+
+**Why it is correct (sorted pair sum)**: if `a[left] + a[right] > target`, then `a[right]` with any element right of `left` is also too big, so `right` can be discarded safely. Each step discards one element → O(n).
+
+| Problem | Pointers | Time |
+| --- | --- | --- |
+| Pair sum in sorted array | ends | O(n) |
+| 3-sum | fix i + ends | O(n²) (vs O(n³)) |
+| Container with most water | ends, move the shorter wall | O(n) |
+| Remove duplicates (sorted) | slow/fast | O(n), O(1) space |
+| Merge sorted arrays | one per array | O(n + m) |
+
+## Code example
+
+```python
+def pair_sum_sorted(a, target):
+    left, right = 0, len(a) - 1
+    while left < right:
+        s = a[left] + a[right]
+        if s == target:
+            return left, right
+        if s < target:
+            left += 1           # need a bigger sum
+        else:
+            right -= 1          # need a smaller sum
+    return None
+
+def remove_duplicates(a):
+    """Sorted list: keep one of each in place, return the new length."""
+    slow = 0
+    for fast in range(1, len(a)):
+        if a[fast] != a[slow]:
+            slow += 1
+            a[slow] = a[fast]
+    return slow + 1
+
+def max_water(heights):
+    left, right, best = 0, len(heights) - 1, 0
+    while left < right:
+        best = max(best, (right - left) * min(heights[left], heights[right]))
+        if heights[left] < heights[right]:
+            left += 1           # the shorter wall limits the area: move it
+        else:
+            right -= 1
+    return best
+
+def three_sum(nums):
+    nums.sort()
+    out = []
+    for i in range(len(nums) - 2):
+        if i and nums[i] == nums[i - 1]:
+            continue            # skip duplicate first numbers
+        l, r = i + 1, len(nums) - 1
+        while l < r:
+            s = nums[i] + nums[l] + nums[r]
+            if s < 0:
+                l += 1
+            elif s > 0:
+                r -= 1
+            else:
+                out.append([nums[i], nums[l], nums[r]])
+                l += 1
+                while l < r and nums[l] == nums[l - 1]:
+                    l += 1
+    return out
+
+print(pair_sum_sorted([1, 3, 4, 6, 8, 11], 10))
+a = [1, 1, 2, 3, 3, 3, 4]
+k = remove_duplicates(a)
+print(k, a[:k])
+print(max_water([1, 8, 6, 2, 5, 4, 8, 3, 7]))
+print(three_sum([-1, 0, 1, 2, -1, -4]))
+```
+
+```output
+(2, 3)
+4 [1, 2, 3, 4]
+49
+[[-1, -1, 2], [-1, 0, 1]]
+```
+
+<Playground kind="python">
+
+```python
+def merge_sorted(a, b):
+    i = j = 0
+    out = []
+    while i < len(a) and j < len(b):
+        if a[i] <= b[j]:
+            out.append(a[i]); i += 1
+        else:
+            out.append(b[j]); j += 1
+    out.extend(a[i:])
+    out.extend(b[j:])
+    return out
+
+print(merge_sorted([1, 4, 9], [2, 3, 10, 12]))
+
+# Try it: press "Step through" and watch i and j move.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Two pointers on unsorted data">
+
+<Wrong>
+
+```python
+pair_sum_sorted([8, 1, 6, 3], 9)     # the "move left/right" rule is only valid if the list is sorted
+```
+
+</Wrong>
+
+<Right>
+
+```python
+pair_sum_sorted(sorted([8, 1, 6, 3]), 9)   # or use a dict (two-sum) if you need original indexes
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Infinite loop: forgetting to move a pointer">
+
+<Wrong>
+
+```python
+while left < right:
+    if a[left] + a[right] == target:
+        result.append((left, right))     # found it… but neither pointer moves
+```
+
+</Wrong>
+
+<Right>
+
+```python
+        result.append((left, right))
+        left += 1
+        right -= 1
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="When can you use the two-pointer technique?">
+
+When the data is sorted (or can be sorted) and you look for pairs or triples meeting a condition, when you compare elements from both ends (palindromes, reversing), or when you filter/merge in place with a slow writer and fast reader. It replaces nested loops by moving each pointer at most n times, giving O(n).
+
+</QA>
+
+<QA q="Solve 3-sum.">
+
+Sort the array; for each index i (skipping duplicate values) run two pointers on the rest looking for a pair summing to −nums[i], moving left up when the sum is too small and right down when it is too big, and skipping duplicates after a match. O(n²) time, O(1) extra space apart from the output.
+
+</QA>
+
+<QA q="Why move the shorter wall in 'container with most water'?">
+
+The area is limited by the shorter wall; moving the taller wall can only reduce the width without raising the limit, so it can never produce a bigger area. Moving the shorter wall is the only move that might find a taller limit.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Pair-sum with pointers at both ends requires the list to be...',
+      options: ['Unique', 'Sorted', 'Short', 'Of even length'],
+      answer: 1,
+      why: 'The moves rely on order.',
+    },
+    {
+      q: 'Remove duplicates from a sorted list in place uses...',
+      options: ['Two ends', 'Slow and fast pointers', 'Binary search', 'A heap'],
+      answer: 1,
+      why: 'Writer and reader.',
+    },
+    {
+      q: '3-sum with sorting + two pointers is...',
+      options: ['O(n)', 'O(n log n)', 'O(n²)', 'O(n³)'],
+      answer: 2,
+      why: 'n starting points × O(n) scan.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Shape | Template |
+| --- | --- |
+| Ends | `l, r = 0, n-1` · `while l < r:` move one side |
+| Slow/fast | `slow = 0` · `for fast in range(n): if keep: a[slow] = a[fast]; slow += 1` |
+| Merge | `i, j` over two sorted lists |
+| k-sum | sort · fix k−2 · two pointers |
+
+Use when: sorted data · pairs/triples · palindromes · in-place filtering · merging
+
+</CheatSheet>

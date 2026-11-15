@@ -1,137 +1,112 @@
 ---
 id: aws-three-tier-architecture
 title: Three-tier web app
-summary: A three-tier app splits into a presentation tier, an application tier and a data tier, each in its own layer of the network, so each can scale and be secured separately.
+summary: A classic three-tier web app on AWS has a presentation tier (CloudFront and an ALB in public subnets), an application tier (stateless ECS/Fargate tasks or EC2 in an Auto Scaling group in private subnets) and a data tier (RDS Multi-AZ, ElastiCache, S3), spread over two or more AZs, secured with chained security groups and IAM roles, and monitored with CloudWatch.
 updated: "2026-11-15"
 ---
 
 <Analogy>
 
-Think of a restaurant. The **dining area** is where customers sit and see the menu. The **kitchen** cooks; customers never walk in. The **store room** keeps the stock; only kitchen staff may enter.
-
-A three-tier web app is built the same way: the **web tier** faces users, the **app tier** does the work, and the **data tier** keeps the data, with a locked door between each.
+A **restaurant**: the **front of house** (tier 1) greets guests and takes orders; the **kitchen** (tier 2) cooks — any cook can make any dish, and more cooks join on busy nights; the **cold store and pantry** (tier 3) keep the ingredients safe, and only the kitchen may enter. Guests never walk into the kitchen or the store.
 
 </Analogy>
 
 ## Simple explanation
 
-The three tiers:
+| Tier | AWS services | Subnets | Security group rule |
+| --- | --- | --- | --- |
+| **1. Presentation / edge** | Route 53, CloudFront (+ WAF) for the React app and `/api/*`, ALB with ACM | public | ALB: 443 from internet / CloudFront prefix list |
+| **2. Application** | ECS Fargate service (or EC2 ASG) running Django/FastAPI; Celery workers; SQS | private app | app: 8000 from ALB SG |
+| **3. Data** | RDS PostgreSQL Multi-AZ, ElastiCache Redis, S3 (via gateway endpoint) | private data | DB: 5432 from app SG · cache: 6379 from app SG |
 
-1. **Presentation (web) tier**: what users touch. A load balancer, plus a CDN for static files such as the React app
-2. **Application (logic) tier**: your backend code (Django, FastAPI) running on EC2 instances, containers or Lambda
-3. **Data tier**: databases and caches, such as Amazon RDS and ElastiCache
+**Cross-cutting**
 
-A typical AWS version:
+| Concern | How |
+| --- | --- |
+| High availability | everything in ≥ 2 AZs: ALB, tasks, NAT gateways, RDS Multi-AZ, Redis replica |
+| Scaling | ECS service autoscaling on CPU / request count; read replicas; caching |
+| Stateless app | sessions in Redis, files in S3, no local state |
+| Secrets | Secrets Manager / SSM Parameter Store injected into tasks |
+| Identity | task roles with least privilege; no access keys |
+| Deploy | CI builds image → ECR → rolling or blue/green ECS deploy; migrations as a one-off task |
+| Observability | CloudWatch logs/metrics/alarms, X-Ray, ALB access logs |
+| Backups/DR | RDS automated backups + snapshots copied to another Region, S3 versioning, IaC to rebuild |
+| Cost | Fargate Spot for workers, Graviton, Savings Plans, right-sizing, S3 endpoints instead of NAT |
 
-| Piece | AWS service | Job |
-| --- | --- | --- |
-| DNS | Route 53 | turns `shop.example.com` into the right address |
-| CDN | CloudFront + S3 | serves the frontend files from locations near users |
-| Load balancer | Application Load Balancer (ALB) | spreads API requests over healthy servers |
-| App servers | EC2 in an Auto Scaling group (or ECS) | run the backend; more servers are added when busy |
-| Cache | ElastiCache (Redis) | answers frequent reads fast |
-| Database | RDS (PostgreSQL / MySQL), Multi-AZ | stores the data, with a standby copy in a second AZ |
+**Request path**: user → Route 53 → CloudFront → (static from S3) or `/api/*` → ALB → Fargate task → Redis (cache hit?) → RDS → response.
 
-Network layout inside a **VPC** (your private network in AWS):
-
-- **Public subnets**: only the load balancer (and a NAT gateway). They have a route to the internet
-- **Private subnets**: the app servers. Not reachable from the internet directly
-- **Private (data) subnets**: the database. Only the app servers may connect
-
-**Security groups** are the locked doors: the ALB accepts 443 from anywhere; app servers accept traffic **only from the ALB's security group**; the database accepts 5432 **only from the app servers' security group**.
-
-Why it is a good design:
-
-- **Security**: the database is never exposed to the internet
-- **Scaling**: add app servers without touching the database
-- **High availability**: spread each tier over **two or more Availability Zones**; if one data centre fails, the other keeps serving
-- **Separate concerns**: each tier can be changed, monitored and secured on its own
+**Why tiers?** Each tier scales and fails independently, security is layered (the database is unreachable from the internet), and teams can change one tier without touching the others.
 
 ## Code example
 
-The security group rules, as AWS CLI commands (the heart of the design):
+After a deploy, check every tier is healthy:
 
 ```bash
-# Load balancer: HTTPS from anyone
-aws ec2 authorize-security-group-ingress --group-id sg-alb \
-  --protocol tcp --port 443 --cidr 0.0.0.0/0
-
-# App servers: port 8000 ONLY from the load balancer's security group
-aws ec2 authorize-security-group-ingress --group-id sg-app \
-  --protocol tcp --port 8000 --source-group sg-alb
-
-# Database: port 5432 ONLY from the app servers' security group
-aws ec2 authorize-security-group-ingress --group-id sg-db \
-  --protocol tcp --port 5432 --source-group sg-app
-```
-
-The app tier reads the database address from configuration, never from code:
-
-```python
-import os
-import psycopg
-
-conn = psycopg.connect(
-    host=os.environ["DB_HOST"],          # the RDS endpoint, in a private subnet
-    dbname="shop",
-    user=os.environ["DB_USER"],
-    password=os.environ["DB_PASSWORD"],  # from Secrets Manager, not from git
-)
-print(conn.execute("select 1").fetchone())
+aws elbv2 describe-target-health --target-group-arn "$TG_ARN" \
+  --query "TargetHealthDescriptions[].{ip:Target.Id,az:Target.AvailabilityZone,state:TargetHealth.State}" --output table
+aws ecs describe-services --cluster shop --services api \
+  --query "services[0].{desired:desiredCount,running:runningCount,rollout:deployments[0].rolloutState}"
+aws rds describe-db-instances --db-instance-identifier shop-db \
+  --query "DBInstances[0].{status:DBInstanceStatus,multiAZ:MultiAZ,az:AvailabilityZone,standby:SecondaryAvailabilityZone}"
 ```
 
 ```output
-(1,)
+-----------------------------------------
+|         DescribeTargetHealth          |
++--------------+-------------+----------+
+|      az      |     ip      |  state   |
++--------------+-------------+----------+
+|  ap-south-1a |  10.0.11.24 |  healthy |
+|  ap-south-1b |  10.0.12.87 |  healthy |
++--------------+-------------+----------+
+{ "desired": 2, "running": 2, "rollout": "COMPLETED" }
+{ "status": "available", "multiAZ": true, "az": "ap-south-1a", "standby": "ap-south-1b" }
 ```
+
+Two healthy tasks in two AZs, the deployment finished, and the database has a standby in the other AZ.
 
 <Playground kind="diagram">
 
 ```json
 {
   "nodes": [
-    { "id": "user", "label": "User", "icon": "👤", "col": 0, "row": 1, "info": "Opens shop.example.com in a browser or app.", "example": "A customer in Pune." },
-    { "id": "dns", "label": "Route 53", "icon": "🧭", "col": 1, "row": 0, "info": "DNS: turns the domain name into the address of CloudFront or the load balancer.", "example": "shop.example.com -> CloudFront, api.shop.example.com -> ALB." },
-    { "id": "cdn", "label": "CloudFront + S3", "icon": "🌍", "col": 2, "row": 0, "info": "Presentation tier: the React files are stored in S3 and served from edge locations near the user.", "example": "Mumbai users get files from the Mumbai edge." },
-    { "id": "alb", "label": "Load balancer", "icon": "⚖️", "col": 1, "row": 2, "info": "Application Load Balancer in public subnets. Ends HTTPS and sends each API request to a healthy app server.", "example": "Health check: GET /health every 30 seconds." },
-    { "id": "app1", "label": "App server (AZ-a)", "icon": "🖥️", "col": 2, "row": 1, "info": "Application tier in a PRIVATE subnet. Runs the backend. Part of an Auto Scaling group.", "example": "FastAPI on EC2 or ECS, in ap-south-1a." },
-    { "id": "app2", "label": "App server (AZ-b)", "icon": "🖥️", "col": 2, "row": 2, "info": "A second copy in another Availability Zone, so one data centre failing does not stop the site.", "example": "Same code in ap-south-1b." },
-    { "id": "cache", "label": "ElastiCache", "icon": "⚡", "col": 3, "row": 1, "info": "Data tier: Redis cache for hot data such as product lists and sessions.", "example": "Cache-aside with a 5-minute TTL." },
-    { "id": "db", "label": "RDS (Multi-AZ)", "icon": "🗄️", "col": 3, "row": 2, "info": "Data tier in private subnets. Only the app servers' security group may connect. A standby copy in another AZ takes over automatically.", "example": "PostgreSQL, automatic backups for 7 days." }
+    { "id": "user", "label": "Users", "icon": "👥", "col": 0, "row": 1, "info": "Browser and mobile app.", "example": "shop.example.com" },
+    { "id": "cf", "label": "CloudFront + WAF", "icon": "🌍", "col": 1, "row": 0, "info": "Static React app from S3; /api/* forwarded to the ALB; attacks filtered.", "example": "Tier 1" },
+    { "id": "alb", "label": "ALB (public subnets, 2 AZs)", "icon": "⚖️", "col": 1, "row": 2, "info": "HTTPS listener; health checks; spreads requests over tasks.", "example": "Tier 1" },
+    { "id": "app", "label": "ECS Fargate api ×2+", "icon": "🐳", "col": 2, "row": 1, "info": "Stateless Django/FastAPI tasks in private subnets; autoscaling; task role for S3/SQS.", "example": "Tier 2" },
+    { "id": "worker", "label": "Celery workers + SQS", "icon": "👷", "col": 2, "row": 3, "info": "Emails, invoices, image processing outside the request.", "example": "Tier 2 (async)" },
+    { "id": "redis", "label": "ElastiCache Redis", "icon": "⚡", "col": 3, "row": 0, "info": "Cache-aside, sessions; primary + replica.", "example": "Tier 3" },
+    { "id": "rds", "label": "RDS PostgreSQL Multi-AZ", "icon": "🗄️", "col": 3, "row": 2, "info": "Primary in AZ-a, standby in AZ-b; backups 7 days; private.", "example": "Tier 3" },
+    { "id": "s3", "label": "S3 media", "icon": "🪣", "col": 3, "row": 3, "info": "Uploads via presigned URLs; reached through a gateway endpoint.", "example": "Tier 3" }
   ],
   "edges": [
-    ["user", "dns"],
-    ["user", "cdn", "page files"],
-    ["user", "alb", "API calls"],
-    ["alb", "app1"],
-    ["alb", "app2"],
-    ["app1", "cache"],
-    ["app1", "db"],
-    ["app2", "db"]
+    ["user", "cf", "HTTPS"],
+    ["cf", "alb", "/api/*"],
+    ["alb", "app", "8000"],
+    ["app", "redis", "6379"],
+    ["app", "rds", "5432"],
+    ["app", "worker", "jobs"],
+    ["worker", "s3"]
   ],
   "flows": [
     {
-      "name": "Load the shop",
+      "name": "Product page",
       "steps": [
-        ["user", "Types shop.example.com."],
-        ["dns", "Route 53 answers with the CloudFront address."],
-        ["cdn", "CloudFront returns the React app from the nearest edge (fast, no server code)."],
-        ["user", "The app now calls GET api.shop.example.com/products."],
-        ["alb", "The load balancer picks a healthy app server."],
-        ["app1", "The backend checks the cache first."],
-        ["cache", "Cache miss: products are not cached yet."],
-        ["app1", "Falls back to the database."],
-        ["db", "Returns the products. The app caches them and replies."],
-        ["user", "Products appear on screen."]
+        ["user", "Opens a product page."],
+        ["cf", "HTML/JS from the edge cache; the app calls /api/products/7."],
+        ["alb", "Forwarded to a healthy task."],
+        ["app", "Checks Redis first."],
+        ["redis", "Hit: product JSON returned in ~1 ms."],
+        ["user", "Page rendered."]
       ]
     },
     {
-      "name": "A data centre fails",
+      "name": "AZ-a goes down",
       "steps": [
-        ["app1", "AZ-a has a power problem. This server stops answering."],
-        ["alb", "Health checks fail for AZ-a, so the load balancer stops sending traffic there."],
-        ["app2", "All requests go to the server in AZ-b. Auto Scaling starts more servers."],
-        ["db", "If the database's AZ failed, RDS Multi-AZ promotes the standby in about a minute."],
-        ["user", "The shop keeps working, maybe a little slower for a few minutes."]
+        ["alb", "Targets in AZ-a fail health checks; traffic goes to AZ-b."],
+        ["app", "ECS starts replacement tasks in AZ-b."],
+        ["rds", "Multi-AZ fails over to the standby in AZ-b."],
+        ["user", "A short blip, then normal service."]
       ]
     }
   ]
@@ -142,13 +117,12 @@ print(conn.execute("select 1").fetchone())
 
 <Mistakes>
 
-<Mistake title="Putting the database in a public subnet">
+<Mistake title="One of everything">
 
 <Wrong>
 
 ```text
-RDS: Publicly accessible = Yes, security group allows 5432 from 0.0.0.0/0
-(the whole internet can try to log in to your database)
+One EC2 instance running Nginx + Django + PostgreSQL + Redis in a public subnet: a single failure takes it all down.
 ```
 
 </Wrong>
@@ -156,22 +130,19 @@ RDS: Publicly accessible = Yes, security group allows 5432 from 0.0.0.0/0
 <Right>
 
 ```text
-RDS: Publicly accessible = No, private subnets only,
-security group allows 5432 only from sg-app (the app servers)
+Separate tiers, managed data services, ≥ 2 AZs for every tier, private subnets for app and data.
 ```
 
 </Right>
-
-The data tier should be reachable only from the app tier. Admins connect through a bastion host, SSM Session Manager or a VPN.
 
 </Mistake>
 
-<Mistake title="Everything in one Availability Zone">
+<Mistake title="Skipping the async tier">
 
 <Wrong>
 
 ```text
-ALB, 2 app servers and RDS, all in ap-south-1a
+Sending emails and generating reports inside web requests → slow pages and timeouts at the ALB.
 ```
 
 </Wrong>
@@ -179,13 +150,10 @@ ALB, 2 app servers and RDS, all in ap-south-1a
 <Right>
 
 ```text
-ALB across ap-south-1a and 1b, Auto Scaling group across both,
-RDS Multi-AZ (standby in the other zone)
+SQS + workers (Celery or Lambda) for slow work; the web tier stays fast and scales on its own.
 ```
 
 </Right>
-
-One zone is one failure domain. Spreading each tier over at least two zones is what makes the design highly available.
 
 </Mistake>
 
@@ -193,27 +161,21 @@ One zone is one failure domain. Spreading each tier over at least two zones is w
 
 <InterviewQA>
 
-<QA q="What is a three-tier architecture?">
+<QA q="Design a highly available web application on AWS.">
 
-An application split into a presentation tier (the UI, served through a CDN or web servers behind a load balancer), an application tier (business logic on servers, containers or functions) and a data tier (databases and caches). Each tier runs in its own network layer, can be scaled and secured separately, and only talks to the tier next to it.
-
-</QA>
-
-<QA q="How would you design a highly available web app on AWS?">
-
-Route 53 for DNS, CloudFront with S3 for static files, an Application Load Balancer in public subnets across at least two AZs, app servers in private subnets in an Auto Scaling group across those AZs, ElastiCache for caching, and RDS Multi-AZ in private subnets. Security groups chain ALB to app to database. Add CloudWatch alarms, automated backups and secrets in Secrets Manager.
+Route 53 and CloudFront (with WAF) in front; an ALB in public subnets across at least two AZs; stateless application containers on ECS Fargate (or an EC2 Auto Scaling group) in private subnets with autoscaling; RDS Multi-AZ (plus read replicas if needed) and ElastiCache with replicas in private data subnets; S3 for files; security groups chained tier to tier, IAM roles, Secrets Manager; CloudWatch alarms; backups, IaC and CI/CD for repeatable deployments.
 
 </QA>
 
-<QA q="Why put app servers in private subnets?">
+<QA q="Why should the application tier be stateless?">
 
-So they cannot be reached directly from the internet; all traffic must pass the load balancer, which reduces the attack surface. They can still reach the internet for updates through a NAT gateway, and admins reach them with SSM Session Manager or a bastion host.
+So any instance or task can serve any request and can be added, replaced or removed by autoscaling and deployments without losing data or logging users out. State goes to shared services: sessions in Redis/DynamoDB, files in S3, data in the database.
 
 </QA>
 
-<QA q="What is the difference between a security group and a NACL?">
+<QA q="How do the tiers' security groups work together?">
 
-A security group is a stateful firewall attached to a resource (such as an instance or RDS), with allow rules only; return traffic is allowed automatically. A network ACL is a stateless firewall on a subnet, with numbered allow and deny rules, where return traffic must be allowed explicitly. Security groups are the main tool; NACLs add an extra subnet-level layer.
+The ALB's group allows HTTPS from the internet (or CloudFront); the app's group allows its port only from the ALB's group; the database and cache groups allow their ports only from the app's group. Each tier accepts traffic only from the tier above it, so the data tier is never reachable from outside.
 
 </QA>
 
@@ -222,34 +184,36 @@ A security group is a stateful firewall attached to a resource (such as an insta
 <Quiz
   questions={[
     {
-      q: 'Which tier should NOT be reachable from the internet?',
-      options: ['The load balancer', 'The CDN', 'The database', 'Route 53'],
-      answer: 2,
-      why: 'The data tier lives in private subnets and accepts only the app tier.',
+      q: 'Where should the RDS database live?',
+      options: ['Public subnet', 'Private data subnet', 'CloudFront', 'Same task as the app'],
+      answer: 1,
+      why: 'Reachable only from the app tier.',
     },
     {
-      q: 'Why spread servers over two Availability Zones?',
-      options: ['It is cheaper', 'If one zone fails, the other keeps serving', 'AWS requires it', 'For faster DNS'],
+      q: 'Minimum AZs for high availability?',
+      options: ['1', '2', '5', 'All in the Region'],
       answer: 1,
-      why: 'Each AZ is a separate data centre; two of them remove a single point of failure.',
+      why: 'At least two; three is better.',
     },
     {
-      q: 'How do you allow only app servers to reach the database?',
-      options: ['Allow 5432 from 0.0.0.0/0', 'A security group rule with the app servers\' security group as the source', 'A public IP', 'An S3 bucket policy'],
+      q: 'Where do user sessions go?',
+      options: ['Task memory', 'ElastiCache / DynamoDB', 'Local disk', 'CloudWatch'],
       answer: 1,
-      why: 'Referencing the source security group allows exactly those servers, even as they scale.',
+      why: 'Keep the app stateless.',
     },
   ]}
 />
 
 <CheatSheet>
 
-| Tier | AWS | Subnet | Accepts traffic from |
-| --- | --- | --- | --- |
-| Presentation | CloudFront + S3, ALB | public (ALB) | the internet, port 443 |
-| Application | EC2 Auto Scaling / ECS / Lambda | private | the ALB's security group |
-| Data | RDS Multi-AZ, ElastiCache | private | the app servers' security group |
-
-Always: two or more AZs, secrets in Secrets Manager, CloudWatch alarms, automated backups.
+| Tier | Services | Access |
+| --- | --- | --- |
+| 1 Edge | Route 53 · CloudFront + WAF · ALB + ACM | internet → 443 |
+| 2 App | ECS Fargate / EC2 ASG · SQS + workers | from ALB SG only |
+| 3 Data | RDS Multi-AZ · ElastiCache · S3 | from app SG only |
+| HA | ≥ 2 AZs everywhere | — |
+| Scale | autoscaling · caching · read replicas | — |
+| Security | private subnets · SG chaining · task roles · Secrets Manager | — |
+| Ops | CloudWatch · backups · IaC · CI/CD | — |
 
 </CheatSheet>

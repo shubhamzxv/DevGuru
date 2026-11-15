@@ -1,0 +1,209 @@
+---
+id: aws-what-is-cloud
+title: What is cloud computing?
+summary: Cloud computing means renting computing resources such as servers, storage and databases over the internet on demand and paying for what you use; the service models are IaaS, PaaS, SaaS and serverless, and AWS is the largest cloud provider.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+**Electricity**: a hundred years ago factories ran their own generators. Today they plug into the grid and pay for the units they use. Nobody buys a power station to run a fan.
+
+**Cloud computing** is the power grid for computers: instead of buying servers, you rent them by the second from AWS, use as many as you need, and give them back.
+
+</Analogy>
+
+## Simple explanation
+
+**On-premises vs cloud**
+
+| | Own data centre | Cloud |
+| --- | --- | --- |
+| Getting a server | order, wait weeks, install | an API call, ready in a minute |
+| Cost | big upfront purchase (CapEx) | pay as you go (OpEx) |
+| Capacity | guess and over-buy | scale up and down with demand |
+| Maintenance | your team: power, cooling, disks | the provider |
+| Global reach | expensive | regions worldwide in a click |
+
+The five characteristics (NIST definition): **on-demand self-service**, **broad network access**, **resource pooling**, **rapid elasticity**, **measured service** (pay per use).
+
+**Service models**: who manages what:
+
+| Model | You manage | Provider manages | AWS examples |
+| --- | --- | --- | --- |
+| **IaaS** | OS, runtime, app, data | hardware, network, virtualisation | EC2, EBS, VPC |
+| **PaaS** | app and data | OS, runtime, scaling | Elastic Beanstalk, App Runner, RDS |
+| **Serverless / FaaS** | functions and data | everything else, scales to zero | Lambda, DynamoDB, S3 |
+| **SaaS** | only your data and settings | the whole application | Gmail, Salesforce, Amazon WorkMail |
+
+**Deployment models**: public cloud (AWS, Azure, GCP), private cloud (your own, e.g. OpenStack), hybrid (both connected), multi-cloud.
+
+**Why companies move**: speed (experiments in minutes), elasticity (Big Billion Day traffic), global reach, managed services (no DBA for backups), security tooling, and cost if used well. **Watch out for**: surprise bills, vendor lock-in, needing new skills (IAM, networking).
+
+AWS (launched 2006 with S3 and EC2) is the biggest provider with 200+ services; Microsoft Azure and Google Cloud are next.
+
+## Code example
+
+Everything in AWS is an API. The same request from the CLI and from Python:
+
+```bash
+aws ec2 run-instances --image-id ami-0abcdef1234567890 --instance-type t3.micro \
+  --key-name shop-key --security-group-ids sg-0123456789abcdef0 --region ap-south-1
+```
+
+```python
+import boto3
+
+ec2 = boto3.client("ec2", region_name="ap-south-1")
+inst = ec2.run_instances(ImageId=ami, InstanceType="t3.micro", MinCount=1, MaxCount=1,
+                         KeyName="shop-key", SecurityGroupIds=[sg])["Instances"][0]
+print(inst["InstanceId"], inst["InstanceType"], inst["State"]["Name"], inst["Placement"]["AvailabilityZone"])
+```
+
+```output
+i-bfb0cc7b362fd8b75 t3.micro pending ap-south-1a
+```
+
+A server in Mumbai, created by one function call (run here against a mock of AWS). A minute later its state is `running`.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "you", "label": "You / your code", "icon": "🧑‍💻", "col": 0, "row": 1, "info": "You ask for resources with the console, the CLI, SDKs or infrastructure-as-code.", "example": "boto3 run_instances(...)" },
+    { "id": "iaas", "label": "IaaS: EC2", "icon": "🖥️", "col": 1, "row": 0, "info": "Rent virtual machines. You manage the OS, patches, runtime and app.", "example": "A t3.micro Ubuntu server running nginx + gunicorn." },
+    { "id": "paas", "label": "PaaS: Beanstalk / RDS", "icon": "🧰", "col": 1, "row": 1, "info": "You bring code or data; AWS runs the OS, runtime, backups and scaling.", "example": "RDS PostgreSQL with automatic backups." },
+    { "id": "faas", "label": "Serverless: Lambda", "icon": "⚡", "col": 1, "row": 2, "info": "Upload a function; it runs on events and you pay per request and millisecond. Scales to zero.", "example": "Resize an image when it lands in S3." },
+    { "id": "saas", "label": "SaaS: Gmail", "icon": "📧", "col": 2, "row": 1, "info": "A finished application. You only use it and own your data.", "example": "Google Workspace, Salesforce." },
+    { "id": "bill", "label": "Monthly bill", "icon": "🧾", "col": 3, "row": 1, "info": "Measured service: pay for seconds of compute, GB stored and data transferred.", "example": "EC2 hours + S3 GB-months + data out." }
+  ],
+  "edges": [
+    ["you", "iaas", "most control"],
+    ["you", "paas"],
+    ["you", "faas", "least ops"],
+    ["iaas", "bill"],
+    ["paas", "bill"],
+    ["faas", "bill"],
+    ["saas", "bill", "subscription"]
+  ],
+  "flows": [
+    {
+      "name": "Who manages what",
+      "steps": [
+        ["iaas", "IaaS: AWS runs the hardware; you patch the OS and run your app."],
+        ["paas", "PaaS: AWS also runs the OS and runtime; you deploy code."],
+        ["faas", "Serverless: you only write functions; AWS scales them per request."],
+        ["saas", "SaaS: you just use the software."],
+        ["bill", "In every case you pay for what you use."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Lift-and-shift and expect savings">
+
+<Wrong>
+
+```text
+Copy every on-premises server to an always-on EC2 instance of the same size: the bill is higher than the old data centre.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Right-size, turn off what is idle, use managed services, autoscaling and Savings Plans; re-architect where it pays.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Thinking the cloud is automatically secure and backed up">
+
+<Wrong>
+
+```text
+"It's on AWS, so it's safe": public S3 bucket, no backups, root keys on a laptop.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Shared responsibility: AWS secures the cloud; you secure what you put in it (IAM, encryption, backups).
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is cloud computing?">
+
+On-demand delivery of IT resources (compute, storage, databases, networking, software) over the internet with pay-as-you-go pricing, instead of buying and running your own hardware. Its key properties are self-service, network access, pooled resources, rapid elasticity and measured usage.
+
+</QA>
+
+<QA q="Explain IaaS, PaaS, SaaS and serverless with examples.">
+
+IaaS rents raw infrastructure such as EC2 virtual machines where you manage the OS and above. PaaS runs your code or data on a managed platform such as Elastic Beanstalk or RDS. Serverless (FaaS) runs functions on events with automatic scaling and per-request billing, such as Lambda. SaaS is complete software such as Gmail where you only use the application.
+
+</QA>
+
+<QA q="What are the benefits and risks of moving to the cloud?">
+
+Benefits: no upfront hardware, elasticity, speed of provisioning, global regions, managed services, built-in security and availability options. Risks: cost overruns without governance, vendor lock-in, misconfiguration (the main security risk), new skills required, and data residency or compliance concerns.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'EC2 is an example of...',
+      options: ['SaaS', 'PaaS', 'IaaS', 'FaaS'],
+      answer: 2,
+      why: 'Virtual machines; you manage the OS.',
+    },
+    {
+      q: 'Which model scales to zero and bills per request?',
+      options: ['On-premises', 'Serverless (Lambda)', 'IaaS', 'Colocation'],
+      answer: 1,
+      why: 'No idle servers.',
+    },
+    {
+      q: 'Pay-as-you-go turns hardware spending from...',
+      options: ['OpEx to CapEx', 'CapEx to OpEx', 'Free to paid', 'Tax to fees'],
+      answer: 1,
+      why: 'Operational expense instead of capital purchase.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Meaning | AWS |
+| --- | --- | --- |
+| IaaS | rent infrastructure | EC2, EBS, VPC |
+| PaaS | run code/data on a platform | Beanstalk, App Runner, RDS |
+| Serverless | functions + managed services | Lambda, DynamoDB, S3 |
+| SaaS | finished software | WorkMail, Gmail |
+| Elasticity | scale with demand | Auto Scaling |
+| Pay as you go | per second / GB / request | billing |
+
+Public · private · hybrid · multi-cloud
+
+</CheatSheet>

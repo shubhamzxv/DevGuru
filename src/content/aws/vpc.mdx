@@ -1,0 +1,226 @@
+---
+id: aws-vpc
+title: VPC basics (subnets, route tables, gateways)
+summary: A VPC is your private network in a Region with a CIDR range, split into subnets per AZ; route tables decide where traffic goes, an internet gateway makes subnets public, a NAT gateway gives private subnets outbound-only internet, and VPC endpoints, peering and Transit Gateway connect privately to AWS services and other networks.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **gated housing society**. The VPC is the society's boundary wall with its own address range. **Subnets** are blocks in different wings (AZs). The **main gate** (internet gateway) connects the public blocks to the road. Private blocks have no gate of their own; residents can send parcels out through the **security office** (NAT gateway), but strangers cannot walk in. The **signboards** at each junction are the route tables.
+
+</Analogy>
+
+## Simple explanation
+
+| Piece | What it does | Example |
+| --- | --- | --- |
+| **VPC** | private network in one Region | `10.0.0.0/16` (65,536 addresses) |
+| **Subnet** | a slice of the VPC in **one AZ** | `10.0.1.0/24` (256, of which AWS reserves 5 → 251 usable) |
+| **Route table** | rules: destination → target | `0.0.0.0/0 → igw-...` |
+| **Internet gateway (IGW)** | two-way internet for public subnets | ALB, NAT gateway, bastion |
+| **NAT gateway** | outbound-only internet for private subnets (per AZ for HA) | app servers download packages |
+| **Security groups / NACLs** | firewalls (see that topic) | |
+| **VPC endpoints** | private access to AWS services, no internet | gateway endpoint for S3/DynamoDB (free); interface endpoints (PrivateLink) for ECR, SSM, Secrets Manager |
+| **Peering / Transit Gateway** | connect VPCs (TGW = hub for many VPCs and on-prem) | |
+| **Site-to-Site VPN / Direct Connect** | connect your office or data centre | |
+| **Flow Logs** | record accepted/rejected traffic | debugging, security |
+
+**Public vs private subnet** is only about the route table: a subnet whose route table sends `0.0.0.0/0` to an **IGW** is public. Instances there also need a public IP to be reachable.
+
+**Standard layout** (2 or 3 AZs):
+
+| Subnet | AZ-a | AZ-b | Contains |
+| --- | --- | --- | --- |
+| public | 10.0.1.0/24 | 10.0.2.0/24 | ALB, NAT gateway |
+| private app | 10.0.11.0/24 | 10.0.12.0/24 | EC2 / ECS tasks / Lambda |
+| private data | 10.0.21.0/24 | 10.0.22.0/24 | RDS, ElastiCache |
+
+**CIDR tips**: plan non-overlapping ranges (needed for peering/VPN), leave space to grow, `/16` VPC and `/24` subnets is a common start. **Cost tip**: NAT gateways charge per hour and per GB; use S3/DynamoDB gateway endpoints and interface endpoints to cut NAT traffic.
+
+## Code example
+
+```python
+import boto3
+
+ec2 = boto3.client("ec2", region_name="ap-south-1")
+vpc = ec2.create_vpc(CidrBlock="10.0.0.0/16")["Vpc"]["VpcId"]
+pub = ec2.create_subnet(VpcId=vpc, CidrBlock="10.0.1.0/24", AvailabilityZone="ap-south-1a")["Subnet"]
+prv = ec2.create_subnet(VpcId=vpc, CidrBlock="10.0.11.0/24", AvailabilityZone="ap-south-1a")["Subnet"]
+
+igw = ec2.create_internet_gateway()["InternetGateway"]["InternetGatewayId"]
+ec2.attach_internet_gateway(InternetGatewayId=igw, VpcId=vpc)
+rt = ec2.create_route_table(VpcId=vpc)["RouteTable"]["RouteTableId"]
+ec2.create_route(RouteTableId=rt, DestinationCidrBlock="0.0.0.0/0", GatewayId=igw)
+ec2.associate_route_table(RouteTableId=rt, SubnetId=pub["SubnetId"])     # this makes it public
+
+print("subnets:", pub["CidrBlock"], pub["AvailableIpAddressCount"], "usable,", prv["CidrBlock"])
+routes = ec2.describe_route_tables(RouteTableIds=[rt])["RouteTables"][0]["Routes"]
+print("public routes:", [(r["DestinationCidrBlock"], r["GatewayId"]) for r in routes])
+```
+
+```output
+subnets: 10.0.1.0/24 251 usable, 10.0.11.0/24
+public routes: [('10.0.0.0/16', 'local'), ('0.0.0.0/0', 'igw-...')]
+```
+
+(Run against a mock of AWS.) The `local` route lets everything inside the VPC talk; the private subnet's table would have `0.0.0.0/0 → nat-...` instead.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "internet", "label": "Internet", "icon": "🌍", "col": 0, "row": 1, "info": "Customers and the package mirrors your servers download from.", "example": "pypi.org" },
+    { "id": "igw", "label": "Internet gateway", "icon": "🚪", "col": 1, "row": 1, "info": "Attached to the VPC. Public subnets route 0.0.0.0/0 here.", "example": "igw-..." },
+    { "id": "pub", "label": "Public subnet", "icon": "🌐", "col": 2, "row": 0, "info": "10.0.1.0/24 in AZ-a: ALB and NAT gateway live here.", "example": "route 0.0.0.0/0 → igw" },
+    { "id": "nat", "label": "NAT gateway", "icon": "🔁", "col": 2, "row": 2, "info": "In the public subnet; lets private instances start outbound connections. Nothing can start a connection inward.", "example": "One per AZ for HA" },
+    { "id": "app", "label": "Private app subnet", "icon": "🖥️", "col": 3, "row": 1, "info": "10.0.11.0/24: ECS tasks / EC2. Route 0.0.0.0/0 → nat.", "example": "pip install works; no inbound from internet" },
+    { "id": "data", "label": "Private data subnet", "icon": "🗄️", "col": 4, "row": 1, "info": "RDS and ElastiCache; often no internet route at all.", "example": "10.0.21.0/24" },
+    { "id": "vpce", "label": "S3 gateway endpoint", "icon": "🔌", "col": 4, "row": 2, "info": "Route to S3 inside AWS's network: no NAT charges, no internet.", "example": "pl-... → vpce-..." }
+  ],
+  "edges": [
+    ["internet", "igw"],
+    ["igw", "pub"],
+    ["pub", "app", "ALB → tasks"],
+    ["app", "nat", "outbound"],
+    ["nat", "igw"],
+    ["app", "data", "local route"],
+    ["app", "vpce", "S3"]
+  ],
+  "flows": [
+    {
+      "name": "Customer request",
+      "steps": [
+        ["internet", "Customer → https://shop.example.com."],
+        ["igw", "Enters the VPC through the internet gateway."],
+        ["pub", "The ALB in the public subnet receives it."],
+        ["app", "ALB forwards to a task in the private subnet (local route)."],
+        ["data", "The task queries RDS in the data subnet."]
+      ]
+    },
+    {
+      "name": "Server downloads a package",
+      "steps": [
+        ["app", "The task calls pypi.org."],
+        ["nat", "Route 0.0.0.0/0 → NAT gateway, which uses its public IP."],
+        ["igw", "Out to the internet; the reply comes back the same way."]
+      ]
+    },
+    {
+      "name": "Upload to S3 privately",
+      "steps": [
+        ["app", "The task uploads an invoice to S3."],
+        ["vpce", "The gateway endpoint route sends it directly to S3: no NAT cost."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Everything in public subnets">
+
+<Wrong>
+
+```text
+App servers and the database in a public subnet with public IPs "because it was easier".
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Only load balancers/NAT in public subnets; apps and data in private subnets across ≥ 2 AZs.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Overlapping CIDRs">
+
+<Wrong>
+
+```text
+Every VPC uses 10.0.0.0/16 → later peering or VPN to the office is impossible.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Plan ranges per account/environment (10.0/16 prod, 10.1/16 staging, 10.2/16 dev) with IPAM.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What makes a subnet public or private?">
+
+Its route table: a public subnet has a route for 0.0.0.0/0 to an internet gateway (and instances need public IPs); a private subnet has no route to an internet gateway, typically sending outbound traffic through a NAT gateway or having no internet route at all.
+
+</QA>
+
+<QA q="What is the difference between an internet gateway and a NAT gateway?">
+
+An internet gateway allows two-way traffic between the internet and resources with public IPs in public subnets. A NAT gateway sits in a public subnet and lets instances in private subnets start outbound connections to the internet (updates, external APIs) while blocking connections initiated from outside.
+
+</QA>
+
+<QA q="How can private resources reach S3 without going through the internet?">
+
+Through a VPC gateway endpoint for S3 (and DynamoDB), added to the private subnets' route tables, which is free and avoids NAT data charges; or an interface endpoint (PrivateLink). Endpoint policies and bucket policies with aws:SourceVpce can restrict access further.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Private instances need to download updates. Use...',
+      options: ['Internet gateway on their subnet', 'NAT gateway', 'Elastic IP each', 'Route 53'],
+      answer: 1,
+      why: 'Outbound-only internet.',
+    },
+    {
+      q: 'Usable IPs in a /24 subnet on AWS?',
+      options: ['256', '254', '251', '250'],
+      answer: 2,
+      why: 'AWS reserves 5 addresses.',
+    },
+    {
+      q: 'A subnet spans...',
+      options: ['One AZ', 'All AZs', 'Many Regions', 'One instance'],
+      answer: 0,
+      why: 'Create one per AZ.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Piece | Remember |
+| --- | --- |
+| VPC | Region-wide · CIDR e.g. `10.0.0.0/16` |
+| Subnet | one AZ · `/24` = 251 usable |
+| Public | route `0.0.0.0/0 → igw` |
+| Private outbound | route `0.0.0.0/0 → nat` (NAT per AZ) |
+| AWS services privately | gateway endpoints (S3, DynamoDB) · interface endpoints |
+| Connect VPCs | peering · Transit Gateway |
+| On-prem | Site-to-Site VPN · Direct Connect |
+| Debug | VPC Flow Logs · Reachability Analyzer |
+| Layout | public (ALB, NAT) · private app · private data × 2–3 AZs |
+
+</CheatSheet>

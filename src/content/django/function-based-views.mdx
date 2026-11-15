@@ -1,0 +1,225 @@
+---
+id: django-function-based-views
+title: Function-based views (FBV)
+summary: A function-based view is a Python function that takes an HttpRequest and returns an HttpResponse; you branch on request.method, read request.GET and request.POST, use shortcuts like render, redirect and get_object_or_404, and add behaviour with decorators such as login_required.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **counter clerk** with a simple instruction card: "If someone asks to see a product, show it. If someone hands in a form, check it; if it is fine, file it and send them to the next counter; if not, hand it back with notes." The card is the function.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+from django.http import JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
+
+def product_detail(request, pk):
+    product = get_object_or_404(Product, pk=pk)                       # 404 if missing
+    return render(request, "store/product_detail.html", {"product": product})
+```
+
+The `request` object:
+
+| Attribute | Contains |
+| --- | --- |
+| `request.method` | `"GET"`, `"POST"`... |
+| `request.GET` | query string: `request.GET.get("q")` |
+| `request.POST` | form data |
+| `request.FILES` | uploads |
+| `request.user` | the logged-in user or `AnonymousUser` |
+| `request.session` | session data |
+| `request.headers`, `request.COOKIES` | headers and cookies |
+| `request.body` | raw body (JSON APIs) |
+
+Shortcuts: `render(request, template, context)`, `redirect("name", pk=1)`, `get_object_or_404`, `get_list_or_404`, `JsonResponse(dict)`, `HttpResponse(text, status=...)`.
+
+**The GET/POST pattern** (form views):
+
+```python
+@login_required
+def product_create(request):
+    if request.method == "POST":
+        form = ProductForm(request.POST)
+        if form.is_valid():
+            product = form.save()
+            return redirect("store:product-detail", pk=product.pk)   # Post/Redirect/Get
+    else:
+        form = ProductForm()
+    return render(request, "store/product_form.html", {"form": form})   # GET, or POST with errors
+```
+
+**Decorators** add behaviour:
+
+| Decorator | Effect |
+| --- | --- |
+| `@login_required` | redirect anonymous users to the login page |
+| `@permission_required("store.add_product")` | check a permission |
+| `@require_http_methods(["GET", "POST"])`, `@require_POST` | 405 for other methods |
+| `@cache_page(60 * 15)` | cache the response |
+| `@csrf_exempt` | skip CSRF (webhooks only, carefully) |
+| `@transaction.atomic` | run in one transaction |
+
+FBVs are explicit and easy to read, great for unique logic. For standard list/detail/create screens, class-based views save code (next topic).
+
+## Code example
+
+```python
+def product_list(request):
+    products = Product.active.select_related("category")
+    q = request.GET.get("q")
+    if q:
+        products = products.filter(name__icontains=q)
+    return render(request, "store/product_list.html", {"products": products, "q": q})
+
+def health(request):
+    return JsonResponse({"status": "ok"})
+```
+
+```output
+GET /products/?q=cable          → 200  Products matching "cable" · USB Cable (Electronics) ₹199
+GET /products/1/                → 200  CLEAN CODE · Books · ₹450.00
+GET /products/999/              → 404
+GET /products/new/ (anonymous)  → 302  /accounts/login/?next=/products/new/
+POST /products/new/ price=-5    → 200  form shown again: {"price": [{"message": "Price must be positive."}]}
+POST /products/new/ price=799   → 302  /products/8/
+GET /products/health/           → 200  {"status": "ok"}
+```
+
+<Playground kind="none">
+
+```python
+# store/views.py — a JSON endpoint that handles GET and POST in one function
+import json
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
+
+NOTES: list[str] = []
+
+@csrf_exempt                                   # demo only: real APIs use DRF + auth
+@require_http_methods(["GET", "POST"])
+def notes(request):
+    if request.method == "POST":
+        data = json.loads(request.body or "{}")
+        if not data.get("text"):
+            return JsonResponse({"error": "text is required"}, status=400)
+        NOTES.append(data["text"])
+        return JsonResponse({"count": len(NOTES)}, status=201)
+    return JsonResponse({"notes": NOTES})
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Rendering after a successful POST">
+
+<Wrong>
+
+```python
+if form.is_valid():
+    form.save()
+    return render(request, "store/done.html")     # refresh resubmits the form → duplicate orders
+```
+
+</Wrong>
+
+<Right>
+
+```python
+if form.is_valid():
+    product = form.save()
+    return redirect("store:product-detail", pk=product.pk)    # Post/Redirect/Get
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Changing data on GET">
+
+<Wrong>
+
+```python
+def delete_product(request, pk):
+    Product.objects.filter(pk=pk).delete()        # a link prefetch or crawler deletes products
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@require_POST
+@permission_required("store.delete_product")
+def delete_product(request, pk): ...
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a function-based view?">
+
+A plain function that receives an HttpRequest (plus URL parameters) and returns an HttpResponse. It handles different methods with if-statements, uses shortcuts such as render, redirect and get_object_or_404, and gets cross-cutting behaviour from decorators like login_required, require_POST and cache_page.
+
+</QA>
+
+<QA q="What is the Post/Redirect/Get pattern?">
+
+After a successful POST the view returns a redirect (302/303) to a GET page instead of rendering directly, so refreshing the browser does not resubmit the form and create duplicates.
+
+</QA>
+
+<QA q="When do you choose FBVs over CBVs?">
+
+FBVs for unique or simple logic where explicit, top-to-bottom code is clearest; CBVs and generic views for standard CRUD patterns and when reusing behaviour through inheritance and mixins.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Read ?q=cable in a view?',
+      options: ['request.POST["q"]', 'request.GET.get("q")', 'request.q', 'request.body'],
+      answer: 1,
+      why: 'Query string → request.GET.',
+    },
+    {
+      q: 'Return 404 when an object is missing?',
+      options: ['Model.objects.get()', 'get_object_or_404()', 'filter().first()', 'try/except 500'],
+      answer: 1,
+      why: 'Raises Http404.',
+    },
+    {
+      q: 'After a successful form POST you should...',
+      options: ['render the same template', 'redirect', 'return JSON always', 'raise 404'],
+      answer: 1,
+      why: 'Post/Redirect/Get.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| HTML | `render(request, "app/t.html", {...})` |
+| JSON | `JsonResponse({...}, status=201)` |
+| Redirect | `redirect("store:product-detail", pk=p.pk)` |
+| 404 | `get_object_or_404(Model, pk=pk)` |
+| Method | `if request.method == "POST":` |
+| Data | `request.GET` · `request.POST` · `request.FILES` · `request.body` |
+| Guard | `@login_required` · `@permission_required` · `@require_POST` |
+
+</CheatSheet>

@@ -1,0 +1,220 @@
+---
+id: aws-s3
+title: S3
+summary: Amazon S3 stores any number of objects (files) in buckets with 11 nines of durability; objects are addressed by key, uploaded and downloaded over HTTPS or the SDK, private by default, and shared safely with presigned URLs; storage classes trade price for access speed.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+An endless **locker room**: each bucket is a locker room with a unique name, each object is a parcel with a label (the key, like `products/7/headphones.jpg`). AWS copies every parcel to several buildings so it is practically never lost. Lockers are locked by default; a **presigned URL** is a one-time token you give someone to pick up one parcel within 5 minutes.
+
+</Analogy>
+
+## Simple explanation
+
+| Concept | Meaning |
+| --- | --- |
+| **Bucket** | container with a **globally unique** name, created in a Region |
+| **Object** | the data (up to 5 TB) + metadata (content type, tags) |
+| **Key** | the full name: `products/7/headphones.jpg` (the "folders" are just prefixes) |
+| **Durability / availability** | 99.999999999% (11 nines) durability; ~99.99% availability (Standard) |
+
+**Storage classes**
+
+| Class | For | Note |
+| --- | --- | --- |
+| S3 Standard | frequently used data | default |
+| S3 Intelligent-Tiering | unknown access patterns | moves objects automatically |
+| Standard-IA / One Zone-IA | infrequent access | cheaper storage, retrieval fee |
+| Glacier Instant / Flexible / Deep Archive | archives | cheapest, minutes to hours to restore |
+
+**Everyday operations**
+
+```bash
+aws s3 mb s3://shop-media-shubham --region ap-south-1
+aws s3 cp headphones.jpg s3://shop-media-shubham/products/7/
+aws s3 ls s3://shop-media-shubham/products/ --recursive
+aws s3 sync ./build s3://shop-frontend --delete          # deploy a static site
+aws s3 presign s3://shop-media-shubham/invoices/2026/11/order-4.pdf --expires-in 300
+```
+
+**Typical uses**: user uploads, product images, static websites (with CloudFront), backups, logs, data lake (Athena queries), Docker layers, Terraform state.
+
+**Security basics**: buckets are **private by default** and **Block Public Access** is on. Give access with IAM policies (apps via roles), bucket policies, and **presigned URLs** for temporary download/upload. Encryption at rest is on by default (SSE-S3); use SSE-KMS for key control. See the next topic for permissions, versioning and lifecycle.
+
+Upload large files with **multipart upload** (the SDK/CLI does it automatically); let browsers upload directly with a **presigned POST/PUT** so files do not pass through your server. **Event notifications** can trigger Lambda, SQS or EventBridge on upload.
+
+## Code example
+
+```python
+import boto3
+
+s3 = boto3.client("s3", region_name="ap-south-1")
+s3.create_bucket(Bucket="shop-media-shubham", CreateBucketConfiguration={"LocationConstraint": "ap-south-1"})
+s3.put_object(Bucket="shop-media-shubham", Key="products/7/headphones.jpg", Body=jpeg_bytes, ContentType="image/jpeg")
+s3.put_object(Bucket="shop-media-shubham", Key="invoices/2026/11/order-4.pdf", Body=pdf_bytes)
+
+for o in s3.list_objects_v2(Bucket="shop-media-shubham")["Contents"]:
+    print(" ", o["Key"], o["Size"], "bytes", o["StorageClass"])
+print("prefix products/:", [o["Key"] for o in s3.list_objects_v2(Bucket="shop-media-shubham", Prefix="products/")["Contents"]])
+
+url = s3.generate_presigned_url("get_object", ExpiresIn=300,
+                                Params={"Bucket": "shop-media-shubham", "Key": "invoices/2026/11/order-4.pdf"})
+print("presigned:", url.split("?")[0], "?X-Amz-Algorithm=...&X-Amz-Expires=300&X-Amz-Signature=...")
+
+try:
+    s3.get_object(Bucket="shop-media-shubham", Key="nope.jpg")
+except s3.exceptions.NoSuchKey as e:
+    print("missing key:", e.response["Error"]["Code"])
+```
+
+```output
+  invoices/2026/11/order-4.pdf 9 bytes STANDARD
+  products/7/headphones.jpg 12 bytes STANDARD
+prefix products/: ['products/7/headphones.jpg']
+presigned: https://shop-media-shubham.s3.amazonaws.com/invoices/2026/11/order-4.pdf ?X-Amz-Algorithm=...&X-Amz-Expires=300&X-Amz-Signature=...
+missing key: NoSuchKey
+```
+
+(Run against a mock of AWS.) The presigned link lets a customer download only that invoice for 5 minutes, while the bucket stays private.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "browser", "label": "Customer browser", "icon": "🧑", "col": 0, "row": 1, "info": "Wants to upload a profile photo and download an invoice.", "example": "React app" },
+    { "id": "api", "label": "Your API", "icon": "🖥️", "col": 1, "row": 0, "info": "Checks the user is allowed, then creates a presigned URL with its IAM role. Never streams the file itself.", "example": "POST /uploads → presigned PUT URL" },
+    { "id": "bucket", "label": "S3 bucket (private)", "icon": "🪣", "col": 2, "row": 1, "info": "Block Public Access on; encrypted; objects addressed by key.", "example": "shop-media-shubham" },
+    { "id": "lambda", "label": "Lambda: thumbnail", "icon": "⚡", "col": 3, "row": 0, "info": "Triggered by ObjectCreated on uploads/; writes thumbs/.", "example": "Pillow resize to 300px" },
+    { "id": "cdn", "label": "CloudFront", "icon": "🌍", "col": 3, "row": 2, "info": "Serves product images fast from edge locations; only CloudFront can read the bucket (OAC).", "example": "img.shop.example.com" }
+  ],
+  "edges": [
+    ["browser", "api", "1. ask"],
+    ["api", "browser", "2. presigned URL"],
+    ["browser", "bucket", "3. PUT/GET directly"],
+    ["bucket", "lambda", "event"],
+    ["bucket", "cdn", "origin"]
+  ],
+  "flows": [
+    {
+      "name": "Direct upload with a presigned URL",
+      "steps": [
+        ["browser", "The user picks a photo."],
+        ["api", "The API returns a presigned PUT URL valid for 5 minutes for uploads/user-42.jpg."],
+        ["browser", "The browser uploads straight to S3: no load on your servers."],
+        ["bucket", "The object is stored (and encrypted)."],
+        ["lambda", "The upload event creates a thumbnail."],
+        ["cdn", "Pages show the image through CloudFront."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Making the bucket public to show images">
+
+<Wrong>
+
+```text
+Turn off Block Public Access and add "Principal": "*" to the bucket policy — then invoices and ID scans are public too.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Keep the bucket private; serve public images through CloudFront with Origin Access Control, and private files with presigned URLs.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Uploading big files through the API server">
+
+<Wrong>
+
+```text
+Browser → API server (holds 2 GB in memory / times out) → S3
+```
+
+</Wrong>
+
+<Right>
+
+```text
+API returns a presigned PUT/POST URL → browser uploads directly to S3 (multipart for big files).
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Amazon S3?">
+
+An object storage service for any amount of data, organised in buckets with globally unique names, where each object is addressed by a key and stored redundantly across multiple AZs for 11 nines of durability. It is accessed via HTTPS APIs, private by default, and offers storage classes, versioning, lifecycle rules, encryption, event notifications and static website hosting.
+
+</QA>
+
+<QA q="How do you let users download private files securely?">
+
+Generate presigned URLs on the server (with an IAM role that may read the object) after checking the user's permission; the URL grants time-limited access to one object. For public assets use CloudFront with Origin Access Control so the bucket itself stays private; CloudFront signed URLs or cookies work for private content at scale.
+
+</QA>
+
+<QA q="Is S3 a file system?">
+
+No. It is a flat key-value object store: "folders" are just key prefixes, objects are replaced as a whole (no in-place edits or appends), and it is accessed over an API rather than mounted like a disk. Use EBS for block storage or EFS for a shared file system; Mountpoint for S3 offers file-like read access.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Bucket names must be unique...',
+      options: ['Per account', 'Per Region', 'Globally', 'Per folder'],
+      answer: 2,
+      why: 'They form part of DNS names.',
+    },
+    {
+      q: 'Give a customer 5-minute access to one private invoice?',
+      options: ['Make it public', 'Presigned URL', 'Email the access key', 'Move it to EBS'],
+      answer: 1,
+      why: 'Time-limited, single object.',
+    },
+    {
+      q: 'Cheapest class for archives rarely restored?',
+      options: ['Standard', 'Intelligent-Tiering', 'Glacier Deep Archive', 'One Zone-IA'],
+      answer: 2,
+      why: 'Lowest storage price, hours to restore.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command / API |
+| --- | --- |
+| Create | `aws s3 mb s3://bucket --region ap-south-1` |
+| Upload / download | `aws s3 cp f s3://bucket/key` · `s3.put_object` / `get_object` |
+| List | `aws s3 ls s3://bucket/prefix/ --recursive` · `list_objects_v2(Prefix=)` |
+| Sync | `aws s3 sync ./build s3://site --delete` |
+| Temporary access | `aws s3 presign` · `generate_presigned_url` |
+| Classes | Standard · Intelligent-Tiering · IA · Glacier (Instant/Flexible/Deep Archive) |
+| Safety | private by default · Block Public Access · SSE encryption |
+| Events | ObjectCreated → Lambda / SQS / EventBridge |
+
+</CheatSheet>

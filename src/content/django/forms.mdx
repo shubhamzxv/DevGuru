@@ -1,0 +1,229 @@
+---
+id: django-forms
+title: Forms and ModelForms
+summary: Django forms declare fields, render HTML inputs, validate submitted data into cleaned_data and collect errors; ModelForm builds the form from a model and saves it; clean_<field> and clean() add custom validation.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **printed application form** at a government office: the boxes tell you what to fill (rendering), the clerk checks each box and the whole form (validation), writes notes next to wrong boxes and hands it back (errors), or stamps it and files it (save).
+
+</Analogy>
+
+## Simple explanation
+
+**A plain form**:
+
+```python
+from django import forms
+
+class ContactForm(forms.Form):
+    name = forms.CharField(max_length=50)
+    email = forms.EmailField()
+    message = forms.CharField(widget=forms.Textarea, min_length=10)
+```
+
+**A ModelForm** (fields from the model, plus `save()`):
+
+```python
+class ProductForm(forms.ModelForm):
+    class Meta:
+        model = Product
+        fields = ["name", "category", "price", "stock"]      # always list fields explicitly
+
+    def clean_price(self):                                   # one field
+        price = self.cleaned_data["price"]
+        if price <= 0:
+            raise forms.ValidationError("Price must be positive.")
+        return price
+
+    def clean(self):                                         # several fields together
+        data = super().clean()
+        if data.get("stock", 0) > 0 and data.get("price") is None:
+            self.add_error("price", "Products in stock need a price.")
+        return data
+```
+
+The flow in a view:
+
+```python
+form = ProductForm(request.POST or None)
+if request.method == "POST" and form.is_valid():
+    product = form.save()                 # ModelForm: INSERT (or UPDATE with instance=obj)
+    return redirect(...)
+return render(request, "store/product_form.html", {"form": form})
+```
+
+| Piece | Meaning |
+| --- | --- |
+| `form.is_valid()` | runs all validation |
+| `form.cleaned_data` | converted values (`Decimal`, `date`, model objects) |
+| `form.errors` | field → list of messages (`form.errors.as_json()`) |
+| `form.save(commit=False)` | object not saved yet: set extra fields, then `obj.save()` |
+| `ProductForm(instance=product)` | edit form |
+| `form.as_p` / `{{ form.name }}` / `{{ form.name.errors }}` | rendering |
+
+Order of validation: each field's `clean()` (type + validators) → `clean_<field>()` → form `clean()` → for ModelForm, model validation (`unique`, constraints).
+
+Other tools: **formsets** (many forms on one page), `django-crispy-forms` for Bootstrap/Tailwind rendering. For JSON APIs, DRF **serializers** play the same role.
+
+## Code example
+
+```python
+>>> form = ProductForm(data={"name": "Two Scoops", "category": books.pk, "price": "-5", "stock": 3})
+>>> form.is_valid()
+>>> form.errors.as_json()
+>>> form = ProductForm(data={"name": "Two Scoops", "category": books.pk, "price": "799", "stock": 3})
+>>> form.is_valid(), form.cleaned_data["price"]
+>>> form.save()
+>>> ContactForm(data={"name": "Asha", "email": "not-an-email", "message": "hi"}).errors
+```
+
+```output
+False
+{"price": [{"message": "Price must be positive.", "code": ""}]}
+(True, Decimal('799'))
+<Product: Two Scoops (₹799)>
+{'email': ['Enter a valid email address.'], 'message': ['Ensure this value has at least 10 characters (it has 2).']}
+```
+
+Through the browser: POST with price −5 re-shows the form (200) with the message next to the price box; POST with 799 redirects (302) to the new product.
+
+<Playground kind="none">
+
+```python
+# store/forms.py + views.py — a signup form with a cross-field check
+from django import forms
+from django.contrib.auth.models import User
+
+class SignupForm(forms.Form):
+    username = forms.CharField(min_length=3, max_length=30)
+    password = forms.CharField(widget=forms.PasswordInput, min_length=8)
+    confirm = forms.CharField(widget=forms.PasswordInput)
+
+    def clean_username(self):
+        username = self.cleaned_data["username"].lower()
+        if User.objects.filter(username=username).exists():
+            raise forms.ValidationError("That username is taken.")
+        return username
+
+    def clean(self):
+        data = super().clean()
+        if data.get("password") != data.get("confirm"):
+            self.add_error("confirm", "Passwords do not match.")
+        return data
+
+# in the view: if form.is_valid(): User.objects.create_user(form.cleaned_data["username"], password=form.cleaned_data["password"])
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="fields = '__all__'">
+
+<Wrong>
+
+```python
+class ProfileForm(forms.ModelForm):
+    class Meta:
+        model = User
+        fields = "__all__"      # users can set is_staff / is_superuser by adding fields to the POST
+```
+
+</Wrong>
+
+<Right>
+
+```python
+fields = ["first_name", "last_name", "email"]
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Reading request.POST directly after validation">
+
+<Wrong>
+
+```python
+if form.is_valid():
+    price = request.POST["price"]       # a raw string, not validated or converted
+```
+
+</Wrong>
+
+<Right>
+
+```python
+if form.is_valid():
+    price = form.cleaned_data["price"]  # Decimal, validated
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between Form and ModelForm?">
+
+A Form declares its fields explicitly and is used for any input (contact, search, login). A ModelForm generates fields and validation from a model (listed in Meta.fields), includes model validation such as uniqueness, and provides save() to create or update the instance.
+
+</QA>
+
+<QA q="How does form validation work in Django?">
+
+is_valid() triggers full_clean: each field converts and validates its value (to_python, validators), then `clean_<fieldname>()` methods run, then the form-level clean() for cross-field rules; for ModelForms the model's validation runs too. Valid data ends up in cleaned_data and problems in errors.
+
+</QA>
+
+<QA q="What does save(commit=False) do?">
+
+It builds the model instance from the cleaned data without saving it to the database, so you can set additional fields (such as the owner from request.user) before calling instance.save() and then form.save_m2m() for many-to-many data.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Validated values are in...',
+      options: ['request.POST', 'form.cleaned_data', 'form.data', 'form.fields'],
+      answer: 1,
+      why: 'Converted and validated.',
+    },
+    {
+      q: 'Check password == confirm?',
+      options: ['clean_password()', 'clean()', 'save()', 'Meta'],
+      answer: 1,
+      why: 'Cross-field rules go in clean().',
+    },
+    {
+      q: 'Edit an existing product with a ModelForm?',
+      options: ['ProductForm(product)', 'ProductForm(request.POST, instance=product)', 'ProductForm.edit()', 'product.form()'],
+      answer: 1,
+      why: 'instance= switches save() to UPDATE.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Form | `class F(forms.Form): email = forms.EmailField()` |
+| ModelForm | `class Meta: model = Product; fields = [...]` |
+| Bind | `F(request.POST or None, request.FILES or None)` |
+| Validate | `form.is_valid()` → `form.cleaned_data` / `form.errors` |
+| Field rule | `def clean_price(self): ... raise forms.ValidationError(...)` |
+| Cross-field | `def clean(self): ... self.add_error("confirm", "...")` |
+| Save | `form.save()` · `save(commit=False)` |
+| Edit | `F(request.POST, instance=obj)` |
+
+</CheatSheet>

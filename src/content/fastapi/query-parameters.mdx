@@ -1,0 +1,208 @@
+---
+id: fastapi-query-parameters
+title: Query parameters
+summary: Function parameters that are not in the path become query parameters (?skip=0&limit=10); a default value makes them optional, None makes them nullable, Query() adds rules, and list types accept repeated values.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Ordering at a juice shop: the **shop** is the path (`/products`); the **options** you add are the query string: "?size=large&sugar=less&ice=no". Leave them out and you get the defaults.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+@app.get("/products")
+def list_products(skip: int = 0, limit: int = 3, in_stock: bool | None = None, q: str | None = None):
+    ...
+```
+
+`GET /products?skip=3&limit=2&in_stock=true&q=pen`
+
+| Declaration | Meaning |
+| --- | --- |
+| `q: str` (no default) | **required** query parameter (missing → 422) |
+| `limit: int = 10` | optional with a default |
+| `q: str \| None = None` | optional, `None` when not given |
+| `in_stock: bool` | accepts `true/false`, `1/0`, `yes/no`, `on/off` |
+| `tags: list[str] = Query()` | repeated: `?tags=web&tags=api` |
+
+Rules with `Query()`:
+
+```python
+from typing import Annotated
+from fastapi import Query
+
+def search(
+    q: Annotated[str, Query(min_length=2, max_length=50)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=100)] = 20,
+): ...
+```
+
+Also `alias="item-id"` (a name that is not a valid Python identifier), `deprecated=True`, `description="..."` for the docs.
+
+Typical uses: **pagination** (`skip`/`limit` or `page`/`size`), **filtering** (`status=paid`), **search** (`q=...`), **sorting** (`sort=-created_at`). Always cap `limit`/`size` so nobody can request a million rows.
+
+FastAPI decides automatically: a name in the path → path parameter; a simple type not in the path → query parameter; a Pydantic model → request body.
+
+## Code example
+
+```python
+from typing import Annotated
+from fastapi import FastAPI, Query
+
+app = FastAPI()
+PRODUCTS = [{"name": f"Item {i}", "price": i * 100, "in_stock": i % 2 == 0} for i in range(1, 8)]
+
+@app.get("/products")
+def list_products(skip: int = 0, limit: int = 3, in_stock: bool | None = None, q: str | None = None):
+    items = PRODUCTS
+    if in_stock is not None:
+        items = [p for p in items if p["in_stock"] == in_stock]
+    if q:
+        items = [p for p in items if q.lower() in p["name"].lower()]
+    return items[skip : skip + limit]
+
+@app.get("/search")
+def search(q: Annotated[str, Query(min_length=2, max_length=50)], tags: Annotated[list[str], Query()] = []):
+    return {"q": q, "tags": tags}
+```
+
+```output
+GET /products                         -> 200 [{"name": "Item 1", "price": 100, "in_stock": false}, {"name": "Item 2", ...}, {"name": "Item 3", ...}]
+GET /products?skip=3&limit=2          -> 200 [{"name": "Item 4", "price": 400, "in_stock": true}, {"name": "Item 5", "price": 500, "in_stock": false}]
+GET /products?in_stock=yes            -> 200 [{"name": "Item 2", ...}, {"name": "Item 4", ...}, {"name": "Item 6", ...}]
+GET /products?limit=ten               -> 422 {"detail": [{"type": "int_parsing", "loc": ["query", "limit"], ...}]}
+GET /search?q=p                       -> 422 {"detail": [{"type": "string_too_short", "loc": ["query", "q"], "msg": "String should have at least 2 characters", ...}]}
+GET /search?q=python&tags=web&tags=api -> 200 {"q": "python", "tags": ["web", "api"]}
+GET /search                           -> 422 {"detail": [{"type": "missing", "loc": ["query", "q"], "msg": "Field required", "input": null}]}
+```
+
+<Playground kind="none">
+
+```python
+# main.py  →  fastapi dev main.py  →  open /docs and try different query strings
+from typing import Annotated
+from fastapi import FastAPI, Query
+
+app = FastAPI()
+ORDERS = [{"id": i, "status": "paid" if i % 3 else "pending"} for i in range(1, 51)]
+
+@app.get("/orders")
+def list_orders(
+    status: str | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=20)] = 5,
+):
+    items = [o for o in ORDERS if status is None or o["status"] == status]
+    start = (page - 1) * size
+    return {"page": page, "total": len(items), "items": items[start : start + size]}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Mutable or missing default makes it required by accident">
+
+<Wrong>
+
+```python
+def list_products(q: str | None):     # no "= None": q is REQUIRED (it may be null, but must be sent)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def list_products(q: str | None = None):
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="No upper limit on page size">
+
+<Wrong>
+
+```python
+def list_orders(limit: int = 10): ...     # ?limit=1000000 loads the whole table
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def list_orders(limit: Annotated[int, Query(ge=1, le=100)] = 10): ...
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does FastAPI know whether a parameter is a path, query or body parameter?">
+
+If the name appears in the path template it is a path parameter. Otherwise, a singular type (int, str, bool, list of them) is a query parameter, and a Pydantic model is the request body. You can be explicit with `Path()`, `Query()`, `Body()`, `Header()` and `Cookie()`.
+
+</QA>
+
+<QA q="How do you make a query parameter optional?">
+
+Give it a default: `limit: int = 10`, or `q: str | None = None` to allow it to be absent. Without a default it is required and a missing value returns 422.
+
+</QA>
+
+<QA q="How would you implement pagination?">
+
+With query parameters such as `skip`/`limit` (offset pagination) or `page`/`size`, validated with `Query(ge=..., le=...)`, returning items plus total or next-page information; for large or fast-changing tables use cursor (keyset) pagination, for example `?after_id=123`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'def f(q: str): ... — calling without ?q= returns...',
+      options: ['200 with q=None', '422 Field required', '404', '500'],
+      answer: 1,
+      why: 'No default means required.',
+    },
+    {
+      q: 'Accept ?tags=a&tags=b?',
+      options: ['tags: str', 'tags: list[str] = Query()', 'tags: dict', 'tags: set = Path()'],
+      answer: 1,
+      why: 'List type with Query().',
+    },
+    {
+      q: 'Limit size to at most 100?',
+      options: ['Query(max=100)', 'Query(le=100)', 'Query(limit=100)', 'Path(le=100)'],
+      answer: 1,
+      why: 'le = less than or equal.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Optional with default | `limit: int = 10` |
+| Optional, may be absent | `q: str \| None = None` |
+| Required | `q: str` |
+| Rules | `Annotated[int, Query(ge=1, le=100)]` |
+| String rules | `Query(min_length=2, pattern="^[a-z]+$")` |
+| Repeated | `tags: Annotated[list[str], Query()] = []` |
+| Odd name | `Query(alias="item-id")` |
+
+</CheatSheet>

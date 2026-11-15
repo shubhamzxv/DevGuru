@@ -1,0 +1,234 @@
+---
+id: django-settings
+title: Settings
+summary: settings.py configures a Django project (DEBUG, SECRET_KEY, ALLOWED_HOSTS, DATABASES, INSTALLED_APPS, MIDDLEWARE, TEMPLATES, static files); secrets and per-environment values should come from environment variables, often with split settings for dev and prod.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The **settings menu of a phone**: language, Wi-Fi password, notifications, storage. Same phone, different settings at home and at the office. Django's `settings.py` is that menu; the **environment variables** are like switching profiles without rewriting the phone's software.
+
+</Analogy>
+
+## Simple explanation
+
+The settings you must understand:
+
+| Setting | Meaning |
+| --- | --- |
+| `DEBUG` | `True` shows detailed error pages: **never** in production |
+| `SECRET_KEY` | signs sessions, CSRF tokens, password reset links: keep secret, long and random |
+| `ALLOWED_HOSTS` | domains this site answers to (`["shop.example.com"]`); required when DEBUG is False |
+| `DATABASES` | engine, name, user, password, host, port |
+| `INSTALLED_APPS` | apps the project uses |
+| `MIDDLEWARE` | request/response hooks, in order |
+| `ROOT_URLCONF` | the root `urls.py` |
+| `TEMPLATES` | template engine and folders |
+| `STATIC_URL` / `STATIC_ROOT` / `MEDIA_ROOT` | CSS/JS and uploaded files |
+| `AUTH_USER_MODEL` | your custom user model (set it at the start of a project) |
+| `TIME_ZONE`, `USE_TZ` | store times in UTC, display in `Asia/Kolkata` |
+| `CACHES`, `EMAIL_*`, `LOGGING` | infrastructure |
+
+**From the environment** (12-factor):
+
+```python
+import os
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
+DEBUG = os.environ.get("DJANGO_DEBUG", "false") == "true"
+ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost").split(",")
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("DB_NAME", "shop"),
+        "USER": os.environ.get("DB_USER", "shop"),
+        "PASSWORD": os.environ["DB_PASSWORD"],
+        "HOST": os.environ.get("DB_HOST", "localhost"),
+        "PORT": os.environ.get("DB_PORT", "5432"),
+        "CONN_MAX_AGE": 60,
+    }
+}
+```
+
+Libraries like **django-environ** or **python-decouple** read a `.env` file and parse types (`env.bool("DEBUG")`, `env.db("DATABASE_URL")`).
+
+**Split settings** for environments:
+
+```text
+config/settings/
+├── base.py         # shared
+├── dev.py          # from .base import *; DEBUG = True
+└── prod.py         # from .base import *; security settings
+```
+
+Choose with `DJANGO_SETTINGS_MODULE=config.settings.prod`.
+
+Read settings in code with `from django.conf import settings` → `settings.DEBUG`, never by importing the settings module directly.
+
+## Code example
+
+```bash
+DJANGO_DEBUG=false DJANGO_ALLOWED_HOSTS="" python manage.py check --deploy
+```
+
+```output
+(security.W004) You have not set a value for the SECURE_HSTS_SECONDS setting
+(security.W008) Your SECURE_SSL_REDIRECT setting is not set to True
+(security.W009) Your SECRET_KEY has less than 50 characters, less than 5 unique characters, or it's prefixed with 'django-insecure-' ...
+(security.W012) SESSION_COOKIE_SECURE is not set to True
+(security.W018) You should not have DEBUG set to True in deployment
+(security.W020) ALLOWED_HOSTS must not be empty in deployment
+System check identified 8 issues (0 silenced).
+```
+
+`check --deploy` is a free security review of your settings: run it in CI before every release.
+
+<Playground kind="terminal">
+
+```bash
+export DJANGO_SECRET_KEY="change-me-$(date +%s)-a-long-random-string"
+export DJANGO_DEBUG=false
+export DJANGO_ALLOWED_HOSTS=shop.example.com,www.shop.example.com
+export DB_PASSWORD=secret
+env
+echo "Debug is ${DJANGO_DEBUG}, hosts: ${DJANGO_ALLOWED_HOSTS}"
+echo "DJANGO_SECRET_KEY=..." >> .env
+cat .env
+```
+
+</Playground>
+
+The values a Django `settings.py` reads with `os.environ` are set like this on the server (or in Docker / ECS task definitions).
+
+<Mistakes>
+
+<Mistake title="DEBUG = True in production">
+
+<Wrong>
+
+```python
+DEBUG = True        # any error shows code, settings and environment details to visitors
+```
+
+</Wrong>
+
+<Right>
+
+```python
+DEBUG = os.environ.get("DJANGO_DEBUG", "false") == "true"    # default off
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="SECRET_KEY committed to git">
+
+<Wrong>
+
+```python
+SECRET_KEY = "django-insecure-k3j#..."     # anyone with the repo can forge sessions
+```
+
+</Wrong>
+
+<Right>
+
+```python
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]   # from Secrets Manager / environment
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Changing AUTH_USER_MODEL late">
+
+<Wrong>
+
+```text
+Six months in: "we need phone login", switching to a custom User model after migrations exist is painful.
+```
+
+</Wrong>
+
+<Right>
+
+```python
+# On day one:
+class User(AbstractUser):
+    phone = models.CharField(max_length=15, blank=True)
+AUTH_USER_MODEL = "accounts.User"
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you manage settings for different environments?">
+
+Keep shared settings in a base module and override per environment (dev, staging, prod) or use a single settings file driven by environment variables (django-environ), selecting with DJANGO_SETTINGS_MODULE. Secrets and environment-specific values (SECRET_KEY, database credentials, ALLOWED_HOSTS, DEBUG) come from environment variables or a secrets manager, never from source control.
+
+</QA>
+
+<QA q="What does ALLOWED_HOSTS do?">
+
+It lists the host/domain names the site may serve. Django checks the Host header against it when DEBUG is False and rejects others with 400, protecting against HTTP Host header attacks such as poisoned password reset links.
+
+</QA>
+
+<QA q="What is SECRET_KEY used for?">
+
+Cryptographic signing: sessions (with signed cookie backends), CSRF tokens, password reset tokens, messages and anything using django.core.signing. If it leaks, attackers can forge these; if it changes, existing sessions and links become invalid.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which setting must be False in production?',
+      options: ['USE_TZ', 'DEBUG', 'APPEND_SLASH', 'USE_I18N'],
+      answer: 1,
+      why: 'DEBUG pages leak internals.',
+    },
+    {
+      q: 'How should code read settings?',
+      options: ['import config.settings', 'from django.conf import settings', 'os.environ only', 'open("settings.py")'],
+      answer: 1,
+      why: 'django.conf.settings applies the right module and defaults.',
+    },
+    {
+      q: 'Which command reviews security settings?',
+      options: ['manage.py check --deploy', 'manage.py secure', 'pip audit', 'manage.py migrate'],
+      answer: 0,
+      why: 'Lists missing HTTPS, cookie, HSTS and DEBUG settings.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Setting | Production value |
+| --- | --- |
+| `DEBUG` | `False` |
+| `SECRET_KEY` | from env, 50+ random chars |
+| `ALLOWED_HOSTS` | `["shop.example.com"]` |
+| `DATABASES` | from env (`DB_*` or `DATABASE_URL`) |
+| `SECURE_SSL_REDIRECT` | `True` |
+| `SESSION_COOKIE_SECURE` / `CSRF_COOKIE_SECURE` | `True` |
+| `SECURE_HSTS_SECONDS` | e.g. `31536000` |
+| `TIME_ZONE` / `USE_TZ` | `"Asia/Kolkata"` / `True` |
+
+Select: `DJANGO_SETTINGS_MODULE=config.settings.prod` · Check: `manage.py check --deploy`
+
+</CheatSheet>

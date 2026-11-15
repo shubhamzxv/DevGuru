@@ -1,0 +1,209 @@
+---
+id: django-q-and-f-objects
+title: Q and F objects
+summary: Q objects build complex conditions with OR (|), AND (&) and NOT (~) and can be combined dynamically; F objects refer to a column's own value in the database, so you can compare two fields or update a value atomically without race conditions.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+**Q** is the "or / and / not" in a shopping request: "books **or** anything under 300, **but not** out of stock". **F** is saying "**whatever is on the shelf now, minus 2**", instead of reading the number yourself, walking back and writing a number that may already be wrong.
+
+</Analogy>
+
+## Simple explanation
+
+**Q objects**: plain `filter(a=1, b=2)` always means AND. For OR and NOT use `Q`:
+
+```python
+from django.db.models import Q
+
+Product.objects.filter(Q(price__lt=300) | Q(category__slug="books"))        # OR
+Product.objects.filter(~Q(category__slug="books") & Q(stock__gt=0))         # NOT ... AND
+Product.objects.filter(Q(price__lt=300) | Q(price__gt=2000), is_active=True)  # Q first, keywords after
+```
+
+Build filters **dynamically** (search forms, API filters):
+
+```python
+def search(q=None, max_price=None):
+    cond = Q()                                   # empty = no condition
+    if q:
+        cond &= Q(name__icontains=q) | Q(category__name__icontains=q)
+    if max_price:
+        cond &= Q(price__lte=max_price)
+    return Product.objects.filter(cond)
+```
+
+**F objects**: refer to a field's value **in the database**:
+
+```python
+from django.db.models import F
+
+Product.objects.filter(stock__lt=F("reorder_level"))                 # compare two columns
+OrderItem.objects.filter(price=F("product__price"))                  # across a relation
+Product.objects.filter(pk=7).update(stock=F("stock") - 2)            # atomic: UPDATE ... SET stock = stock - 2
+Product.objects.filter(category__slug="electronics").update(price=F("price") * Decimal("1.10"))   # +10%
+Product.objects.order_by(F("discount").desc(nulls_last=True))
+```
+
+Why `F` for updates matters: two customers buy the last items at the same moment.
+
+```text
+Python way:   both read stock=1 → both write stock=0 → sold 2, stock says 0, really -1
+F way:        UPDATE ... SET stock = stock - 1: the database applies both, no lost update
+```
+
+For a hard guarantee also filter: `.filter(pk=7, stock__gte=qty).update(stock=F("stock") - qty)` and check the returned row count, or use `select_for_update()` inside `transaction.atomic()`.
+
+After `obj.stock = F("stock") - 1; obj.save()`, call `obj.refresh_from_db()` to see the new number.
+
+## Code example
+
+```python
+>>> Product.objects.filter(Q(price__lt=300) | Q(category__slug="books")).values_list("name", flat=True)
+>>> Product.objects.filter(~Q(category__slug="books") & Q(stock__gt=0)).values_list("name", flat=True)
+>>> search("book", 700)
+>>> Product.objects.filter(name="USB Cable").update(stock=F("stock") - 2)
+>>> Product.objects.get(name="USB Cable").stock
+>>> Product.objects.filter(category__slug="electronics").update(price=F("price") * Decimal("1.10"))
+>>> Product.objects.filter(category__slug="electronics").values_list("name", "price")
+```
+
+```output
+<QuerySet ['Clean Code', 'Django for APIs', 'Fluent Python', 'Rubik Cube', 'USB Cable']>
+<QuerySet ['Headphones', 'Rubik Cube', 'USB Cable']>
+['Clean Code', 'Django for APIs']
+1
+38            (was 40)
+3
+<QuerySet [('Headphones', Decimal('1648.90')), ('Keyboard', Decimal('2748.90')), ('USB Cable', Decimal('218.90'))]>
+```
+
+`update()` returns the number of rows changed; no objects are loaded into Python.
+
+<Playground kind="sql">
+
+```sql
+CREATE TABLE product (id INTEGER PRIMARY KEY, name TEXT, price REAL, stock INTEGER, category TEXT);
+INSERT INTO product VALUES (1, 'Clean Code', 450, 12, 'books'), (4, 'USB Cable', 199, 40, 'electronics'),
+  (5, 'Headphones', 1499, 8, 'electronics'), (7, 'Rubik Cube', 299, 20, 'toys');
+
+-- Q(price__lt=300) | Q(category="books")
+SELECT name FROM product WHERE price < 300 OR category = 'books';
+-- ~Q(category="books") & Q(stock__gt=0)
+SELECT name FROM product WHERE NOT (category = 'books') AND stock > 0;
+-- update(stock=F("stock") - 2): the database does the maths, atomically
+UPDATE product SET stock = stock - 2 WHERE name = 'USB Cable';
+SELECT name, stock FROM product WHERE name = 'USB Cable';
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Read-modify-write in Python">
+
+<Wrong>
+
+```python
+product = Product.objects.get(pk=7)
+product.stock -= qty          # another request may have changed stock in between
+product.save()
+```
+
+</Wrong>
+
+<Right>
+
+```python
+updated = Product.objects.filter(pk=7, stock__gte=qty).update(stock=F("stock") - qty)
+if not updated:
+    raise OutOfStock()
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Expecting keyword arguments to be OR">
+
+<Wrong>
+
+```python
+Product.objects.filter(price__lt=300, category__slug="books")   # this is AND: cheap books only
+```
+
+</Wrong>
+
+<Right>
+
+```python
+Product.objects.filter(Q(price__lt=300) | Q(category__slug="books"))
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are Q objects used for?">
+
+To build complex WHERE clauses: OR with `|`, AND with `&`, negation with `~`, grouped with parentheses, and to compose conditions dynamically (start with `Q()` and add pieces). They can be combined with normal keyword arguments, which must come after the Q arguments.
+
+</QA>
+
+<QA q="What is an F expression and why is it important?">
+
+A reference to a model field's value at the database level. It allows comparing fields (`stock__lt=F("reorder_level")`), arithmetic in updates and annotations, and atomic updates like `update(stock=F("stock") - 1)` that avoid race conditions caused by reading a value into Python, changing it and saving it back.
+
+</QA>
+
+<QA q="How do you prevent overselling stock with concurrent orders?">
+
+Make the decrement atomic and conditional in the database: `filter(pk=id, stock__gte=qty).update(stock=F("stock") - qty)` and check that one row was updated; or lock the row with `select_for_update()` inside `transaction.atomic()`; plus a CHECK constraint stock >= 0 as a safety net.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Books OR price under 300?',
+      options: ['filter(category="books", price__lt=300)', 'filter(Q(category="books") | Q(price__lt=300))', 'exclude(...)', 'filter(OR=...)'],
+      answer: 1,
+      why: '| between Q objects is OR.',
+    },
+    {
+      q: 'Atomically reduce stock by 1?',
+      options: ['p.stock -= 1; p.save()', 'update(stock=F("stock") - 1)', 'stock=stock-1 in Python', 'delete and create'],
+      answer: 1,
+      why: 'The database computes it in one UPDATE.',
+    },
+    {
+      q: 'What does ~Q(...) mean?',
+      options: ['Approximately', 'NOT', 'OR', 'Optional'],
+      answer: 1,
+      why: 'Negation.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| OR | `filter(Q(a=1) \| Q(b=2))` |
+| AND / NOT | `Q(a=1) & ~Q(b=2)` |
+| Dynamic | `cond = Q(); cond &= Q(...)` |
+| Compare fields | `filter(stock__lt=F("reorder_level"))` |
+| Atomic update | `update(stock=F("stock") - 1)` |
+| Percent change | `update(price=F("price") * Decimal("1.10"))` |
+| Reload | `obj.refresh_from_db()` |
+| Lock row | `select_for_update()` in `transaction.atomic()` |
+
+</CheatSheet>

@@ -1,0 +1,225 @@
+---
+id: aws-route-53
+title: Route 53
+summary: Route 53 is AWS's DNS service; a hosted zone holds the records of a domain (A, AAAA, CNAME, MX, TXT and AWS alias records that point to load balancers, CloudFront or S3), TTLs control caching, health checks remove broken endpoints, and routing policies (weighted, latency, failover, geolocation) decide which answer each user gets.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The internet's **phone book**. People remember names (`shop.example.com`); computers need numbers (IP addresses). Route 53 is the page for your domain: it tells everyone which number to call, can give callers from Mumbai a nearer branch's number (latency routing), and stops giving out the number of a branch that is closed (health checks).
+
+</Analogy>
+
+## Simple explanation
+
+**How a lookup works**: browser → local resolver (ISP / 8.8.8.8) → root servers → `.com` servers → **your domain's name servers (Route 53)** → answer, cached for the record's **TTL**.
+
+| Record | Points to | Example |
+| --- | --- | --- |
+| **A / AAAA** | IPv4 / IPv6 address | `api` → `13.234.10.5` |
+| **Alias** (Route 53 only) | an AWS resource, at the zone apex too, free queries, follows IP changes | `shop.example.com` → ALB / CloudFront / S3 website |
+| **CNAME** | another name (not allowed at the apex) | `www` → `shop.example.com` |
+| **MX** | mail servers | `10 mail.shop.example.com` |
+| **TXT** | verification, SPF/DKIM/DMARC | `v=spf1 include:amazonses.com ~all` |
+| **NS / SOA** | created with the zone | delegation details |
+| **CAA** | which CAs may issue certificates | `0 issue "amazon.com"` |
+
+**Hosted zones**: **public** (internet) or **private** (resolves only inside chosen VPCs, e.g. `db.internal`). If the domain was bought elsewhere (GoDaddy, Namecheap), set its name servers to the four Route 53 NS values.
+
+**Routing policies**
+
+| Policy | Use |
+| --- | --- |
+| Simple | one answer |
+| **Weighted** | 90% old version / 10% new (canary), A/B |
+| **Latency** | send users to the fastest Region |
+| **Failover** | primary + secondary with health checks (DR) |
+| Geolocation / geoproximity | by country (legal, language) / distance |
+| Multivalue | several healthy IPs |
+
+**TTL tips**: lower the TTL (e.g. 60 s) a day before a migration, raise it after. Alias records use the target's TTL.
+
+## Code example
+
+```python
+import boto3
+
+r53 = boto3.client("route53")
+hz = r53.create_hosted_zone(Name="shop.example.com", CallerReference="2026-11-15")["HostedZone"]
+r53.change_resource_record_sets(HostedZoneId=hz["Id"], ChangeBatch={"Changes": [
+    {"Action": "UPSERT", "ResourceRecordSet": {"Name": "api.shop.example.com", "Type": "A",
+        "AliasTarget": {"HostedZoneId": "ZP97RAFLXTNZK", "DNSName": "shop-alb-1.ap-south-1.elb.amazonaws.com",
+                        "EvaluateTargetHealth": True}}},
+    {"Action": "UPSERT", "ResourceRecordSet": {"Name": "www.shop.example.com", "Type": "CNAME", "TTL": 300,
+        "ResourceRecords": [{"Value": "shop.example.com"}]}},
+    {"Action": "UPSERT", "ResourceRecordSet": {"Name": "shop.example.com", "Type": "MX", "TTL": 3600,
+        "ResourceRecords": [{"Value": "10 mail.shop.example.com"}]}},
+]})
+for rr in r53.list_resource_record_sets(HostedZoneId=hz["Id"])["ResourceRecordSets"]:
+    target = (rr.get("AliasTarget") or {}).get("DNSName") or [x["Value"] for x in rr.get("ResourceRecords", [])][:1]
+    print(" ", rr["Name"], rr["Type"], rr.get("TTL", ""), target)
+```
+
+```output
+  shop.example.com. MX 3600 ['10 mail.shop.example.com']
+  shop.example.com. NS 172800 ['ns-2048.awsdns-64.com']
+  shop.example.com. SOA 900 [...]
+  api.shop.example.com. A  shop-alb-1.ap-south-1.elb.amazonaws.com
+  www.shop.example.com. CNAME 300 ['shop.example.com']
+```
+
+(Run against a mock of AWS.) NS and SOA are created automatically. Check from your machine:
+
+```bash
+dig +short api.shop.example.com
+dig NS shop.example.com +short
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "user", "label": "Browser in Mumbai", "icon": "🧑", "col": 0, "row": 1, "info": "Types api.shop.example.com.", "example": "Needs an IP address" },
+    { "id": "resolver", "label": "Resolver (ISP / 8.8.8.8)", "icon": "🔁", "col": 1, "row": 1, "info": "Asks root and .com servers which name servers own the domain, then caches answers for the TTL.", "example": "Cache hit next time" },
+    { "id": "r53", "label": "Route 53 hosted zone", "icon": "📒", "col": 2, "row": 1, "info": "Authoritative answer for shop.example.com: alias A record to the ALB, with health evaluation.", "example": "Latency policy: ap-south-1 vs eu-west-1" },
+    { "id": "hc", "label": "Health check", "icon": "❤️", "col": 2, "row": 0, "info": "Probes /health in each Region; unhealthy endpoints are left out of answers.", "example": "Every 30 s from many locations" },
+    { "id": "alb1", "label": "ALB ap-south-1", "icon": "⚖️", "col": 3, "row": 0, "info": "Lowest latency for Indian users.", "example": "Healthy" },
+    { "id": "alb2", "label": "ALB eu-west-1", "icon": "⚖️", "col": 3, "row": 2, "info": "Lowest latency for European users; also the failover target.", "example": "Healthy" }
+  ],
+  "edges": [
+    ["user", "resolver", "query"],
+    ["resolver", "r53", "ask authoritative"],
+    ["hc", "r53", "status"],
+    ["r53", "alb1", "answer"],
+    ["r53", "alb2"]
+  ],
+  "flows": [
+    {
+      "name": "Normal lookup",
+      "steps": [
+        ["user", "The browser asks for api.shop.example.com."],
+        ["resolver", "Not cached: ask the root, then .com, then Route 53."],
+        ["r53", "Latency policy: Mumbai is closest to ap-south-1."],
+        ["alb1", "The answer is the Mumbai ALB's IPs; cached for its TTL."]
+      ]
+    },
+    {
+      "name": "Regional outage",
+      "steps": [
+        ["hc", "Mumbai /health fails 3 times."],
+        ["r53", "Mumbai is removed from answers."],
+        ["alb2", "New lookups get eu-west-1 until Mumbai recovers."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="CNAME at the zone apex">
+
+<Wrong>
+
+```text
+shop.example.com  CNAME  shop-alb-1.ap-south-1.elb.amazonaws.com    → not allowed by DNS
+```
+
+</Wrong>
+
+<Right>
+
+```text
+shop.example.com  A (Alias) → the ALB / CloudFront distribution
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Long TTL during a migration">
+
+<Wrong>
+
+```text
+TTL 86400 on the record you change today: some users hit the old server for a day.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Lower the TTL to 60 s at least one old-TTL period before the switch; raise it again afterwards.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between an alias record and a CNAME?">
+
+A CNAME maps a name to another name and cannot be used at the zone apex or alongside other records with the same name. A Route 53 alias record maps a name (including the apex) directly to an AWS resource such as an ALB, CloudFront distribution or S3 website endpoint, follows its changing IPs, can evaluate target health, and alias queries to AWS resources are free.
+
+</QA>
+
+<QA q="Which Route 53 routing policies do you know?">
+
+Simple, weighted (split traffic by weight for canaries), latency-based (nearest Region by measured latency), failover (active-passive with health checks), geolocation (by user country/continent), geoproximity (by distance with bias), multivalue answer (several healthy records) and IP-based routing.
+
+</QA>
+
+<QA q="What is TTL in DNS and why does it matter?">
+
+The time in seconds a resolver may cache a record. High TTLs reduce lookups and latency; low TTLs make changes take effect faster. Before migrations you lower TTLs so a switch propagates quickly.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Point example.com (apex) at a CloudFront distribution?',
+      options: ['CNAME', 'Alias A record', 'MX', 'TXT'],
+      answer: 1,
+      why: 'CNAME is not allowed at the apex.',
+    },
+    {
+      q: 'Send 10% of traffic to a new version?',
+      options: ['Weighted routing', 'Geolocation', 'Simple', 'Failover'],
+      answer: 0,
+      why: 'Weights 90 / 10.',
+    },
+    {
+      q: 'Prove domain ownership or set SPF?',
+      options: ['A', 'TXT', 'NS', 'AAAA'],
+      answer: 1,
+      why: 'TXT records.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Record / feature |
+| --- | --- |
+| Name → IP | A / AAAA |
+| Name → AWS resource (incl. apex) | Alias |
+| Name → name | CNAME (not apex) |
+| Mail | MX + TXT (SPF, DKIM, DMARC) |
+| Internal names | private hosted zone |
+| Canary | weighted |
+| Fastest Region | latency |
+| DR | failover + health checks |
+| Debug | `dig +short name` · `dig NS domain` |
+
+</CheatSheet>

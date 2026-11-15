@@ -1,0 +1,218 @@
+---
+id: aws-sns
+title: SNS
+summary: Amazon SNS is a managed publish/subscribe service; a publisher sends one message to a topic and SNS pushes a copy to every subscriber (SQS queues, Lambda functions, HTTPS endpoints, email, SMS, mobile push), with filter policies so each subscriber gets only the messages it cares about; SNS + SQS is the classic fan-out pattern.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **WhatsApp broadcast list**. You send one message ("Order 848 placed") to the list (the **topic**), and everyone on the list gets their own copy at the same time: the email team, the warehouse, the analytics team. Someone who only cares about big orders can set a filter so they only see those.
+
+</Analogy>
+
+## Simple explanation
+
+| Concept | Meaning |
+| --- | --- |
+| **Topic** | the channel you publish to (`order-placed`) |
+| **Publisher** | your app: `sns.publish(TopicArn=..., Message=...)` |
+| **Subscription** | an endpoint that receives every message: SQS, Lambda, HTTPS, email, SMS, mobile push, Firehose |
+| **Filter policy** | per subscription, on message attributes (or body): `{"total": [{"numeric": [">=", 500]}]}` |
+| **FIFO topic** | ordered + deduplicated, delivers to FIFO queues |
+
+**SQS vs SNS in one line**: SQS is **one message → one consumer** (pull, work distribution); SNS is **one message → many subscribers** (push, broadcast).
+
+**Fan-out pattern (SNS → several SQS queues)**: each service gets its own queue with its own retries, DLQ and pace. Adding a new consumer = adding a subscription; the publisher does not change.
+
+Details:
+
+- SNS pushes and retries (with a delivery policy for HTTP); it does **not store** messages for later reading, so put an SQS queue in front of consumers that may be down
+- **Raw message delivery** sends the plain message instead of the SNS JSON envelope
+- The queue's access policy must allow the topic to `sqs:SendMessage`
+- Message size up to 256 KB; message attributes used for filtering
+- Mobile push via APNs/FCM; SMS has per-country rules and costs; for real email campaigns use **SES**
+
+## Code example
+
+```python
+import boto3, json
+
+sns = boto3.client("sns", region_name="ap-south-1")
+sqs = boto3.client("sqs", region_name="ap-south-1")
+topic = sns.create_topic(Name="order-placed")["TopicArn"]
+
+queues = {}
+for name in ["email-q", "inventory-q", "analytics-q"]:
+    url = sqs.create_queue(QueueName=name)["QueueUrl"]; queues[name] = url
+    arn = sqs.get_queue_attributes(QueueUrl=url, AttributeNames=["QueueArn"])["Attributes"]["QueueArn"]
+    attrs = {"RawMessageDelivery": "true"}
+    if name == "analytics-q":                                  # only big orders
+        attrs["FilterPolicy"] = json.dumps({"total": [{"numeric": [">=", 500]}]})
+    sns.subscribe(TopicArn=topic, Protocol="sqs", Endpoint=arn, Attributes=attrs)
+
+for total in [848, 199]:
+    sns.publish(TopicArn=topic, Message=json.dumps({"order_id": total, "total": total}),
+                MessageAttributes={"total": {"DataType": "Number", "StringValue": str(total)}})
+
+for name, url in queues.items():
+    msgs = sqs.receive_message(QueueUrl=url, MaxNumberOfMessages=10).get("Messages", [])
+    print(" ", name, [json.loads(m["Body"])["total"] for m in msgs])
+```
+
+```output
+  email-q [848, 199]
+  inventory-q [848, 199]
+  analytics-q [848]
+```
+
+(Run against a mock of AWS.) One publish reached three queues; the filter kept the ₹199 order out of analytics.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "app", "label": "Order service", "icon": "🛒", "col": 0, "row": 1, "info": "Publishes once. Does not know who listens.", "example": "publish(order 848, total=848)" },
+    { "id": "topic", "label": "SNS topic: order-placed", "icon": "📣", "col": 1, "row": 1, "info": "Pushes a copy to every subscription, applying filter policies.", "example": "3 SQS + 1 Lambda subscriptions" },
+    { "id": "email", "label": "email-q → mail worker", "icon": "📧", "col": 2, "row": 0, "info": "Sends the confirmation email at its own pace; own DLQ.", "example": "All orders" },
+    { "id": "inv", "label": "inventory-q → stock worker", "icon": "📦", "col": 2, "row": 1, "info": "Reduces stock; if it is down, messages wait in its queue.", "example": "All orders" },
+    { "id": "ana", "label": "analytics-q (filtered)", "icon": "📊", "col": 2, "row": 2, "info": "Filter policy total >= 500: only big orders.", "example": "848 yes, 199 no" },
+    { "id": "lambda", "label": "Lambda: Slack alert", "icon": "⚡", "col": 3, "row": 1, "info": "Direct Lambda subscription for a quick notification.", "example": "Post to #sales" }
+  ],
+  "edges": [
+    ["app", "topic", "publish"],
+    ["topic", "email"],
+    ["topic", "inv"],
+    ["topic", "ana", "filter"],
+    ["topic", "lambda"]
+  ],
+  "flows": [
+    {
+      "name": "Fan-out",
+      "steps": [
+        ["app", "Order 848 placed: one publish."],
+        ["topic", "SNS copies it to each subscriber."],
+        ["email", "Email queue gets it."],
+        ["inv", "Inventory queue gets it."],
+        ["ana", "848 ≥ 500: analytics gets it."],
+        ["lambda", "Slack alert sent."]
+      ]
+    },
+    {
+      "name": "Adding a new consumer",
+      "steps": [
+        ["topic", "Create loyalty-q and subscribe it."],
+        ["app", "No code change in the order service."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Publishing to several queues yourself">
+
+<Wrong>
+
+```python
+sqs.send_message(QueueUrl=email_q, ...)
+sqs.send_message(QueueUrl=inventory_q, ...)   # every new consumer = change + deploy the order service
+```
+
+</Wrong>
+
+<Right>
+
+```python
+sns.publish(TopicArn=order_placed, ...)       # consumers subscribe themselves
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Subscribing a fragile HTTP endpoint directly">
+
+<Wrong>
+
+```text
+SNS → https://partner.example.com/hook; partner down for an hour → messages dropped after retries.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+SNS → SQS (with DLQ) → a worker that calls the partner with its own retries; or set a subscription DLQ.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between SNS and SQS?">
+
+SNS is pub/sub: a message published to a topic is pushed to all subscribers immediately and is not stored for later polling. SQS is a queue: messages are stored until a consumer polls, processes and deletes them, with each message handled by one consumer. They are often combined: SNS fans out to several SQS queues.
+
+</QA>
+
+<QA q="What is the SNS–SQS fan-out pattern?">
+
+A producer publishes to one SNS topic, and multiple SQS queues subscribe to it. Each downstream service consumes from its own queue independently, with its own scaling, retries and DLQ; new services can be added by subscribing without touching the producer. Filter policies limit what each queue receives.
+
+</QA>
+
+<QA q="How do SNS filter policies work?">
+
+A JSON policy on a subscription matches message attributes (or the message body with payload-based filtering) using exact values, prefixes, numeric ranges, anything-but and exists conditions. Only matching messages are delivered to that subscriber, so the publisher sends once and filtering happens in SNS.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'One event must reach email, inventory and analytics services?',
+      options: ['One SQS queue', 'SNS topic + SQS queues', 'S3', 'Route 53'],
+      answer: 1,
+      why: 'Fan-out.',
+    },
+    {
+      q: 'Does SNS keep messages for a consumer that is offline?',
+      options: ['Yes, 14 days', 'No; use an SQS subscriber', 'Only FIFO', 'Only email'],
+      answer: 1,
+      why: 'SNS pushes; SQS stores.',
+    },
+    {
+      q: 'Only receive orders with total >= 500?',
+      options: ['Visibility timeout', 'Filter policy', 'Delay queue', 'TTL'],
+      answer: 1,
+      why: 'Per-subscription filtering.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Model | pub/sub · push · one message → many |
+| Subscribers | SQS · Lambda · HTTPS · email · SMS · mobile push · Firehose |
+| Fan-out | SNS → several SQS queues (each with DLQ) |
+| Filter | `FilterPolicy` on attributes / body |
+| Plain body | `RawMessageDelivery: true` |
+| Order | FIFO topic → FIFO queues |
+| Permissions | queue policy allows the topic `sqs:SendMessage` |
+| Real email | SES |
+
+</CheatSheet>

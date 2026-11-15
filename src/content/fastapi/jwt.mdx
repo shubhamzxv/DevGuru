@@ -1,0 +1,231 @@
+---
+id: fastapi-jwt
+title: JWT tokens
+summary: A JWT is a signed token made of a header, a payload of claims (sub, exp) and a signature; the server creates it at login with a secret key, verifies the signature and expiry on every request, and never needs a session store, but anyone can read the payload, so it must not hold secrets.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **sealed tamper-proof envelope**: anyone can read the label on the outside (the payload: "for Asha, valid until 10:30"), but only the issuer has the stamp that makes the seal (the signature). If someone changes the label, the seal no longer matches and every guard rejects it.
+
+</Analogy>
+
+## Simple explanation
+
+A JWT is three Base64URL parts joined by dots:
+
+```text
+eyJhbGciOiJIUzI1NiIs...   .   eyJzdWIiOiJhc2hhIiwi...   .   Hb3n8x...
+        header                       payload                  signature
+{"alg":"HS256","typ":"JWT"}   {"sub":"asha","exp":1794728300}   HMAC(header.payload, SECRET_KEY)
+```
+
+Standard **claims** in the payload:
+
+| Claim | Meaning |
+| --- | --- |
+| `sub` | subject: the user id or username |
+| `exp` | expiry time (Unix seconds); after it the token is rejected |
+| `iat` | issued at |
+| `iss` / `aud` | issuer / audience (which service it is for) |
+| custom | `role`, `scopes`, `tenant_id`... (non-secret!) |
+
+Create and verify with **PyJWT** (`pip install pyjwt`):
+
+```python
+import jwt
+from datetime import datetime, timedelta, timezone
+
+SECRET_KEY = os.environ["SECRET_KEY"]       # long random string, never in git
+ALGORITHM = "HS256"
+
+def create_access_token(sub: str, minutes: int = 30) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    return jwt.encode({"sub": sub, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+
+payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])   # checks signature AND exp
+```
+
+Errors to handle: `jwt.ExpiredSignatureError` (expired), `jwt.InvalidTokenError` (bad signature, malformed).
+
+Key facts:
+
+- **Stateless**: no session table; any server with the key can verify. Good for horizontal scaling and microservices
+- **Readable by anyone**: Base64 is not encryption. No passwords or personal data in the payload
+- **Cannot be revoked easily** before `exp`: keep access tokens **short** (5–30 min) and use a longer-lived **refresh token** (stored server-side or rotated) to get new ones; keep a denylist for logout if needed
+- **HS256** (one shared secret) vs **RS256** (private key signs, public key verifies: other services verify without being able to issue). Cognito and Auth0 use RS256 with a JWKS endpoint
+- Always pass `algorithms=[...]` to `decode` (prevents algorithm confusion attacks)
+- In browsers, store tokens in HTTP-only cookies or memory, not localStorage, to reduce XSS risk
+
+## Code example
+
+```python
+import jwt
+from datetime import datetime, timedelta, timezone
+
+SECRET_KEY = "change-me-to-a-long-random-string-from-env-0123456789"
+ALGORITHM = "HS256"
+
+def create_access_token(sub: str, minutes: int = 30) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    return jwt.encode({"sub": sub, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Token expired", headers={"WWW-Authenticate": "Bearer"})
+    except jwt.InvalidTokenError:
+        raise HTTPException(401, "Could not validate credentials", headers={"WWW-Authenticate": "Bearer"})
+    user = USERS.get(payload.get("sub"))
+    if user is None:
+        raise HTTPException(401, "Could not validate credentials")
+    return user
+
+tok = create_access_token("asha")
+print(len(tok.split(".")), "parts")
+print(jwt.get_unverified_header(tok))
+print(jwt.decode(tok, options={"verify_signature": False}))      # readable without the key!
+```
+
+```output
+3 parts
+{'alg': 'HS256', 'typ': 'JWT'}
+{'sub': 'asha', 'exp': 1794728300}
+GET /me  valid token                -> 200 {"username": "asha", "role": "customer"}
+GET /me  token with changed bytes   -> 401 {"detail": "Could not validate credentials"}
+GET /me  token created 1 minute ago with minutes=-1 (expired) -> 401 {"detail": "Token expired"}
+```
+
+<Playground kind="python">
+
+```python
+# Decode a JWT payload by hand: it is only Base64URL, no key needed to READ it
+import base64, json
+
+token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhc2hhIiwicm9sZSI6ImN1c3RvbWVyIiwiZXhwIjoxNzk0NzI4MzAwfQ.c2lnbmF0dXJl"
+header, payload, signature = token.split(".")
+
+def b64url_decode(part: str) -> dict:
+    padded = part + "=" * (-len(part) % 4)
+    return json.loads(base64.urlsafe_b64decode(padded))
+
+print("header :", b64url_decode(header))
+print("payload:", b64url_decode(payload))
+print("Lesson: never put secrets in a JWT payload. The signature only proves it was not changed.")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Secrets in the payload">
+
+<Wrong>
+
+```python
+jwt.encode({"sub": "asha", "password": pw, "pan": "ABCDE1234F"}, KEY, algorithm="HS256")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+jwt.encode({"sub": str(user.id), "role": user.role, "exp": expire}, KEY, algorithm="HS256")
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Hard-coded or weak secret, no expiry">
+
+<Wrong>
+
+```python
+SECRET_KEY = "secret"
+jwt.encode({"sub": "asha"}, SECRET_KEY)        # guessable key, token valid forever
+```
+
+</Wrong>
+
+<Right>
+
+```python
+SECRET_KEY = os.environ["SECRET_KEY"]          # e.g. from AWS Secrets Manager; openssl rand -hex 32
+jwt.encode({"sub": "asha", "exp": expire}, SECRET_KEY, algorithm="HS256")
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a JWT and how does it work?">
+
+A compact token with a header (algorithm), a payload of claims (sub, exp, roles) and a signature over both, created with a secret (HS256) or private key (RS256). The server issues it at login; on each request it verifies the signature and expiry and trusts the claims, without a session lookup. The content is encoded, not encrypted.
+
+</QA>
+
+<QA q="How do you log out or revoke a JWT?">
+
+Signed tokens stay valid until they expire, so keep access tokens short-lived and use refresh tokens that are stored and can be revoked or rotated; for immediate revocation keep a denylist of token ids (jti) in Redis until their expiry, or check a per-user token version.
+
+</QA>
+
+<QA q="What is the difference between HS256 and RS256?">
+
+HS256 uses one shared secret both to sign and verify, so every verifier could also create tokens. RS256 signs with a private key and verifies with a public key (often published as JWKS), so many services can verify tokens while only the auth server can issue them.
+
+</QA>
+
+<QA q="What are access and refresh tokens?">
+
+The access token is short-lived and sent with every API call. The refresh token lives longer, is sent only to the token endpoint to get a new access token, is stored more carefully (HTTP-only cookie, server-side record) and can be revoked or rotated, limiting the damage of a stolen access token.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Can anyone read a JWT payload?',
+      options: ['No, it is encrypted', 'Yes, it is only Base64URL encoded', 'Only with the secret', 'Only the browser'],
+      answer: 1,
+      why: 'The signature protects integrity, not secrecy.',
+    },
+    {
+      q: 'Which claim sets the expiry?',
+      options: ['sub', 'exp', 'iss', 'iat'],
+      answer: 1,
+      why: 'Unix timestamp; decode rejects expired tokens.',
+    },
+    {
+      q: 'Someone edits the payload. What happens on decode?',
+      options: ['Accepted', 'InvalidTokenError: signature mismatch', 'Token refreshes', 'Server crashes'],
+      answer: 1,
+      why: 'The signature no longer matches.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Install | `pip install pyjwt` |
+| Create | `jwt.encode({"sub": id, "exp": expire}, KEY, algorithm="HS256")` |
+| Verify | `jwt.decode(token, KEY, algorithms=["HS256"])` |
+| Errors | `jwt.ExpiredSignatureError` · `jwt.InvalidTokenError` |
+| Key | `openssl rand -hex 32` → env var / Secrets Manager |
+| Lifetimes | access 5–30 min · refresh days, revocable |
+
+Parts: header.payload.signature · payload is readable · RS256 for many verifiers
+
+</CheatSheet>

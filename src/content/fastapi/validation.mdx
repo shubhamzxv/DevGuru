@@ -1,0 +1,251 @@
+---
+id: fastapi-validation
+title: Validation
+summary: Field() adds rules such as min_length, pattern, ge and le; Literal and Enum restrict choices; EmailStr checks emails; field_validator and model_validator add custom checks; FastAPI turns every failure into a 422 response listing each error.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+An exam registration desk checks: name at least 3 letters, age 18 or older, subject must be one from the list, and "confirm email" must match "email". Some rules are about **one box** (field rules), one is about **two boxes together** (model rule).
+
+</Analogy>
+
+## Simple explanation
+
+**Field rules with `Field()`**
+
+| Rule | Example |
+| --- | --- |
+| Length | `Field(min_length=3, max_length=20)` |
+| Pattern (regex) | `Field(pattern=r"^[a-z0-9_]+$")` |
+| Numbers | `Field(gt=0)`, `ge=18`, `le=120`, `multiple_of=5` |
+| Lists | `Field(min_length=1, max_length=10)` |
+| Default / docs | `Field(default=1, description="...", examples=[3])` |
+
+**Choices**: `plan: Literal["free", "pro"]` or an `Enum`.
+
+**Special types**: `EmailStr` (needs `pip install "pydantic[email]"`), `HttpUrl`, `UUID`, `date`, `datetime`, `PositiveInt`, `constr`/`conint` (older style).
+
+**Custom rules for one field**
+
+```python
+from pydantic import field_validator
+
+@field_validator("username")
+@classmethod
+def not_reserved(cls, v: str) -> str:
+    if v in {"admin", "root"}:
+        raise ValueError("this username is reserved")
+    return v.lower()              # validators can also clean the value
+```
+
+**Rules across fields**
+
+```python
+from pydantic import model_validator
+
+@model_validator(mode="after")
+def passwords_match(self):
+    if self.password != self.confirm_password:
+        raise ValueError("passwords do not match")
+    return self
+```
+
+The same `Query()`, `Path()` and `Header()` accept the same rules (`ge`, `min_length`, `pattern`).
+
+**The 422 response**: each error has `type`, `loc` (where), `msg` (what) and `input`. Frontends use `loc` to show the message under the right input box. You can reshape it globally with an exception handler for `RequestValidationError`.
+
+Validation belongs at the **edge**: check shape and format with Pydantic; check **business rules that need the database** (is the username taken? is there stock?) in the endpoint or service and return 409/400 with `HTTPException`.
+
+## Code example
+
+```python
+from typing import Literal
+from fastapi import FastAPI
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+class SignupIn(BaseModel):
+    username: str = Field(min_length=3, max_length=20, pattern=r"^[a-z0-9_]+$")
+    password: str = Field(min_length=8)
+    confirm_password: str
+    age: int = Field(ge=18, le=120)
+    plan: Literal["free", "pro"] = "free"
+
+    @field_validator("username")
+    @classmethod
+    def not_reserved(cls, v: str) -> str:
+        if v in {"admin", "root"}:
+            raise ValueError("this username is reserved")
+        return v
+
+    @model_validator(mode="after")
+    def passwords_match(self):
+        if self.password != self.confirm_password:
+            raise ValueError("passwords do not match")
+        return self
+
+app = FastAPI()
+
+@app.post("/signup", status_code=201)
+def signup(data: SignupIn):
+    return {"username": data.username, "plan": data.plan}
+```
+
+```output
+POST {"username": "shubham_k", "password": "s3cretpass", "confirm_password": "s3cretpass", "age": 27}
+  -> 201 {"username": "shubham_k", "plan": "free"}
+
+POST {"username": "Sh", "password": "short", "confirm_password": "short", "age": 15, "plan": "gold"}
+  -> 422 [(['body', 'username'], 'String should have at least 3 characters'),
+          (['body', 'password'], 'String should have at least 8 characters'),
+          (['body', 'age'], 'Input should be greater than or equal to 18'),
+          (['body', 'plan'], "Input should be 'free' or 'pro'")]
+
+POST {"username": "admin", ...}               -> 422 [(['body', 'username'], 'Value error, this username is reserved')]
+POST {..., "confirm_password": "different"}   -> 422 [(['body'], 'Value error, passwords do not match')]
+```
+
+<Playground kind="python">
+
+```python
+# Pydantic runs in your browser: press Run (the first run downloads it)
+from typing import Literal
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
+class ProductIn(BaseModel):
+    name: str = Field(min_length=2, max_length=50)
+    price: float = Field(gt=0)
+    stock: int = Field(ge=0, default=0)
+    category: Literal["books", "electronics", "toys"]
+
+    @field_validator("name")
+    @classmethod
+    def clean(cls, v: str) -> str:
+        return v.strip().title()
+
+print(ProductIn(name="  usb cable ", price=199, category="electronics"))
+
+try:
+    ProductIn(name="x", price=0, stock=-1, category="food")
+except ValidationError as e:
+    for err in e.errors():
+        print(err["loc"][0], "→", err["msg"])
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Checking format by hand inside the endpoint">
+
+<Wrong>
+
+```python
+@app.post("/signup")
+def signup(data: dict):
+    if len(data.get("username", "")) < 3:
+        return {"error": "short"}          # status 200, inconsistent errors
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class SignupIn(BaseModel):
+    username: str = Field(min_length=3)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Database checks inside a validator">
+
+<Wrong>
+
+```python
+@field_validator("email")
+@classmethod
+def unique(cls, v):
+    if db.query(User).filter_by(email=v).first(): ...   # global db, hard to test, runs on every parse
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.post("/signup")
+def signup(data: SignupIn, db: Session = Depends(get_db)):
+    if db.query(User).filter_by(email=data.email).first():
+        raise HTTPException(409, "Email already registered")
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you add custom validation to a Pydantic model?">
+
+Use `@field_validator("field")` (a classmethod that receives the value, raises ValueError to reject it or returns a cleaned value) for single fields, and `@model_validator(mode="after")` for rules involving several fields such as password confirmation. Simple constraints go in `Field()` (min_length, pattern, ge, le).
+
+</QA>
+
+<QA q="What does FastAPI return for validation errors?">
+
+HTTP 422 with a JSON body `{"detail": [...]}` where each item has the error type, the location (body, query, path plus field name), a human-readable message and the input value. All errors are reported at once.
+
+</QA>
+
+<QA q="Where should uniqueness or stock checks go?">
+
+Not in Pydantic validators, which should be pure and fast. They belong in the endpoint or service layer with access to the database via a dependency, returning a suitable HTTP error such as 409 Conflict, and ideally backed by a database unique constraint for race conditions.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Age must be at least 18?',
+      options: ['Field(min=18)', 'Field(ge=18)', 'Field(gt=18)', 'Field(min_length=18)'],
+      answer: 1,
+      why: 'ge = greater than or equal.',
+    },
+    {
+      q: 'Rule comparing password and confirm_password?',
+      options: ['Field(pattern)', 'field_validator on one field', 'model_validator', 'Query()'],
+      answer: 2,
+      why: 'Model validators see all fields.',
+    },
+    {
+      q: 'Allow only "free" or "pro"?',
+      options: ['str', 'Literal["free", "pro"]', 'list[str]', 'Field(choices=...)'],
+      answer: 1,
+      why: 'Literal (or an Enum).',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Length | `Field(min_length=3, max_length=20)` |
+| Regex | `Field(pattern=r"^[a-z0-9_]+$")` |
+| Range | `Field(ge=18, le=120)` · `gt=0` |
+| Choices | `Literal["a", "b"]` · Enum |
+| Email / URL | `EmailStr` · `HttpUrl` |
+| One field | `@field_validator("x")` + `@classmethod` |
+| Several fields | `@model_validator(mode="after")` |
+| Reject | `raise ValueError("message")` |
+| Result | 422 with `loc`, `msg`, `type` per error |
+
+</CheatSheet>

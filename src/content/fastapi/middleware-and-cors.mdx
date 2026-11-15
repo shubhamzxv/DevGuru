@@ -1,0 +1,205 @@
+---
+id: fastapi-middleware-and-cors
+title: Middleware and CORS
+summary: Middleware wraps every request and response, which is useful for timing, logging, request IDs and security headers; CORSMiddleware tells browsers which other origins (frontends) may call your API.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A building's **security gate**: every visitor passes it on the way in and on the way out. The guard can write the time in a register, check badges or stamp a pass, for everyone, without each office doing it. That is **middleware**.
+
+**CORS** is the guest list for a different building: the browser asks "is a visitor from shop.example.com allowed?" and the API's answer decides.
+
+</Analogy>
+
+## Simple explanation
+
+**Middleware**
+
+```python
+import time
+from fastapi import Request
+
+@app.middleware("http")
+async def timing(request: Request, call_next):
+    start = time.perf_counter()               # before the endpoint
+    response = await call_next(request)       # run the rest of the app
+    response.headers["X-Process-Time"] = f"{(time.perf_counter() - start) * 1000:.1f}ms"
+    return response                           # after the endpoint
+```
+
+Common uses: request timing, access logs, adding a **request ID** for tracing, security headers, GZip (`GZipMiddleware`), forcing HTTPS (`HTTPSRedirectMiddleware`), trusted hosts. Middleware added last runs first (outermost).
+
+Middleware vs dependency: middleware runs for **every** request, even 404s, and sees the raw request/response; a dependency runs only for the routes that use it and can return values (user, db session). Auth is usually a dependency.
+
+**CORS (Cross-Origin Resource Sharing)**
+
+Browsers block JavaScript on `https://shop.example.com` from reading responses from `https://api.example.com` (a different **origin** = scheme + host + port) unless the API allows it with headers. Tools like curl and Postman are not affected: **CORS is a browser rule**.
+
+```python
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://shop.example.com", "http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,          # cookies / Authorization from the browser
+)
+```
+
+For "non-simple" requests (JSON POST, custom headers like Authorization) the browser first sends a **preflight** `OPTIONS` request; CORSMiddleware answers it.
+
+Rules:
+
+- List the exact frontend origins. `allow_origins=["*"]` cannot be combined with `allow_credentials=True`
+- A CORS error in the browser console is fixed on the **server**, not in the React code
+- Same origin (API served under `/api` of the same domain, for example behind CloudFront) needs no CORS at all
+
+## Code example
+
+```python
+import time
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["https://shop.example.com"],
+                   allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
+
+@app.middleware("http")
+async def timing(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    response.headers["X-Process-Time"] = f"{(time.perf_counter() - start) * 1000:.1f}ms"
+    return response
+
+@app.get("/products")
+def products():
+    return [{"name": "Pen"}]
+```
+
+```output
+GET /products  Origin: https://shop.example.com  -> 200, Access-Control-Allow-Origin: https://shop.example.com, X-Process-Time present
+GET /products  Origin: https://evil.example      -> 200, no Access-Control-Allow-Origin (the browser hides the response)
+OPTIONS preflight from https://shop.example.com  -> 200, Access-Control-Allow-Methods: DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT, ...
+OPTIONS preflight from https://evil.example      -> 400 Disallowed CORS origin
+```
+
+The server still answers the second GET; it is the **browser** that refuses to give the data to the page.
+
+<Playground kind="http">
+
+```http
+OPTIONS /books
+Origin: https://shop.example.com
+Access-Control-Request-Method: POST
+```
+
+</Playground>
+
+The DevGuru mock API answers a preflight with its CORS headers: look at the `Access-Control-Allow-*` lines.
+
+<Mistakes>
+
+<Mistake title="Fixing CORS in the frontend">
+
+<Wrong>
+
+```js
+fetch(url, { mode: "no-cors" })    // the response becomes unreadable ("opaque"): nothing works
+```
+
+</Wrong>
+
+<Right>
+
+```python
+app.add_middleware(CORSMiddleware, allow_origins=["https://shop.example.com"], ...)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Allow everything with credentials">
+
+<Wrong>
+
+```python
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True)   # not allowed by browsers; also unsafe
+```
+
+</Wrong>
+
+<Right>
+
+```python
+app.add_middleware(CORSMiddleware, allow_origins=settings.frontend_origins, allow_credentials=True)
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is CORS and why do you get CORS errors?">
+
+A browser security mechanism: scripts may only read responses from another origin if the server sends Access-Control-Allow-Origin (and related) headers permitting it. A frontend on one domain calling an API on another without those headers gets a CORS error; the fix is to configure the API (CORSMiddleware) with the allowed origins, methods and headers.
+
+</QA>
+
+<QA q="What is a preflight request?">
+
+An automatic OPTIONS request the browser sends before a cross-origin request that is not "simple" (for example JSON bodies, PUT/DELETE, or an Authorization header), asking which methods and headers are allowed. The real request is sent only if the server's response permits it.
+
+</QA>
+
+<QA q="What is the difference between middleware and dependencies?">
+
+Middleware wraps every request and response at the application level, seeing raw requests including unmatched routes, ideal for cross-cutting concerns like logging, timing, headers and CORS. Dependencies are attached to specific routes or routers, are resolved with validation and can provide values (current user, DB session), making them the right tool for auth and resources.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Does CORS block curl requests?',
+      options: ['Yes', 'No, it is a browser rule', 'Only POST', 'Only on Linux'],
+      answer: 1,
+      why: 'Browsers enforce CORS, not servers or curl.',
+    },
+    {
+      q: 'Where do you fix a CORS error?',
+      options: ['In the React code', 'On the API server', 'In DNS', 'In the database'],
+      answer: 1,
+      why: 'The server must send the allow headers.',
+    },
+    {
+      q: 'Which runs for every request including 404s?',
+      options: ['A dependency', 'Middleware', 'A response model', 'A background task'],
+      answer: 1,
+      why: 'Middleware wraps the whole app.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Custom middleware | `@app.middleware("http")` + `await call_next(request)` |
+| CORS | `app.add_middleware(CORSMiddleware, allow_origins=[...], allow_methods=["*"], allow_headers=["*"])` |
+| Cookies / auth from browser | `allow_credentials=True` + explicit origins |
+| Compression | `GZipMiddleware` |
+| Hosts | `TrustedHostMiddleware` |
+
+Origin = scheme + host + port · preflight = `OPTIONS` · CORS = browser only
+
+</CheatSheet>

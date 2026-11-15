@@ -1,0 +1,236 @@
+---
+id: fastapi-interview-revision
+title: FastAPI interview revision
+summary: A one-page revision of the FastAPI questions asked most in interviews, with short answers, scenario questions and a cheat sheet.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The night before the exam: the formula sheet and the past papers. This page is both for FastAPI.
+
+</Analogy>
+
+## Simple explanation
+
+**The 20 answers to know**
+
+| Question | Short answer |
+| --- | --- |
+| What is FastAPI | ASGI API framework on Starlette + Pydantic; type hints → validation + docs |
+| WSGI vs ASGI | sync, one request per worker vs async, many concurrent I/O requests |
+| How to run | `uvicorn main:app --reload` (dev) · `--workers N` / Gunicorn + Uvicorn workers (prod) |
+| Path vs query vs body | in the path / simple types not in the path / Pydantic model |
+| Optional query | give a default: `q: str \| None = None` |
+| Validation failure | automatic **422** with `loc`, `msg`, `type` |
+| Custom validation | `Field(ge=, min_length=, pattern=)`, `field_validator`, `model_validator` |
+| response_model | filters + validates output, hides fields like password hashes, documents |
+| In/Out schemas | `UserCreate` (with password) vs `UserOut` (no password, with id) |
+| Errors | `raise HTTPException(404, "...")`; `@app.exception_handler` for custom ones |
+| Dependency injection | `Depends(func)`: shared logic (db, auth, pagination), cached per request, overridable in tests |
+| yield dependency | setup before, cleanup after (DB session close / rollback) |
+| async def vs def | async on event loop (await only); def in thread pool (blocking libs) |
+| Blocking call in async | freezes all requests → use async lib, `def`, or `run_in_threadpool` |
+| Background tasks | after response, same process, lost on crash → Celery/SQS for important jobs |
+| Middleware | wraps every request: timing, logging, request IDs, CORS |
+| CORS | browser rule; fix on server with `CORSMiddleware` and explicit origins |
+| Auth | OAuth2 password flow → JWT; `OAuth2PasswordBearer` + `get_current_user`; hash with Argon2/bcrypt |
+| JWT | header.payload.signature; readable payload; short `exp`; refresh tokens |
+| Testing | `TestClient` + pytest + `app.dependency_overrides` |
+
+**Scenario questions: say the steps**
+
+- "**The API is slow under load**": check for blocking code in `async def`, slow SQL (EXPLAIN, indexes, N+1 → `selectinload`), connection pool size, workers count, add caching (Redis), move heavy work to a queue, measure with logs/metrics
+- "**Design a login system**": `/token` with OAuth2PasswordRequestForm → verify Argon2 hash → short JWT access token (+ refresh token) → `get_current_user` dependency → role dependency for 403 → HTTPS only, rate-limit login
+- "**Structure a big project**": routers per area, schemas, models, services, core/config with pydantic-settings, db session dependency, Alembic, tests with overrides
+- "**Frontend gets CORS errors**": add `CORSMiddleware` with the frontend origin, allow credentials if cookies/Authorization, check preflight `OPTIONS`
+- "**Send a welcome email without slowing signup**": `BackgroundTasks` for a simple email; Celery/SQS if it must be reliable or retried
+- "**Deploy it**": Docker image → ECR → ECS Fargate behind ALB (HTTPS, `/health`), env vars + Secrets Manager, migrations as a deploy step, CloudWatch logs
+
+## Code example
+
+A compact app that touches most interview topics:
+
+```python
+from typing import Annotated
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+app = FastAPI(title="Shop API")
+app.add_middleware(CORSMiddleware, allow_origins=["https://shop.example.com"], allow_methods=["*"], allow_headers=["*"])
+
+class OrderIn(BaseModel):
+    product_id: int
+    quantity: int = Field(default=1, ge=1, le=10)
+
+class OrderOut(BaseModel):
+    id: int
+    product_id: int
+    quantity: int
+
+ORDERS: list[dict] = []
+
+def get_current_user(token: str | None = None) -> str:          # simplified for the example
+    if token != "abc123":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+    return "asha"
+
+def notify(user: str, order_id: int):
+    print(f"email {user}: order {order_id} confirmed")
+
+@app.post("/orders", response_model=OrderOut, status_code=201)
+def create_order(order: OrderIn, tasks: BackgroundTasks, user: Annotated[str, Depends(get_current_user)]):
+    row = {"id": len(ORDERS) + 1, "user": user, "internal_score": 0.7, **order.model_dump()}
+    ORDERS.append(row)
+    tasks.add_task(notify, user, row["id"])
+    return row                                                    # user and internal_score are filtered out
+
+@app.get("/orders", response_model=list[OrderOut])
+def list_orders(skip: int = 0, limit: Annotated[int, Query(le=50)] = 10):
+    return ORDERS[skip : skip + limit]
+
+@app.get("/orders/{order_id}", response_model=OrderOut)
+def get_order(order_id: int):
+    for row in ORDERS:
+        if row["id"] == order_id:
+            return row
+    raise HTTPException(404, "Order not found")
+```
+
+```output
+POST /orders?token=abc123 {"product_id": 7, "quantity": 2} -> 201 {"id": 1, "product_id": 7, "quantity": 2}
+     (after the response) email asha: order 1 confirmed
+POST /orders {"product_id": 7}                       -> 401 {"detail": "Not authenticated"}
+POST /orders?token=abc123 {"product_id": 7, "quantity": 20} -> 422 (quantity: Input should be less than or equal to 10)
+GET  /orders?limit=100                               -> 422 (limit: Input should be less than or equal to 50)
+GET  /orders/9                                       -> 404 {"detail": "Order not found"}
+```
+
+<Playground kind="none">
+
+```bash
+# Run the example and practise answering out loud:
+pip install "fastapi[standard]"
+fastapi dev main.py
+# 1. Open /docs: which models appear? Why is "user" not in the response?
+# 2. Change def create_order to async def and add time.sleep(2): what happens to other requests?
+# 3. Write one pytest test that overrides get_current_user.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Answering with only features">
+
+<Wrong>
+
+```text
+"FastAPI is fast and has Swagger."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"It's an ASGI framework on Starlette and Pydantic: type hints validate input (422 on errors),
+ response models filter output, Depends gives testable DI, and docs are generated from the code.
+ In my project I used it for ... because ..."
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Saying async is always better">
+
+<Wrong>
+
+```text
+"I make every route async def for performance."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"async def only when the I/O inside is awaitable; with sync libraries I use def so FastAPI
+ runs it in the thread pool. Blocking code in async def would block every request."
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Walk me through what happens when a request hits a FastAPI endpoint.">
+
+Uvicorn receives the HTTP request and passes it to the ASGI app; middleware runs (CORS, logging); Starlette matches the route; FastAPI resolves dependencies (once per request, yield ones set up), parses and validates path, query, headers and body with Pydantic (422 on failure); the endpoint runs (async on the loop, def in the thread pool); the return value is validated and filtered by the response model and serialised to JSON; background tasks and yield-dependency cleanup run after the response.
+
+</QA>
+
+<QA q="How do you handle database sessions in FastAPI?">
+
+A `get_db` dependency creates a SQLAlchemy session from sessionmaker, yields it to the endpoint and closes it in finally (rolling back on errors), so each request has its own session that is always released; tests override it with a test database session.
+
+</QA>
+
+<QA q="How do you secure a FastAPI application?">
+
+HTTPS at the load balancer, OAuth2/JWT authentication with short-lived tokens and Argon2/bcrypt password hashes, permission dependencies (403), input validation with Pydantic, response models to avoid leaking fields, restricted CORS, rate limiting on login and expensive endpoints, secrets from environment or a secrets manager, docs restricted in production, and dependency and image scanning.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Invalid request body status code?',
+      options: ['400', '401', '422', '500'],
+      answer: 2,
+      why: 'FastAPI validation errors are 422.',
+    },
+    {
+      q: 'Hide password_hash from responses?',
+      options: ['del in every route', 'response_model without that field', 'A middleware', 'CORS'],
+      answer: 1,
+      why: 'Response models filter output.',
+    },
+    {
+      q: 'Sync SQLAlchemy route should be...',
+      options: ['async def', 'def', 'a background task', 'middleware'],
+      answer: 1,
+      why: 'Blocking libs → def (thread pool).',
+    },
+    {
+      q: 'Swap the logged-in user in tests?',
+      options: ['Edit the token', 'app.dependency_overrides[get_current_user]', 'Disable auth in prod', 'Use CORS'],
+      answer: 1,
+      why: 'Dependency overrides.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Area | Remember |
+| --- | --- |
+| Run | `fastapi dev main.py` · `uvicorn app.main:app --workers 4` |
+| Params | path `{id}` · query defaults · body = Pydantic model |
+| Rules | `Path/Query/Field(ge, le, min_length, pattern)` |
+| Output | `response_model=Out` · `status_code=201` |
+| Errors | `raise HTTPException(404)` · `@app.exception_handler` |
+| DI | `Depends(get_db)` · `yield` cleanup · `dependency_overrides` |
+| Async | async libs → `async def`; blocking → `def` |
+| Extras | `BackgroundTasks` · `CORSMiddleware` · `APIRouter(prefix, tags)` |
+| Auth | `/token` → JWT → `OAuth2PasswordBearer` → `get_current_user` |
+| Docs | `/docs` · `/redoc` · `/openapi.json` |
+
+</CheatSheet>

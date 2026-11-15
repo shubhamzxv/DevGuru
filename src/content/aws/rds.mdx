@@ -1,0 +1,230 @@
+---
+id: aws-rds
+title: RDS
+summary: Amazon RDS runs managed relational databases (PostgreSQL, MySQL, MariaDB, SQL Server, Oracle) with automated backups, patching, Multi-AZ failover for high availability and read replicas for read scaling; Aurora is AWS's cloud-native MySQL/PostgreSQL-compatible engine with shared storage and faster failover.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Hiring a **building management company** for your database. You still decide the rooms and furniture (schema, queries, indexes), but they handle the plumbing: nightly backups, security patches, a standby building ready if the main one floods (**Multi-AZ**), and extra reading rooms for visitors (**read replicas**).
+
+</Analogy>
+
+## Simple explanation
+
+**What AWS manages vs what you manage**
+
+| AWS | You |
+| --- | --- |
+| hardware, OS, DB installation | schema, indexes, queries |
+| patching (in your maintenance window) | choosing size and storage |
+| automated backups + point-in-time restore | connection handling, pooling |
+| Multi-AZ failover | security groups, users, parameters |
+| monitoring metrics | migrations, upgrade testing |
+
+**High availability vs scaling**
+
+| Feature | Purpose | How |
+| --- | --- | --- |
+| **Multi-AZ** | survive an AZ / instance failure | synchronous standby in another AZ, same endpoint, automatic failover (~1–2 min); the standby is not readable (Multi-AZ **cluster** has 2 readable standbys) |
+| **Read replicas** | scale reads, reporting, cross-Region DR | asynchronous copies with their own endpoints (replication lag); can be promoted |
+| **Backups** | recover from mistakes | automated daily snapshots + transaction logs, retention 1–35 days, **point-in-time restore** to a new instance; manual snapshots kept until deleted |
+
+**Aurora**: MySQL/PostgreSQL compatible, storage spread over 3 AZs (6 copies), up to 15 low-lag replicas, cluster **writer** and **reader** endpoints, fast failover, Aurora Serverless v2 (scales capacity automatically), Global Database for multi-Region.
+
+**Good practice**
+
+- Private subnets (DB subnet group), security group allowing 5432 only from the app's SG
+- Credentials in **Secrets Manager** (rotation) or IAM database authentication
+- Encryption at rest (KMS) chosen at creation; TLS in transit
+- **RDS Proxy** to pool connections (Lambda, many workers)
+- Performance Insights to find slow queries; alarms on CPU, free storage, connections, replica lag
+- Storage autoscaling; Graviton instance classes (`db.t4g`, `db.r7g`) are cheaper
+
+## Code example
+
+```python
+import boto3
+
+rds = boto3.client("rds", region_name="ap-south-1")
+db = rds.create_db_instance(
+    DBInstanceIdentifier="shop-db", Engine="postgres", DBInstanceClass="db.t4g.micro",
+    AllocatedStorage=20, MasterUsername="shop", ManageMasterUserPassword=True,   # password in Secrets Manager
+    MultiAZ=True, BackupRetentionPeriod=7, StorageEncrypted=True,
+    DBSubnetGroupName="shop-private", VpcSecurityGroupIds=["sg-db"], PubliclyAccessible=False,
+)["DBInstance"]
+print("rds:", db["DBInstanceIdentifier"], db["Engine"], db["DBInstanceClass"], "MultiAZ", db["MultiAZ"], "backups", db["BackupRetentionPeriod"])
+
+d = rds.describe_db_instances(DBInstanceIdentifier="shop-db")["DBInstances"][0]
+print("endpoint:", d["Endpoint"]["Address"], d["Endpoint"]["Port"])
+
+rr = rds.create_db_instance_read_replica(DBInstanceIdentifier="shop-db-replica", SourceDBInstanceIdentifier="shop-db")["DBInstance"]
+print("replica of:", rr["ReadReplicaSourceDBInstanceIdentifier"])
+```
+
+```output
+rds: shop-db postgres db.t4g.micro MultiAZ True backups 7
+endpoint: shop-db.aaaaaaaaaa.ap-south-1.rds.amazonaws.com 5432
+replica of: shop-db
+```
+
+(Run against a mock of AWS; a real endpoint has a random id instead of aaaaaaaaaa.) Django then uses the endpoint:
+
+```python
+DATABASES = {"default": {"ENGINE": "django.db.backends.postgresql",
+    "HOST": "shop-db.aaaaaaaaaa.ap-south-1.rds.amazonaws.com", "PORT": 5432,
+    "NAME": "shop", "USER": "shop", "PASSWORD": env("DB_PASSWORD"),
+    "CONN_MAX_AGE": 60, "OPTIONS": {"sslmode": "require"}}}
+```
+
+```bash
+aws rds restore-db-instance-to-point-in-time --source-db-instance-identifier shop-db \
+  --target-db-instance-identifier shop-db-restored --restore-time 2026-11-15T09:55:00Z
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "app", "label": "App (private subnets)", "icon": "🖥️", "col": 0, "row": 1, "info": "Writes go to the primary endpoint; reports read from the replica endpoint.", "example": "Django / FastAPI" },
+    { "id": "primary", "label": "Primary (AZ-a)", "icon": "🗄️", "col": 1, "row": 0, "info": "Accepts reads and writes at shop-db...rds.amazonaws.com.", "example": "PostgreSQL 17 db.t4g.micro" },
+    { "id": "standby", "label": "Standby (AZ-b)", "icon": "🛟", "col": 2, "row": 0, "info": "Multi-AZ: synchronous copy, not readable; takes over the SAME endpoint on failure.", "example": "Failover ~60–120 s" },
+    { "id": "replica", "label": "Read replica", "icon": "📖", "col": 1, "row": 2, "info": "Asynchronous copy with its own endpoint; may lag a little.", "example": "Analytics dashboards" },
+    { "id": "backup", "label": "Automated backups", "icon": "🕓", "col": 2, "row": 2, "info": "Daily snapshot + transaction logs: restore to any second within the retention (7 days).", "example": "Restore to 09:55, before the bad DELETE" }
+  ],
+  "edges": [
+    ["app", "primary", "writes"],
+    ["primary", "standby", "sync"],
+    ["primary", "replica", "async"],
+    ["app", "replica", "reads"],
+    ["primary", "backup"]
+  ],
+  "flows": [
+    {
+      "name": "AZ failure",
+      "steps": [
+        ["primary", "AZ-a has an outage."],
+        ["standby", "RDS promotes the standby and points the DNS name at it."],
+        ["app", "Connections drop, the app reconnects to the same endpoint and continues."]
+      ]
+    },
+    {
+      "name": "Oops: DELETE without WHERE at 10:00",
+      "steps": [
+        ["app", "A script deletes all orders at 10:00."],
+        ["standby", "Multi-AZ copies the mistake instantly: it is not a backup."],
+        ["backup", "Point-in-time restore to 09:55 creates a new instance."],
+        ["app", "Copy the missing rows back or switch to the restored instance."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Thinking Multi-AZ is a read scaler or a backup">
+
+<Wrong>
+
+```text
+"We have Multi-AZ, so we don't need backups, and the standby will serve our reports."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Multi-AZ = availability. Read replicas = read scaling. Backups/PITR = recovery from mistakes.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="A public database">
+
+<Wrong>
+
+```text
+PubliclyAccessible=True and 5432 open to 0.0.0.0/0 so developers can connect from home.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Private subnets, SG from the app only; developers use SSM port forwarding through a bastion or a VPN.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between Multi-AZ and read replicas?">
+
+Multi-AZ keeps a synchronous standby in another AZ for high availability; it fails over automatically behind the same endpoint and (in the classic setup) serves no traffic. Read replicas are asynchronous copies with their own endpoints used to offload reads or for cross-Region disaster recovery; they can lag and must be promoted manually.
+
+</QA>
+
+<QA q="How do you restore an RDS database to a point before a bad change?">
+
+Use point-in-time recovery, which replays transaction logs on top of the automated backups to create a new DB instance at any second within the retention period; then repoint the application or copy the needed data back. Manual snapshots can also be restored.
+
+</QA>
+
+<QA q="When would you choose Aurora over standard RDS PostgreSQL?">
+
+When you need faster failover, more read replicas with low lag, storage that grows automatically and is replicated six ways across three AZs, serverless capacity scaling or a global database. Standard RDS can be cheaper and simpler for small or steady workloads and supports more engines.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Survive the failure of one AZ automatically?',
+      options: ['Read replica', 'Multi-AZ', 'Manual snapshot', 'Larger instance'],
+      answer: 1,
+      why: 'Standby takes over the endpoint.',
+    },
+    {
+      q: 'Offload heavy reporting queries?',
+      options: ['Read replica', 'Multi-AZ standby', 'Backups', 'Parameter group'],
+      answer: 0,
+      why: 'Readable copy with its own endpoint.',
+    },
+    {
+      q: 'Recover from a DELETE run 10 minutes ago?',
+      options: ['Failover', 'Point-in-time restore', 'Reboot', 'Increase storage'],
+      answer: 1,
+      why: 'Multi-AZ already copied the delete.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Feature |
+| --- | --- |
+| HA | Multi-AZ (same endpoint, auto failover) |
+| Read scaling / DR Region | read replicas |
+| Undo mistakes | automated backups + PITR (1–35 days) · manual snapshots |
+| Connections from Lambda | RDS Proxy |
+| Secrets | `ManageMasterUserPassword` (Secrets Manager) · IAM auth |
+| Network | private DB subnet group · SG from app SG |
+| Cloud-native | Aurora: 6 copies / 3 AZs · writer + reader endpoints · Serverless v2 |
+| Slow queries | Performance Insights |
+
+</CheatSheet>

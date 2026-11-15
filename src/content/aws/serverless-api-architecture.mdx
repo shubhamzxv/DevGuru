@@ -1,0 +1,283 @@
+---
+id: aws-serverless-api-architecture
+title: Serverless API (API Gateway + Lambda + DynamoDB)
+summary: A serverless API uses API Gateway for HTTPS routing and JWT auth, Lambda functions for the code and DynamoDB for data, all defined in a SAM or CDK template; it scales to zero, costs nothing when idle, and is extended with SQS, EventBridge, S3 and Step Functions, while watching cold starts, timeouts and per-request costs.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **cloud kitchen** with no restaurant of its own. Orders arrive through a delivery app (API Gateway, which checks the customer is real), cooks are called in only when there is an order (Lambda), and the pantry is a self-restocking store (DynamoDB). When nobody orders, nobody is paid; on festival nights a hundred cooks appear automatically.
+
+</Analogy>
+
+## Simple explanation
+
+```text
+Client ── HTTPS ──▶ API Gateway (HTTP API, JWT authorizer: Cognito)
+                        │  POST /orders, GET /orders
+                        ▼
+                    Lambda (Python) ── IAM role (least privilege) ──▶ DynamoDB table "orders"
+                        │
+                        ├─▶ EventBridge "OrderPlaced" ─▶ SQS ─▶ Lambda: email / invoice
+                        └─▶ CloudWatch Logs + X-Ray
+```
+
+| Layer | Service | Notes |
+| --- | --- | --- |
+| Front door | API Gateway HTTP API | routes, CORS, throttling, custom domain |
+| Auth | Cognito user pool + JWT authorizer | user id from `claims.sub` |
+| Compute | Lambda | one function per route or one per service (a "lambdalith" with a router) |
+| Data | DynamoDB on-demand | single-table design: `USER#id` / `ORDER#id` |
+| Async | EventBridge / SQS | slow work outside the request |
+| Files | S3 presigned URLs | uploads go directly to S3 |
+| IaC | SAM or CDK | whole stack in one template |
+| Observability | CloudWatch Logs, metrics, X-Ray, Powertools for AWS Lambda | structured logs, tracing, idempotency utilities |
+
+**Strengths**: no servers to patch, automatic scaling, pay per request (near zero at low traffic), fast to build.
+
+**Watch out for**: cold starts (keep packages small, init outside the handler), 29 s API timeout and 15 min Lambda limit, DynamoDB access-pattern design, high steady traffic can cost more than containers, local testing (SAM local, moto, unit tests on handlers), limits on concurrency (reserved concurrency to protect downstreams).
+
+## Code example
+
+The function (`src/app.py`):
+
+```python
+import json, os, uuid, boto3
+from decimal import Decimal
+
+table = boto3.resource("dynamodb").Table(os.environ["TABLE"])      # created once per environment
+
+def num(d):
+    return int(d) if d == d.to_integral_value() else float(d)      # DynamoDB returns Decimal
+
+def resp(code, body):
+    return {"statusCode": code, "headers": {"Content-Type": "application/json"}, "body": json.dumps(body, default=num)}
+
+def handler(event, context):
+    route = event["routeKey"]
+    user = event["requestContext"]["authorizer"]["jwt"]["claims"]["sub"]
+    if route == "POST /orders":
+        body = json.loads(event.get("body") or "{}")
+        if not body.get("items"):
+            return resp(400, {"error": "items required"})
+        total = sum(Decimal(str(i["price"])) * i["qty"] for i in body["items"])
+        oid = str(uuid.uuid4())[:8]
+        table.put_item(Item={"pk": f"USER#{user}", "sk": f"ORDER#{oid}", "total": total, "status": "placed"})
+        return resp(201, {"id": oid, "total": total})
+    if route == "GET /orders":
+        items = table.query(KeyConditionExpression="pk = :p AND begins_with(sk, :o)",
+                            ExpressionAttributeValues={":p": f"USER#{user}", ":o": "ORDER#"})["Items"]
+        return resp(200, [{"id": i["sk"][6:], "total": i["total"], "status": i["status"]} for i in items])
+    return resp(404, {"error": "not found"})
+```
+
+A test calling it with API Gateway-shaped events (DynamoDB mocked):
+
+```python
+ctx = {"authorizer": {"jwt": {"claims": {"sub": "42"}}}}
+ev = lambda route, body=None: {"routeKey": route, "requestContext": ctx, "body": json.dumps(body) if body else None}
+print(app.handler(ev("POST /orders", {"items": [{"price": 450, "qty": 1}, {"price": 199, "qty": 2}]}), None))
+print(app.handler(ev("POST /orders", {}), None)["statusCode"])
+print(app.handler(ev("GET /orders"), None)["body"])
+```
+
+```output
+{'statusCode': 201, 'headers': {'Content-Type': 'application/json'}, 'body': '{"id": "7c8d9e0a", "total": 848}'}
+400
+[{"id": "7c8d9e0a", "total": 848, "status": "placed"}]
+```
+
+The SAM template (`template.yaml`, passes `cfn-lint`):
+
+```yaml
+Transform: AWS::Serverless-2016-10-31
+Globals:
+  Function: { Runtime: python3.13, MemorySize: 256, Timeout: 10, Architectures: [arm64] }
+Resources:
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{ AttributeName: pk, AttributeType: S }, { AttributeName: sk, AttributeType: S }]
+      KeySchema: [{ AttributeName: pk, KeyType: HASH }, { AttributeName: sk, KeyType: RANGE }]
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Auth:
+        DefaultAuthorizer: Cognito
+        Authorizers:
+          Cognito:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: https://cognito-idp.ap-south-1.amazonaws.com/ap-south-1_AbCdEf123
+              audience: [3n4b5c6d7e8f9g0h1i2j3k4l5m]
+  OrdersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.handler
+      CodeUri: src/
+      Environment: { Variables: { TABLE: !Ref OrdersTable } }
+      Policies: [{ DynamoDBCrudPolicy: { TableName: !Ref OrdersTable } }]
+      Events:
+        Create: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /orders, Method: POST } }
+        List: { Type: HttpApi, Properties: { ApiId: !Ref HttpApi, Path: /orders, Method: GET } }
+```
+
+```bash
+sam build && sam deploy --guided      # first time; later: sam deploy
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "client", "label": "Mobile / web app", "icon": "📱", "col": 0, "row": 1, "info": "Logs in with Cognito, sends the ID/access token as Bearer.", "example": "POST /orders" },
+    { "id": "gw", "label": "API Gateway HTTP API", "icon": "🚪", "col": 1, "row": 1, "info": "JWT authorizer validates the token; routes to the function; throttles abuse.", "example": "api.shop.example.com" },
+    { "id": "fn", "label": "Lambda OrdersFunction", "icon": "⚡", "col": 2, "row": 1, "info": "Validates input, writes the order, emits an event. Role: CRUD on this table only.", "example": "python3.13 arm64 256 MB" },
+    { "id": "ddb", "label": "DynamoDB orders", "icon": "🗃️", "col": 3, "row": 0, "info": "On-demand capacity: scales with traffic, nothing to manage.", "example": "pk USER#42 / sk ORDER#7c8d9e0a" },
+    { "id": "eb", "label": "EventBridge", "icon": "🚌", "col": 3, "row": 2, "info": "OrderPlaced routed to async consumers.", "example": "rule → SQS invoices-q" },
+    { "id": "worker", "label": "Lambda: invoice", "icon": "🧾", "col": 4, "row": 2, "info": "Consumes SQS in batches, creates a PDF in S3, emails the customer. Retries + DLQ.", "example": "invoices/2026/11/7c8d9e0a.pdf" },
+    { "id": "obs", "label": "CloudWatch + X-Ray", "icon": "📈", "col": 4, "row": 0, "info": "Logs, errors, duration, throttles, traces across the chain.", "example": "Alarm on 5xx and Lambda errors" }
+  ],
+  "edges": [
+    ["client", "gw", "HTTPS + JWT"],
+    ["gw", "fn", "invoke"],
+    ["fn", "ddb", "PutItem / Query"],
+    ["fn", "eb", "OrderPlaced"],
+    ["eb", "worker", "via SQS"],
+    ["fn", "obs"]
+  ],
+  "flows": [
+    {
+      "name": "Place an order",
+      "steps": [
+        ["client", "POST /orders with a valid token."],
+        ["gw", "Token verified; route matched."],
+        ["fn", "Total 848 computed; order written."],
+        ["ddb", "Item stored."],
+        ["eb", "OrderPlaced published."],
+        ["client", "201 Created in ~100 ms."],
+        ["worker", "Invoice made a few seconds later, outside the request."]
+      ]
+    },
+    {
+      "name": "Traffic spike",
+      "steps": [
+        ["client", "Sale: 50× traffic."],
+        ["fn", "Lambda adds environments automatically."],
+        ["ddb", "On-demand absorbs it."],
+        ["obs", "Bill grows with requests; at night it drops to almost zero."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Doing everything inside the request">
+
+<Wrong>
+
+```text
+POST /orders writes the order, renders a PDF, calls the SMS provider and emails the customer — 6 s and fragile.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Write the order and publish an event; return 201. Invoice, SMS and email run asynchronously with retries.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Over-broad function permissions">
+
+<Wrong>
+
+```yaml
+Policies: [AmazonDynamoDBFullAccess]      # every table in the account
+```
+
+</Wrong>
+
+<Right>
+
+```yaml
+Policies: [{ DynamoDBCrudPolicy: { TableName: !Ref OrdersTable } }]
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Describe a serverless REST API on AWS.">
+
+API Gateway (HTTP API) exposes routes with a Cognito/JWT authorizer, throttling and a custom domain; each route invokes a Lambda function with a least-privilege execution role; data lives in DynamoDB designed around access patterns; asynchronous work goes through SQS or EventBridge to other functions; files use S3 presigned URLs; everything is defined in SAM or CDK and monitored with CloudWatch and X-Ray.
+
+</QA>
+
+<QA q="What are the trade-offs of serverless compared with containers?">
+
+Serverless removes server management, scales automatically and is very cheap at low or spiky traffic, but has cold starts, execution time limits, per-request costs that can exceed containers at high steady load, vendor-specific patterns and harder local testing. Containers give more control, long-running processes and predictable cost at scale but need capacity and deployment management.
+
+</QA>
+
+<QA q="How do you test Lambda functions?">
+
+Keep business logic in plain functions with unit tests; test handlers by calling them with sample API Gateway/SQS events; mock AWS services with moto or local emulators (DynamoDB Local, SAM local invoke); and run integration tests against a deployed dev stack.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where does the user id come from with a JWT authorizer?',
+      options: ['Query string', 'requestContext.authorizer.jwt.claims', 'Environment variables', 'DynamoDB'],
+      answer: 1,
+      why: 'Verified claims are passed in.',
+    },
+    {
+      q: 'Generate an invoice PDF after the order?',
+      options: ['Inside the API request', 'Asynchronously via EventBridge/SQS', 'In the browser', 'In API Gateway'],
+      answer: 1,
+      why: 'Keep requests fast.',
+    },
+    {
+      q: 'DynamoDB numbers arrive in Python as...',
+      options: ['float', 'Decimal', 'str', 'int'],
+      answer: 1,
+      why: 'Convert before json.dumps.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Layer | Choice |
+| --- | --- |
+| HTTPS + auth | API Gateway HTTP API + Cognito JWT authorizer |
+| Code | Lambda (Python, arm64), init outside the handler |
+| Data | DynamoDB on-demand, single-table keys |
+| Async | EventBridge / SQS → Lambda (DLQ) |
+| Files | S3 presigned URLs |
+| IaC | SAM (`sam build`, `sam deploy`) or CDK |
+| Permissions | SAM policy templates (`DynamoDBCrudPolicy`) |
+| Observability | CloudWatch Logs/metrics, X-Ray, Powertools |
+| Gotchas | cold starts · 29 s / 15 min · Decimal · cost at steady high load |
+
+</CheatSheet>
