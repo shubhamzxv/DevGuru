@@ -262,7 +262,9 @@ export default function ArchitectureDiagram({ diagram }: { diagram: Diagram }) {
         </section>
       )}
       {!info && step < 0 && (
-        <p className="text-sm text-slate-500">Tap any box to see what it does.</p>
+        <p className="text-sm text-slate-600 dark:text-slate-400">
+          Tap any box to see what it does.
+        </p>
       )}
     </div>
   );

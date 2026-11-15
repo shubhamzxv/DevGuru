@@ -4,7 +4,7 @@ import { H2 } from './Prose';
 /** Template block 8: wraps 3 to 5 <QA> items. */
 export function InterviewQA({ children }: { children: ReactNode }) {
   return (
-    <section>
+    <section className="defer-render">
       <H2>Interview questions</H2>
       <div className="space-y-3">{children}</div>
     </section>
@@ -19,7 +19,7 @@ export function QA({ q, children }: { q: string; children: ReactNode }) {
         <span>{q}</span>
         <span
           aria-hidden="true"
-          className="shrink-0 text-slate-500 transition-transform group-open:rotate-180"
+          className="shrink-0 text-slate-600 dark:text-slate-400 transition-transform group-open:rotate-180"
         >
           ▾
         </span>

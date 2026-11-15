@@ -1,0 +1,266 @@
+---
+id: system-design-event-driven-architecture
+title: Event-driven architecture
+summary: In an event-driven architecture services publish events ("OrderPlaced") when something happens and other services react to them asynchronously, instead of calling each other directly; this loosens coupling and lets new consumers be added freely, at the cost of eventual consistency, harder debugging and the need for idempotency, ordering and patterns like the outbox and sagas.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **school notice board**. The office pins "Sports day moved to Friday" once. The sports teacher, the canteen and the bus coordinator each read it and do their own work — the office does not phone each of them, and does not even need to know who reads the board. A new club can start reading tomorrow without the office changing anything.
+
+</Analogy>
+
+## Simple explanation
+
+**Commands vs events**
+
+| | Command (request/response) | **Event** |
+| --- | --- | --- |
+| Meaning | "Do this" (`CreateInvoice`) | "This happened" (`OrderPlaced`) — a fact, past tense |
+| Sender knows the receiver? | yes | **no** |
+| Waits for an answer? | usually | **no** |
+| Receivers | one | zero, one or many |
+
+**Flow**: order service saves the order → publishes `OrderPlaced` to a broker (Kafka, EventBridge, SNS/SQS, RabbitMQ) → payment, inventory, email and analytics services react on their own.
+
+**Benefits**: loose coupling, easy to add consumers, each service scales and fails independently, natural audit trail, absorbs spikes.
+
+**Costs**: **eventual consistency** (the inventory updates a moment later), harder to follow a request (needs tracing + correlation ids), duplicate/out-of-order events, schema changes must stay compatible.
+
+**Key patterns**
+
+| Pattern | Solves |
+| --- | --- |
+| **Idempotent consumers** | duplicates from at-least-once delivery |
+| **Transactional outbox** | "saved the order but failed to publish" — write the event to an outbox table in the same DB transaction; a relay publishes it |
+| **Saga** | multi-service workflow without distributed transactions: each step emits an event; failures trigger **compensating** actions (refund, release stock). Choreography (events) or orchestration (a coordinator / Step Functions) |
+| Event-carried state | include needed data in the event so consumers do not call back |
+| Event sourcing | store the events themselves as the source of truth; rebuild state by replaying |
+| **CQRS** | separate write model and read models built from events |
+| Schema registry / versioning | add fields, never break old consumers |
+
+## Code example
+
+A tiny event bus with a choreographed saga and a compensation step:
+
+```python
+from collections import defaultdict
+
+subscribers = defaultdict(list)
+log = []
+
+def subscribe(event_type):
+    def wrap(fn):
+        subscribers[event_type].append(fn)
+        return fn
+    return wrap
+
+def publish(event_type, **data):
+    log.append(event_type)
+    for handler in subscribers[event_type]:
+        handler(data)
+
+stock = {"headphones": 1}
+processed = set()
+
+@subscribe("OrderPlaced")
+def reserve_stock(e):
+    if e["order_id"] in processed:              # idempotency guard
+        return
+    processed.add(e["order_id"])
+    if stock[e["item"]] > 0:
+        stock[e["item"]] -= 1
+        publish("StockReserved", **e)
+    else:
+        publish("OrderRejected", **e, reason="out of stock")
+
+@subscribe("StockReserved")
+def charge_card(e):
+    if e["card_ok"]:
+        publish("PaymentSucceeded", **e)
+    else:
+        publish("PaymentFailed", **e)
+
+@subscribe("PaymentFailed")
+def release_stock(e):                            # compensating action
+    stock[e["item"]] += 1
+    publish("StockReleased", **e)
+
+@subscribe("PaymentSucceeded")
+def send_email(e):
+    print(f"  email: order {e['order_id']} confirmed")
+
+print("order 1 (card ok):")
+publish("OrderPlaced", order_id=1, item="headphones", card_ok=True)
+publish("OrderPlaced", order_id=1, item="headphones", card_ok=True)   # duplicate delivery: ignored
+print("order 2 (no stock):")
+publish("OrderPlaced", order_id=2, item="headphones", card_ok=True)
+stock["headphones"] = 1
+print("order 3 (card declined):")
+publish("OrderPlaced", order_id=3, item="headphones", card_ok=False)
+print("events:", log)
+print("stock now:", stock)
+```
+
+```output
+order 1 (card ok):
+  email: order 1 confirmed
+order 2 (no stock):
+order 3 (card declined):
+events: ['OrderPlaced', 'StockReserved', 'PaymentSucceeded', 'OrderPlaced', 'OrderPlaced', 'OrderRejected', 'OrderPlaced', 'StockReserved', 'PaymentFailed', 'StockReleased']
+stock now: {'headphones': 1}
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "order", "label": "Order service", "icon": "🛒", "col": 0, "row": 1, "info": "Saves the order and an OrderPlaced row in the outbox table in ONE transaction.", "example": "orders + outbox" },
+    { "id": "relay", "label": "Outbox relay", "icon": "🔁", "col": 1, "row": 0, "info": "Reads new outbox rows and publishes them; marks them sent. No lost events.", "example": "Debezium / polling job" },
+    { "id": "bus", "label": "Event bus", "icon": "🚌", "col": 1, "row": 2, "info": "Kafka / EventBridge / SNS+SQS. Delivers at least once.", "example": "topic: orders" },
+    { "id": "inv", "label": "Inventory", "icon": "📦", "col": 2, "row": 0, "info": "Reserves stock → StockReserved or OrderRejected. Idempotent by order id.", "example": "stock 1 → 0" },
+    { "id": "pay", "label": "Payment", "icon": "💳", "col": 2, "row": 2, "info": "Charges the card → PaymentSucceeded or PaymentFailed.", "example": "Card declined" },
+    { "id": "comp", "label": "Compensation", "icon": "↩️", "col": 3, "row": 1, "info": "On PaymentFailed, inventory releases the stock (saga compensating step).", "example": "stock 0 → 1" },
+    { "id": "email", "label": "Email / analytics", "icon": "📧", "col": 3, "row": 3, "info": "Extra consumers added without changing the order service.", "example": "Confirmation email" }
+  ],
+  "edges": [
+    ["order", "relay"],
+    ["relay", "bus", "OrderPlaced"],
+    ["bus", "inv"],
+    ["inv", "pay", "StockReserved"],
+    ["pay", "comp", "PaymentFailed"],
+    ["pay", "email", "PaymentSucceeded"]
+  ],
+  "flows": [
+    {
+      "name": "Happy path",
+      "steps": [
+        ["order", "Order saved + outbox row."],
+        ["relay", "OrderPlaced published."],
+        ["inv", "Stock reserved."],
+        ["pay", "Card charged."],
+        ["email", "Confirmation sent."]
+      ]
+    },
+    {
+      "name": "Payment fails",
+      "steps": [
+        ["pay", "Card declined: PaymentFailed."],
+        ["comp", "Stock released; order marked failed."],
+        ["order", "User sees 'payment failed'; no stock is lost."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Dual write: save, then publish">
+
+<Wrong>
+
+```python
+db.save(order)
+broker.publish("OrderPlaced", order)     # crash between the two → order exists, nobody hears about it
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Transactional outbox: save the order and the event row in one DB transaction; a relay publishes from the outbox.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Events that are really commands">
+
+<Wrong>
+
+```text
+Event "SendEmailToAsha" consumed by exactly one service: the producer is still coupled to the consumer's job.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Publish facts ("OrderPlaced", with the needed data); consumers decide what to do.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is event-driven architecture?">
+
+A style where services communicate by producing and consuming events — records of things that happened — through a broker, instead of calling each other synchronously. Producers do not know consumers, so services are loosely coupled, scale independently and new reactions can be added without changing the producer; the trade-off is eventual consistency and more complex debugging.
+
+</QA>
+
+<QA q="What is the saga pattern?">
+
+A way to keep data consistent across services without distributed transactions: a business process is a sequence of local transactions, each publishing an event that triggers the next; if a step fails, compensating transactions undo earlier steps (e.g. refund payment, release stock). It can be choreographed through events or orchestrated by a coordinator.
+
+</QA>
+
+<QA q="What is the transactional outbox pattern?">
+
+To avoid the dual-write problem, the service writes its state change and the outgoing event to an outbox table in the same database transaction; a separate relay (polling or change data capture) publishes outbox rows to the broker and marks them sent, guaranteeing at-least-once publication.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'An event is named...',
+      options: ['Like a command: CreateInvoice', 'In past tense: OrderPlaced', 'After the consumer', 'After the database'],
+      answer: 1,
+      why: 'A fact that happened.',
+    },
+    {
+      q: 'Undo earlier steps of a failed multi-service workflow?',
+      options: ['Two-phase commit only', 'Saga compensating actions', 'Bigger database', 'Retries forever'],
+      answer: 1,
+      why: 'Refund, release stock...',
+    },
+    {
+      q: 'Save + publish reliably needs...',
+      options: ['Outbox pattern', 'A bigger broker', 'Synchronous calls', 'Caching'],
+      answer: 0,
+      why: 'One transaction for both.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Concept | Remember |
+| --- | --- |
+| Event | past-tense fact, many consumers |
+| Command | do this, one receiver |
+| Broker | Kafka · EventBridge · SNS/SQS · RabbitMQ |
+| Duplicates | idempotent consumers |
+| Save + publish | transactional outbox |
+| Cross-service workflow | saga + compensation |
+| Read models | CQRS |
+| History as truth | event sourcing |
+| Debugging | correlation ids + tracing |
+| Trade-off | eventual consistency |
+
+</CheatSheet>

@@ -64,7 +64,7 @@ export default function SearchPage() {
           Search topics
         </label>
         <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3 focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/30 dark:border-slate-700 dark:bg-slate-900">
-          <SearchIcon className="shrink-0 text-slate-500" />
+          <SearchIcon className="shrink-0 text-slate-600 dark:text-slate-400" />
           <input
             ref={inputRef}
             id="site-search"

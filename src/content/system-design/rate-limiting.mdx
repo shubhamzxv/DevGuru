@@ -1,0 +1,232 @@
+---
+id: system-design-rate-limiting
+title: Rate limiting
+summary: Rate limiting caps how many requests a client may make in a time window to protect services from abuse, overload and runaway costs; common algorithms are token bucket, leaky bucket, fixed window and sliding window, usually enforced at the gateway with a shared Redis counter, answering 429 Too Many Requests with a Retry-After header.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **metro station turnstile** that lets in only so many people per minute so the platform never overflows. Or an **ATM** that allows 5 withdrawals a day: the 6th request is politely refused — "try again tomorrow" — instead of the machine breaking.
+
+</Analogy>
+
+## Simple explanation
+
+**Why**: stop brute-force logins and scrapers, protect the database during spikes, give fair usage per customer, control third-party API costs, enforce paid plans.
+
+**Key choices**: limit **per what** (user id, API key, IP, endpoint), **how much** (100 req/min), **where** (API gateway, load balancer, app middleware, per service), and **what happens** when exceeded (reject with **429**, queue, slow down).
+
+**Algorithms**
+
+| Algorithm | How | Pros / cons |
+| --- | --- | --- |
+| **Fixed window** | counter per minute (`key:12:05`), reset each minute | simple; allows 2× burst at the boundary (end of one minute + start of next) |
+| **Sliding window log** | keep timestamps of recent requests | exact; memory per request |
+| **Sliding window counter** | weighted mix of current and previous window counts | accurate enough, cheap |
+| **Token bucket** | bucket refills r tokens/s up to capacity b; each request takes one | allows short **bursts**, smooth average — very common (AWS, Stripe) |
+| Leaky bucket | requests queue and leave at a constant rate | smooths output; adds delay |
+
+**Distributed limits**: many servers must share one counter → store it in **Redis** with atomic `INCR` + `EXPIRE` (or a Lua script for token bucket). Local per-server limits are approximate but avoid the network hop.
+
+**Good responses**: `429 Too Many Requests`, `Retry-After: 30`, and headers like `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`. Clients should back off with **exponential backoff + jitter**.
+
+**Related ideas**: **load shedding** (drop low-priority traffic when overloaded), quotas per plan (free 1,000/day, pro 100,000/day), concurrency limits (max 10 in-flight per user), WAF/DDoS protection at the edge.
+
+## Code example
+
+Token bucket vs fixed window on the same burst:
+
+```python
+class TokenBucket:
+    def __init__(self, capacity, refill_per_sec):
+        self.capacity, self.rate = capacity, refill_per_sec
+        self.tokens, self.last = capacity, 0.0
+    def allow(self, now):
+        self.tokens = min(self.capacity, self.tokens + (now - self.last) * self.rate)
+        self.last = now
+        if self.tokens >= 1:
+            self.tokens -= 1
+            return True
+        return False
+
+class FixedWindow:
+    def __init__(self, limit, window):
+        self.limit, self.window, self.counts = limit, window, {}
+    def allow(self, now):
+        w = int(now // self.window)
+        self.counts[w] = self.counts.get(w, 0) + 1
+        return self.counts[w] <= self.limit
+
+times = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 2.0, 2.1, 5.0]
+tb = TokenBucket(capacity=5, refill_per_sec=1)
+print("token bucket (5 burst, 1/s):", ["✓" if tb.allow(t) else "✗" for t in times])
+
+# Boundary burst: 5 requests at the end of minute 0 and 5 at the start of minute 1
+fw = FixedWindow(limit=5, window=60)
+burst = [59.0, 59.2, 59.4, 59.6, 59.8, 60.0, 60.2, 60.4, 60.6, 60.8]
+print("fixed window 5/min, boundary burst allowed:", sum(fw.allow(t) for t in burst), "of 10 in 2 seconds")
+
+def respond(allowed, remaining, reset_in):
+    if allowed:
+        return 200, {"X-RateLimit-Remaining": remaining}
+    return 429, {"Retry-After": reset_in, "X-RateLimit-Remaining": 0}
+
+print(respond(True, 4, 60))
+print(respond(False, 0, 23))
+```
+
+```output
+token bucket (5 burst, 1/s): ['✓', '✓', '✓', '✓', '✓', '✗', '✗', '✓', '✓', '✓']
+fixed window 5/min, boundary burst allowed: 10 of 10 in 2 seconds
+(200, {'X-RateLimit-Remaining': 4})
+(429, {'Retry-After': 23, 'X-RateLimit-Remaining': 0})
+```
+
+The fixed window allowed 10 requests in 2 seconds despite a "5 per minute" limit; the token bucket allows a burst of 5, then about 1 per second.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "client", "label": "Client / script", "icon": "🤖", "col": 0, "row": 1, "info": "Sends requests with an API key.", "example": "key: free-plan-123" },
+    { "id": "gw", "label": "API gateway", "icon": "🚪", "col": 1, "row": 1, "info": "Looks up the plan limit and asks Redis whether this key has tokens left.", "example": "free: 100/min · pro: 5,000/min" },
+    { "id": "redis", "label": "Redis counters", "icon": "⚡", "col": 2, "row": 0, "info": "Shared by all gateway instances; atomic INCR + EXPIRE or a token-bucket Lua script.", "example": "rl:free-plan-123:12:05 = 87" },
+    { "id": "svc", "label": "Backend services", "icon": "🖥️", "col": 3, "row": 1, "info": "Protected: never see more than the allowed rate.", "example": "orders, search" },
+    { "id": "reject", "label": "429 + Retry-After", "icon": "🚫", "col": 2, "row": 2, "info": "Over the limit: rejected cheaply at the edge, with when to retry.", "example": "Retry-After: 23" }
+  ],
+  "edges": [
+    ["client", "gw"],
+    ["gw", "redis", "check + count"],
+    ["gw", "svc", "allowed"],
+    ["gw", "reject", "over limit"],
+    ["reject", "client", "back off"]
+  ],
+  "flows": [
+    {
+      "name": "Normal use",
+      "steps": [
+        ["client", "Request 87 this minute."],
+        ["redis", "Count 87 ≤ 100."],
+        ["svc", "Handled; header X-RateLimit-Remaining: 13."]
+      ]
+    },
+    {
+      "name": "Scraper",
+      "steps": [
+        ["client", "Request 101 this minute."],
+        ["redis", "Count 101 > 100."],
+        ["reject", "429 Too Many Requests, Retry-After 23 s."],
+        ["client", "A good client waits with exponential backoff."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Per-server counters behind a load balancer">
+
+<Wrong>
+
+```text
+Limit 100/min stored in each of 10 servers' memory → a client actually gets ~1,000/min.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Shared counter in Redis (atomic INCR/Lua), or divide the limit per server knowingly.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Limiting only by IP">
+
+<Wrong>
+
+```text
+One office (shared IP) gets blocked; attackers rotate IPs and are not stopped.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Limit by user id / API key for authenticated traffic; IP limits mainly for login and anonymous endpoints; plus WAF.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How would you design a rate limiter?">
+
+Decide the key (user, API key, IP, endpoint) and limits per plan; enforce at the API gateway or middleware; choose an algorithm such as token bucket (bursts plus steady rate) or sliding window; store counters in Redis with atomic operations so all instances share state; return 429 with Retry-After and rate-limit headers; monitor rejections; and fail open or closed deliberately if Redis is unavailable.
+
+</QA>
+
+<QA q="Compare token bucket and fixed window.">
+
+Fixed window counts requests per calendar window and resets; it is simple but allows up to double the limit around window boundaries. Token bucket refills tokens at a steady rate up to a capacity and spends one per request; it allows controlled bursts and enforces a smooth average rate.
+
+</QA>
+
+<QA q="What should a client do when it receives 429?">
+
+Stop sending immediately, wait for the Retry-After duration if given, then retry with exponential backoff and jitter, and avoid retrying non-idempotent operations blindly.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'HTTP status for "too many requests"?',
+      options: ['403', '429', '503', '418'],
+      answer: 1,
+      why: '429 Too Many Requests.',
+    },
+    {
+      q: 'Which algorithm allows short bursts with a steady average?',
+      options: ['Fixed window', 'Token bucket', 'Round robin', 'LRU'],
+      answer: 1,
+      why: 'Capacity = burst, refill = rate.',
+    },
+    {
+      q: 'Where do 20 gateway servers keep a shared count?',
+      options: ['Local memory', 'Redis', 'Browser', 'CDN'],
+      answer: 1,
+      why: 'Atomic shared counters.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Key | user / API key / IP / endpoint |
+| Algorithms | fixed window · sliding window · token bucket · leaky bucket |
+| Bursts | token bucket |
+| Where | gateway / middleware |
+| Shared state | Redis `INCR` + `EXPIRE` / Lua |
+| Response | 429 + `Retry-After` + `X-RateLimit-*` |
+| Client | exponential backoff + jitter |
+| Related | quotas · load shedding · WAF |
+
+</CheatSheet>

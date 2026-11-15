@@ -1,0 +1,210 @@
+---
+id: system-design-scalability
+title: Scalability (vertical vs horizontal)
+summary: Scalability is a system's ability to handle more load by adding resources; vertical scaling makes one machine bigger (simple but limited and a single point of failure), horizontal scaling adds more machines behind a load balancer (needs stateless services, and the database usually becomes the next bottleneck).
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A busy **dhaba**. **Vertical scaling**: hire one super-fast chef and buy a bigger stove — easy, but there is a limit to how fast one chef can cook, and if he falls sick the kitchen stops. **Horizontal scaling**: hire more chefs and stoves working in parallel, with a manager handing out orders — it grows much further, but the chefs must share recipes and not keep orders in their heads.
+
+</Analogy>
+
+## Simple explanation
+
+| | **Vertical (scale up)** | **Horizontal (scale out)** |
+| --- | --- | --- |
+| How | bigger CPU/RAM/disk on one machine | more machines behind a load balancer |
+| Effort | change instance type, no code change | stateless app, shared storage, LB |
+| Limit | the biggest machine available | very high |
+| Failure | one machine = single point of failure | one machine dies, others continue |
+| Cost | big machines get expensive fast | many small machines, pay as you grow |
+| Good for | databases (early), quick wins | web/app servers, workers |
+
+**Making horizontal scaling possible**
+
+- **Stateless servers**: no user session or file kept on the server; sessions in Redis, files in S3, data in the DB → any server can handle any request
+- **Load balancer** in front; **autoscaling** adds/removes servers by CPU or request count
+- Background work in **queues** with scalable workers
+
+**The database is the usual bottleneck** — scale it step by step:
+
+1. Indexes and query fixes (cheapest!)
+2. **Cache** frequent reads (Redis, CDN)
+3. Bigger machine (vertical)
+4. **Read replicas** for read-heavy traffic
+5. **Partition / shard** data across machines for write-heavy scale
+6. Move some data to stores built for it (search engine, key-value store)
+
+**Scalability vs performance**: performance is how fast one request is; scalability is whether it **stays** fast as load grows. A system can be fast for 10 users and fall over at 10,000.
+
+**Amdahl's hint**: adding servers helps only the parallel part; a shared bottleneck (one DB, one lock) caps the whole system.
+
+## Code example
+
+Simulate how throughput grows when you add servers, with a shared database limit:
+
+```python
+def system_throughput(servers, per_server=500, db_limit=3000, cache_hit=0.0):
+    """Requests/s the whole system can serve."""
+    app_capacity = servers * per_server
+    db_capacity = db_limit / (1 - cache_hit) if cache_hit < 1 else float("inf")   # cache hits skip the DB
+    return min(app_capacity, db_capacity)
+
+print("servers | no cache | 80% cache hits")
+for n in [1, 2, 4, 8, 16, 32]:
+    print(f"{n:>7} | {system_throughput(n):>8,.0f} | {system_throughput(n, cache_hit=0.8):>8,.0f}")
+```
+
+```output
+servers | no cache | 80% cache hits
+      1 |      500 |      500
+      2 |    1,000 |    1,000
+      4 |    2,000 |    2,000
+      8 |    3,000 |    4,000
+     16 |    3,000 |    8,000
+     32 |    3,000 |   15,000
+```
+
+Without a cache, adding servers stops helping at 6 servers (the database caps at 3,000 req/s). With 80% cache hits, the database sees only 1 in 5 requests and the app tier can keep scaling to 15,000 req/s.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "users", "label": "Growing traffic", "icon": "👥", "col": 0, "row": 1, "info": "From 1,000 to 1,000,000 users.", "example": "Sale day: 10× normal" },
+    { "id": "big", "label": "One big server", "icon": "🏋️", "col": 1, "row": 0, "info": "Vertical scaling: 2 vCPU → 64 vCPU. Simple, but has a ceiling and is a single point of failure.", "example": "m7g.16xlarge" },
+    { "id": "lb", "label": "Load balancer", "icon": "⚖️", "col": 1, "row": 2, "info": "Horizontal scaling starts here: spreads requests over identical servers.", "example": "Round robin / least connections" },
+    { "id": "s1", "label": "App servers ×N", "icon": "🖥️", "col": 2, "row": 2, "info": "Stateless; autoscaling adds more at high CPU.", "example": "4 → 12 at peak" },
+    { "id": "redis", "label": "Shared session + cache", "icon": "⚡", "col": 3, "row": 1, "info": "Lets any server handle any user and protects the DB.", "example": "Redis" },
+    { "id": "db", "label": "Database (bottleneck)", "icon": "🗄️", "col": 3, "row": 3, "info": "Scale with indexes → cache → bigger instance → read replicas → sharding.", "example": "Primary + 2 read replicas" }
+  ],
+  "edges": [
+    ["users", "big", "scale up"],
+    ["users", "lb", "scale out"],
+    ["lb", "s1"],
+    ["s1", "redis"],
+    ["s1", "db"]
+  ],
+  "flows": [
+    {
+      "name": "Scaling out",
+      "steps": [
+        ["users", "Traffic doubles every month."],
+        ["big", "Step 1: a bigger server buys time but hits a limit."],
+        ["lb", "Step 2: put a load balancer in front."],
+        ["s1", "Step 3: make servers stateless and add more."],
+        ["redis", "Sessions and hot reads move to Redis."],
+        ["db", "The database becomes the bottleneck: add replicas, then shard."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Stateful servers behind a load balancer">
+
+<Wrong>
+
+```text
+Sessions kept in each server's memory: a user's next request lands on another server and they are logged out.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Store sessions in Redis or use signed tokens (JWT); keep servers stateless (sticky sessions only as a last resort).
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Adding app servers when the database is the limit">
+
+<Wrong>
+
+```text
+CPU on the DB is 95%, so we add 10 more web servers → even more DB connections, slower.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Find the bottleneck first (metrics): fix queries/indexes, cache, read replicas, connection pooling.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between vertical and horizontal scaling?">
+
+Vertical scaling adds resources to one machine (more CPU, memory); it needs no code changes but has a hardware ceiling, gets expensive and leaves a single point of failure. Horizontal scaling adds more machines behind a load balancer; it scales much further and improves availability but requires stateless services and coordination of shared state.
+
+</QA>
+
+<QA q="Why should application servers be stateless?">
+
+So that any server can handle any request: the load balancer can route freely, autoscaling can add or remove servers, and a crashed server loses nothing. State lives in shared stores such as databases, caches and object storage.
+
+</QA>
+
+<QA q="How would you scale a database?">
+
+In order of effort: optimise queries and indexes, add caching, scale up the instance, add read replicas for read-heavy loads (accepting replication lag), use connection pooling, then partition or shard data for write-heavy scale, and move specialised workloads to suitable stores.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Adding more servers behind a load balancer is...',
+      options: ['Vertical scaling', 'Horizontal scaling', 'Sharding', 'Caching'],
+      answer: 1,
+      why: 'Scale out.',
+    },
+    {
+      q: 'Main requirement for horizontal scaling of app servers?',
+      options: ['Bigger CPUs', 'Stateless servers', 'One database per server', 'No load balancer'],
+      answer: 1,
+      why: 'Any server handles any request.',
+    },
+    {
+      q: 'The most common next bottleneck after scaling app servers?',
+      options: ['DNS', 'The database', 'The CDN', 'The browser'],
+      answer: 1,
+      why: 'Shared state.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Scale | How | Watch out |
+| --- | --- | --- |
+| Up | bigger machine | ceiling, single point of failure |
+| Out | more machines + LB | stateless, shared stores |
+| App tier | autoscaling | sessions → Redis |
+| DB | index → cache → bigger → replicas → shard | lag, complexity |
+| Async | queues + workers | idempotency |
+
+Rule: measure, find the bottleneck, fix the cheapest thing first.
+
+</CheatSheet>

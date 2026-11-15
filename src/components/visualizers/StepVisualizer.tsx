@@ -123,7 +123,7 @@ export default function StepVisualizer({ code, trace, onClose }: StepVisualizerP
               aria-current={isCurrent ? 'step' : undefined}
               className={`flex whitespace-pre px-2 ${isCurrent ? highlight : ''}`}
             >
-              <span className="w-8 shrink-0 select-none pr-2 text-right text-slate-500">
+              <span className="w-8 shrink-0 select-none pr-2 text-right text-slate-600 dark:text-slate-400">
                 {lineIndex + 1}
               </span>
               <span aria-hidden="true" className="w-4 shrink-0 text-amber-600">
@@ -138,7 +138,8 @@ export default function StepVisualizer({ code, trace, onClose }: StepVisualizerP
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div>
           <h3 className="text-sm font-semibold">
-            Variables <span className="font-normal text-slate-500">in {scope}</span>
+            Variables{' '}
+            <span className="font-normal text-slate-600 dark:text-slate-400">in {scope}</span>
           </h3>
           {names.length === 0 ? (
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">No variables yet.</p>

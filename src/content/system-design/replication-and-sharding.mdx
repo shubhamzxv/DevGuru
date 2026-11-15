@@ -1,0 +1,247 @@
+---
+id: system-design-replication-and-sharding
+title: Replication and sharding
+summary: Replication keeps copies of the same data on several machines for availability and read scaling (leader–follower, with synchronous or asynchronous lag), while sharding (partitioning) splits data across machines by a shard key so each holds only part of it, scaling writes and storage at the cost of cross-shard queries, hot spots and rebalancing.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A school's **attendance register**. **Replication**: photocopies of the same register kept in the office, the staff room and the principal's room — if one is lost, others remain, and three people can read at once. **Sharding**: the register is too thick, so it is split — classes 1–4 in one book, 5–8 in another, 9–12 in a third. Each book is smaller, but "list all students named Rahul" means opening every book.
+
+</Analogy>
+
+## Simple explanation
+
+**Replication** = same data, many copies.
+
+| Type | How | Trade-off |
+| --- | --- | --- |
+| **Leader–follower** (primary–replica) | writes go to the leader; it streams changes to followers; reads can go to followers | simple; followers may **lag** |
+| Synchronous | leader waits for a replica to confirm | no data loss on failover; slower writes |
+| **Asynchronous** | leader does not wait | fast; recent writes may be lost on failover; stale reads |
+| Multi-leader | several regions accept writes | write conflicts to resolve |
+| Leaderless (quorum) | write to W of N nodes, read from R; W + R > N | Cassandra/Dynamo style; tunable consistency |
+
+Uses: **high availability** (failover to a replica), **read scaling**, backups, analytics on a replica, geo copies.
+
+**Replication lag problems**: a user updates their profile then reloads and sees the old one → **read-your-writes** (read from the leader for that user for a few seconds).
+
+**Sharding / partitioning** = different data on different machines.
+
+| Strategy | How | Watch out |
+| --- | --- | --- |
+| **Hash** | `hash(user_id)` → shard (consistent hashing) | even spread; range queries hit all shards |
+| **Range** | A–F, G–M... or dates | easy range scans; **hot spots** (all new orders on the latest shard) |
+| Directory / lookup | a table maps key → shard | flexible; the directory is extra infrastructure |
+| Geo | by country/region | data residency; uneven sizes |
+
+**Choosing the shard key**: high cardinality, even traffic, and **most queries include it** (e.g. `user_id` for a social app, `tenant_id` for SaaS). Bad keys create **hot shards** (a celebrity user, today's date).
+
+**Costs of sharding**: cross-shard joins and transactions are hard, global unique ids need a scheme (UUID, Snowflake ids), resharding/rebalancing, operational complexity. Delay sharding: optimise, cache, replicate and scale vertically first. Managed options: Aurora (storage scales), DynamoDB/Cassandra (shard automatically), Vitess/Citus.
+
+**Together**: production systems shard **and** replicate each shard (e.g. 4 shards × 1 leader + 2 replicas).
+
+## Code example
+
+```python
+import hashlib
+from collections import Counter
+
+def shard_for(key, n):
+    return int(hashlib.md5(str(key).encode()).hexdigest(), 16) % n
+
+users = range(1, 10_001)
+print("hash sharding (4 shards):", sorted(Counter(shard_for(u, 4) for u in users).items()))
+
+orders_by_month = {"2026-08": 9_000, "2026-09": 11_000, "2026-10": 14_000, "2026-11": 52_000}
+print("range sharding by month (writes this month):", orders_by_month["2026-11"], "→ hot shard")
+
+class Replicated:
+    """Leader + async followers with lag."""
+    def __init__(self):
+        self.leader, self.followers, self.pending = {}, [{}, {}], []
+    def write(self, k, v):
+        self.leader[k] = v
+        self.pending.append((k, v))         # not yet applied to followers
+    def replicate(self):
+        for k, v in self.pending:
+            for f in self.followers:
+                f[k] = v
+        self.pending.clear()
+    def read(self, k, from_leader=False):
+        return self.leader.get(k) if from_leader else self.followers[0].get(k)
+
+db = Replicated()
+db.write("profile:42", "old bio")
+db.replicate()
+db.write("profile:42", "new bio")
+print("read from follower (lag):", db.read("profile:42"))
+print("read-your-writes from leader:", db.read("profile:42", from_leader=True))
+db.replicate()
+print("after replication catches up:", db.read("profile:42"))
+
+N, W, R = 3, 2, 2
+print(f"quorum N={N} W={W} R={R}: W + R > N →", W + R > N, "(every read overlaps the latest write)")
+```
+
+```output
+hash sharding (4 shards): [(0, 2518), (1, 2460), (2, 2473), (3, 2549)]
+range sharding by month (writes this month): 52000 → hot shard
+read from follower (lag): old bio
+read-your-writes from leader: new bio
+after replication catches up: new bio
+quorum N=3 W=2 R=2: W + R > N → True (every read overlaps the latest write)
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "app", "label": "App", "icon": "🖥️", "col": 0, "row": 2, "info": "Computes shard = hash(user_id) and routes the query.", "example": "user 42 → shard 2" },
+    { "id": "router", "label": "Shard router", "icon": "🧭", "col": 1, "row": 2, "info": "Library or proxy (Vitess, Citus) that knows which shard owns which keys.", "example": "consistent hashing" },
+    { "id": "s1", "label": "Shard 1 leader", "icon": "🗄️", "col": 2, "row": 0, "info": "Users whose hash falls in range 1. Takes writes.", "example": "~25% of users" },
+    { "id": "s2", "label": "Shard 2 leader", "icon": "🗄️", "col": 2, "row": 2, "info": "Another quarter of the users.", "example": "user 42 lives here" },
+    { "id": "s3", "label": "Shard 3 leader", "icon": "🗄️", "col": 2, "row": 4, "info": "Another quarter of the users.", "example": "~25% of users" },
+    { "id": "r2", "label": "Shard 2 replicas", "icon": "📖", "col": 3, "row": 2, "info": "Async copies for reads and failover; may lag a few ms–s.", "example": "2 followers in other AZs" },
+    { "id": "r1", "label": "Shard 1 replicas", "icon": "📖", "col": 3, "row": 0, "info": "Each shard is replicated too.", "example": "2 followers" }
+  ],
+  "edges": [
+    ["app", "router"],
+    ["router", "s1"],
+    ["router", "s2", "user 42"],
+    ["router", "s3"],
+    ["s2", "r2", "replicate"],
+    ["s1", "r1", "replicate"]
+  ],
+  "flows": [
+    {
+      "name": "Write then read",
+      "steps": [
+        ["app", "User 42 updates their bio."],
+        ["router", "hash(42) → shard 2."],
+        ["s2", "Leader writes it."],
+        ["r2", "Replicas apply it a moment later."],
+        ["app", "That user's next reads go to the leader (read-your-writes)."]
+      ]
+    },
+    {
+      "name": "Leader fails",
+      "steps": [
+        ["s2", "Shard 2 leader crashes."],
+        ["r2", "A replica is promoted to leader."],
+        ["router", "Routes shard 2 traffic to the new leader."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="A shard key most queries do not use">
+
+<Wrong>
+
+```text
+Orders sharded by order_id, but the main screen is "my orders" by user_id → every page queries all shards.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Shard by the key in most queries (user_id); keep a secondary index or lookup for other access paths.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Sharding too early">
+
+<Wrong>
+
+```text
+Sharding a 20 GB database "for the future": every feature now deals with cross-shard queries.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+First: indexes, caching, read replicas, a bigger instance, archiving old data. Shard when writes/storage truly require it.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between replication and sharding?">
+
+Replication copies the same data to multiple nodes to improve availability, durability and read throughput. Sharding splits the data into disjoint partitions stored on different nodes to scale write throughput and storage. They are usually combined: each shard is replicated.
+
+</QA>
+
+<QA q="What problems does replication lag cause and how do you handle them?">
+
+Reads from asynchronous replicas can return stale data: a user may not see their own update, or see data go backwards across replicas. Handle it with read-your-writes (route that user's reads to the leader for a while), monotonic reads (stick a user to one replica), or synchronous replication for critical data.
+
+</QA>
+
+<QA q="How do you choose a shard key?">
+
+Pick a key with high cardinality and evenly distributed traffic that appears in most queries, so each request touches one shard — e.g. user_id or tenant_id. Avoid monotonically increasing keys like timestamps for hash-less range sharding (hot latest shard) and keys dominated by a few huge values.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Read replicas mainly help with...',
+      options: ['Write scaling', 'Read scaling and availability', 'Schema changes', 'Joins'],
+      answer: 1,
+      why: 'Copies serve reads and failover.',
+    },
+    {
+      q: 'Sharding by month puts all new writes on...',
+      options: ['Every shard', 'The latest shard (hot spot)', 'Replicas', 'The cache'],
+      answer: 1,
+      why: 'Range keys can be hot.',
+    },
+    {
+      q: 'Quorum N=3: which W and R guarantee overlap?',
+      options: ['W=1, R=1', 'W=2, R=2', 'W=1, R=2', 'W=0, R=3'],
+      answer: 1,
+      why: 'W + R > N.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Topic | Remember |
+| --- | --- |
+| Replication | same data, many nodes · HA + read scaling |
+| Async | fast, lag, possible loss on failover |
+| Sync | safe, slower writes |
+| Lag fix | read-your-writes from the leader |
+| Quorum | W + R > N |
+| Sharding | split data · scales writes + storage |
+| Hash | even spread, no range scans |
+| Range | range scans, hot spots |
+| Key | high cardinality, in most queries |
+| Costs | cross-shard joins, resharding, global ids |
+
+</CheatSheet>

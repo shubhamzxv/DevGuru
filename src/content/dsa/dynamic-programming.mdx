@@ -1,0 +1,255 @@
+---
+id: dsa-dynamic-programming
+title: Dynamic programming basics
+summary: Dynamic programming solves problems with overlapping subproblems and optimal substructure by storing each subproblem's answer once, either top-down with memoized recursion or bottom-up with a table; the steps are define the state, write the recurrence, set base cases, choose the order and optimise space.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Someone writes `1+1+1+1+1+1+1+1 = ?` on the board. You count: **8**. Then they add `+1` at the end. You answer **9** instantly — you did not recount, you **remembered** the previous answer. Dynamic programming is exactly that: never solve the same subproblem twice.
+
+</Analogy>
+
+## Simple explanation
+
+DP applies when a problem has:
+
+1. **Overlapping subproblems**: the same smaller question is asked many times (naive recursion repeats work)
+2. **Optimal substructure**: the best answer is built from best answers of smaller problems
+
+**Two styles**
+
+| Style | How | Pros |
+| --- | --- | --- |
+| **Top-down (memoization)** | recursion + `@cache` | easy to write from the recurrence; only computes needed states |
+| **Bottom-up (tabulation)** | fill a table from base cases upward | no recursion limit; easy to reduce space |
+
+**The 5-step recipe**
+
+1. **State**: what does `dp[i]` (or `dp[i][j]`) mean? e.g. "fewest coins to make amount i"
+2. **Recurrence**: how does it depend on smaller states? `dp[i] = min(dp[i - c] + 1 for c in coins)`
+3. **Base cases**: `dp[0] = 0`
+4. **Order**: fill so dependencies are ready (small i → big i)
+5. **Answer & space**: `dp[n]`; keep only the rows you need
+
+**Classic problems**
+
+| Problem | State | Recurrence |
+| --- | --- | --- |
+| Climbing stairs / Fibonacci | ways to reach step i | `dp[i-1] + dp[i-2]` |
+| House robber | best up to house i | `max(dp[i-1], dp[i-2] + val[i])` |
+| Coin change (fewest coins) | fewest coins for amount a | `min(dp[a-c] + 1)` |
+| 0/1 knapsack | best value with first i items, capacity w | skip or take item i |
+| Longest increasing subsequence | LIS ending at i | `1 + max(dp[j])` for j < i, `a[j] < a[i]` (O(n²); O(n log n) with bisect) |
+| **Longest common subsequence** | LCS of prefixes i, j | equal chars: `dp[i-1][j-1] + 1`, else `max(dp[i-1][j], dp[i][j-1])` |
+| **Edit distance** | edits to turn prefix i into prefix j | `1 + min(insert, delete, replace)` |
+| Unique grid paths | ways to reach cell (r, c) | `dp[r-1][c] + dp[r][c-1]` |
+
+Time ≈ number of states × work per state.
+
+## Code example
+
+```python
+from functools import cache
+
+def coin_change(coins, amount):
+    INF = float("inf")
+    dp = [0] + [INF] * amount               # dp[a] = fewest coins for amount a
+    for a in range(1, amount + 1):
+        for c in coins:
+            if c <= a and dp[a - c] + 1 < dp[a]:
+                dp[a] = dp[a - c] + 1
+    return dp[amount] if dp[amount] != INF else -1
+
+def house_robber(values):
+    prev2 = prev1 = 0                       # O(1) space: only two previous states
+    for v in values:
+        prev2, prev1 = prev1, max(prev1, prev2 + v)
+    return prev1
+
+def lcs(a, b):
+    dp = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            if a[i - 1] == b[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+    return dp[-1][-1]
+
+@cache
+def edit_distance(a, b):                    # top-down on the remaining strings
+    if not a or not b:
+        return len(a) + len(b)
+    if a[0] == b[0]:
+        return edit_distance(a[1:], b[1:])
+    return 1 + min(edit_distance(a[1:], b),      # delete
+                   edit_distance(a, b[1:]),      # insert
+                   edit_distance(a[1:], b[1:]))  # replace
+
+def knapsack(items, capacity):
+    dp = [0] * (capacity + 1)               # dp[w] = best value with capacity w
+    for weight, value in items:
+        for w in range(capacity, weight - 1, -1):    # backwards: each item used once
+            dp[w] = max(dp[w], dp[w - weight] + value)
+    return dp[capacity]
+
+print("coins:", coin_change([1, 5, 10, 25], 63), coin_change([2], 3))
+print("robber:", house_robber([2, 7, 9, 3, 1]))
+print("LCS:", lcs("ABCBDAB", "BDCABA"))
+print("edit distance:", edit_distance("kitten", "sitting"), edit_distance("horse", "ros"))
+print("knapsack:", knapsack([(1, 1), (3, 4), (4, 5), (5, 7)], 7))
+```
+
+```output
+coins: 6 -1
+robber: 12
+LCS: 4
+edit distance: 3 3
+knapsack: 9
+```
+
+<Playground kind="python">
+
+```python
+from bisect import bisect_left
+
+def lis_length(nums):
+    """Longest strictly increasing subsequence in O(n log n)."""
+    tails = []                       # tails[k] = smallest tail of an increasing run of length k+1
+    for x in nums:
+        i = bisect_left(tails, x)
+        if i == len(tails):
+            tails.append(x)
+        else:
+            tails[i] = x
+    return len(tails)
+
+def unique_paths(rows, cols):
+    dp = [1] * cols                  # one row at a time
+    for _ in range(1, rows):
+        for c in range(1, cols):
+            dp[c] += dp[c - 1]       # from above (old dp[c]) + from the left
+    return dp[-1]
+
+print(lis_length([10, 9, 2, 5, 3, 7, 101, 18]))   # 2, 3, 7, 18 → 4
+print(unique_paths(3, 7))                          # 28
+
+# Try it: write climbing stairs where you can take 1, 2 or 3 steps.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forward loop in 0/1 knapsack with a 1-D table">
+
+<Wrong>
+
+```python
+for w in range(weight, capacity + 1):          # dp[w - weight] may already include THIS item
+    dp[w] = max(dp[w], dp[w - weight] + value) # → item used many times (that is unbounded knapsack)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+for w in range(capacity, weight - 1, -1):      # backwards: reads values from before this item
+    dp[w] = max(dp[w], dp[w - weight] + value)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Jumping to code before defining the state">
+
+<Wrong>
+
+```text
+Writing nested loops and indexes by trial and error until the sample passes.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Say it in words first: "dp[i][j] = LCS of a[:i] and b[:j]", then the recurrence, base cases and order.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is dynamic programming?">
+
+A technique for problems with overlapping subproblems and optimal substructure: each subproblem is solved once and its answer stored, either top-down with memoized recursion or bottom-up by filling a table in dependency order. It turns exponential brute force into polynomial time, e.g. naive Fibonacci O(2ⁿ) into O(n).
+
+</QA>
+
+<QA q="Memoization vs tabulation?">
+
+Memoization is top-down recursion with a cache, computing only the states reached and mirroring the recurrence directly, but it uses stack space and can hit recursion limits. Tabulation is bottom-up iteration over a table; it avoids recursion, makes the evaluation order explicit and often allows space optimisation to a few rows or variables.
+
+</QA>
+
+<QA q="Solve coin change (fewest coins).">
+
+Let dp[a] be the fewest coins to make amount a, with dp[0] = 0 and others infinity; for each amount from 1 to the target, dp[a] = min over coins c ≤ a of dp[a − c] + 1. Return dp[target] or −1 if unreachable. O(amount × coins) time, O(amount) space. Greedy fails for some coin systems.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'DP needs overlapping subproblems and...',
+      options: ['Sorted input', 'Optimal substructure', 'A graph', 'Recursion only'],
+      answer: 1,
+      why: 'Best answers built from best sub-answers.',
+    },
+    {
+      q: 'House robber dp[i] = ?',
+      options: ['dp[i-1] + v', 'max(dp[i-1], dp[i-2] + v)', 'min(dp[i-1], v)', 'dp[i-2]'],
+      answer: 1,
+      why: 'Skip this house or rob it.',
+    },
+    {
+      q: 'LCS of strings of length m and n takes...',
+      options: ['O(m + n)', 'O(m · n)', 'O(2ⁿ)', 'O(log n)'],
+      answer: 1,
+      why: 'One cell per pair of prefixes.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | Ask |
+| --- | --- |
+| State | what does dp[i] / dp[i][j] mean? |
+| Recurrence | how from smaller states? |
+| Base | dp[0], first row/column |
+| Order | dependencies first |
+| Space | keep last row / two variables |
+
+| Problem | Recurrence |
+| --- | --- |
+| Stairs | `dp[i-1] + dp[i-2]` |
+| Robber | `max(dp[i-1], dp[i-2] + v)` |
+| Coins | `min(dp[a-c] + 1)` |
+| LCS | match `+1` diag · else `max(up, left)` |
+| Edit | `1 + min(del, ins, rep)` |
+| 0/1 knapsack | 1-D, loop w backwards |
+| LIS | O(n log n) with `bisect` |
+
+</CheatSheet>

@@ -1,0 +1,239 @@
+---
+id: system-design-observability
+title: Logging, monitoring and tracing
+summary: Observability is knowing what a system is doing from its outputs — structured logs (what happened), metrics (how much and how fast, e.g. the golden signals of latency, traffic, errors and saturation) and distributed traces (where a request spent time across services) — tied together by request ids, with alerts on user-facing SLOs and dashboards for diagnosis.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **hospital patient**: the **heart-rate monitor** shows numbers over time (metrics) and beeps when something is wrong (alerts); the **nurse's notes** record what happened and when (logs); the **patient's journey sheet** shows every department they visited and how long each took (trace). A doctor needs all three to find the problem quickly.
+
+</Analogy>
+
+## Simple explanation
+
+**Three pillars**
+
+| Pillar | Answers | Example | Tools |
+| --- | --- | --- | --- |
+| **Logs** | what happened, with details | `{"level":"ERROR","path":"/pay","order":42,"error":"timeout"}` | CloudWatch Logs, ELK/OpenSearch, Loki, Datadog |
+| **Metrics** | how many, how fast, trends | `http_requests_total`, p99 latency, CPU | Prometheus + Grafana, CloudWatch |
+| **Traces** | where time went across services | gateway 5 ms → orders 30 ms → payment 900 ms | OpenTelemetry, Jaeger, X-Ray, Tempo |
+
+**Logging good practice**
+
+- **Structured JSON** with fixed fields: timestamp, level, service, **request_id / trace_id**, user id, path, status, duration
+- Levels: DEBUG, INFO, WARNING, ERROR; no DEBUG noise in production
+- **Never log secrets**, passwords, tokens or full card numbers
+- Ship to a central store with retention limits
+
+**What to measure** — the **four golden signals** (Google SRE): **latency** (p50/p95/p99), **traffic** (req/s), **errors** (5xx rate), **saturation** (CPU, memory, queue depth, connection pool use). Also **RED** for services (Rate, Errors, Duration) and **USE** for resources (Utilisation, Saturation, Errors), plus business metrics (orders per minute).
+
+**Distributed tracing**: the first service creates a **trace id** and passes it in headers (`traceparent`) to every downstream call; each step records a **span** (start, duration, parent). You see the whole request as a waterfall.
+
+**Alerting**
+
+- Alert on **symptoms users feel** (error rate, p99 latency, SLO burn rate), not on every CPU spike
+- Every alert must be **actionable** and link to a dashboard/runbook
+- Avoid alert fatigue: thresholds over time windows, grouping, severities
+
+**Also**: health checks, uptime/synthetic checks, error tracking (Sentry), audit logs, cost monitoring.
+
+## Code example
+
+Structured logs with a request id, and metrics computed from them:
+
+```python
+import json, random, uuid
+from collections import defaultdict
+
+random.seed(11)
+logs = []
+
+def log(level, **fields):
+    logs.append({"level": level, **fields})
+
+def handle(path):
+    request_id = str(uuid.UUID(int=random.getrandbits(128)))[:8]
+    ms = round(random.gauss(60, 15)) if path != "/pay" else round(random.choice([80, 95, 1500]))
+    status = 500 if ms > 1000 else 200
+    log("ERROR" if status == 500 else "INFO", request_id=request_id, path=path, status=status, ms=ms,
+        **({"error": "payment gateway timeout"} if status == 500 else {}))
+
+for _ in range(30):
+    handle(random.choice(["/products", "/products", "/cart", "/pay"]))
+
+print("one log line:", json.dumps(logs[0]))
+by_path = defaultdict(list)
+for line in logs:
+    by_path[line["path"]].append(line)
+print(f"{'path':<10} {'req':>4} {'errors':>6} {'p_max ms':>8}")
+for path, lines in sorted(by_path.items()):
+    errors = sum(l["status"] >= 500 for l in lines)
+    print(f"{path:<10} {len(lines):>4} {errors:>6} {max(l['ms'] for l in lines):>8}")
+
+error_rate = sum(l["status"] >= 500 for l in logs) / len(logs)
+print(f"error rate {error_rate:.1%} →", "ALERT: page on-call" if error_rate > 0.05 else "ok")
+bad = next(l for l in logs if l["level"] == "ERROR")
+print("search logs by request_id", bad["request_id"], "→", bad["error"])
+```
+
+```output
+one log line: {"level": "INFO", "request_id": "ec99108d", "path": "/pay", "status": 200, "ms": 95}
+path        req errors p_max ms
+/cart         3      0       79
+/pay         10      2     1500
+/products    17      0      110
+error rate 6.7% → ALERT: page on-call
+search logs by request_id 89e7d15f → payment gateway timeout
+```
+
+A trace of one slow checkout (what a tracing UI shows):
+
+```text
+trace 4bf92f3577b34da6  total 1,180 ms
+├─ api-gateway          GET /checkout         1,180 ms
+│  ├─ order-service     create_order             40 ms
+│  │  └─ postgres       INSERT orders            12 ms
+│  └─ payment-service   charge                1,120 ms   ← the problem
+│     └─ HTTP POST      provider.example/pay  1,100 ms   (timeout at 1 s, retried once)
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "svc", "label": "Services", "icon": "🖥️", "col": 0, "row": 1, "info": "Emit JSON logs, metrics and spans via OpenTelemetry; pass trace ids in headers.", "example": "trace_id 4bf92f..." },
+    { "id": "logs", "label": "Logs store", "icon": "📜", "col": 1, "row": 0, "info": "Search 'request_id = 7c8d9e0a' or 'level = ERROR and path = /pay'.", "example": "CloudWatch Logs / Loki" },
+    { "id": "metrics", "label": "Metrics", "icon": "📈", "col": 1, "row": 1, "info": "Golden signals per service: latency, traffic, errors, saturation.", "example": "Prometheus / CloudWatch" },
+    { "id": "traces", "label": "Traces", "icon": "🧵", "col": 1, "row": 2, "info": "Waterfall of spans across services for one request.", "example": "Jaeger / X-Ray" },
+    { "id": "alerts", "label": "Alerts", "icon": "🚨", "col": 2, "row": 1, "info": "Fire on SLO breaches: error rate > 1% for 5 min, p99 > 800 ms.", "example": "PagerDuty / SNS" },
+    { "id": "dash", "label": "Dashboards", "icon": "🖼️", "col": 3, "row": 1, "info": "On-call starts here, then drills into traces and logs.", "example": "Grafana" }
+  ],
+  "edges": [
+    ["svc", "logs"],
+    ["svc", "metrics"],
+    ["svc", "traces"],
+    ["metrics", "alerts"],
+    ["alerts", "dash", "link"]
+  ],
+  "flows": [
+    {
+      "name": "Debugging an incident",
+      "steps": [
+        ["alerts", "Checkout error rate 6% → page."],
+        ["dash", "Errors started at 20:04 on payment-service."],
+        ["traces", "Slow traces: provider call takes 1.1 s and times out."],
+        ["logs", "ERROR lines: 'payment gateway timeout' with the same trace ids."],
+        ["svc", "Open the circuit breaker / switch provider; error rate drops."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Unstructured logs without ids">
+
+<Wrong>
+
+```python
+print("payment failed!!")             # which user? which request? which service?
+```
+
+</Wrong>
+
+<Right>
+
+```python
+logger.error("payment failed", extra={"request_id": rid, "order_id": 42, "provider": "x", "ms": 1210})
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Alerting on causes instead of symptoms">
+
+<Wrong>
+
+```text
+Page at 3 AM for "CPU 85%" while users see no problem; real outages go unnoticed among noisy alerts.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Page on user impact (error rate, latency SLO burn); keep resource metrics on dashboards and low-priority tickets.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between logs, metrics and traces?">
+
+Logs are timestamped records of individual events with details, good for investigating specific failures. Metrics are numeric time series aggregated over time, cheap to store and ideal for dashboards and alerts. Traces follow a single request across services as a tree of timed spans, showing where latency or errors occur in distributed systems.
+
+</QA>
+
+<QA q="What are the four golden signals?">
+
+Latency (how long requests take, separating successes and errors), traffic (demand, e.g. requests per second), errors (rate of failed requests) and saturation (how full the system is: CPU, memory, queue depth, pool usage). Monitoring them per service catches most user-facing problems.
+
+</QA>
+
+<QA q="How does distributed tracing work?">
+
+The entry service starts a trace with a unique id and creates a span; the trace context is propagated in request headers (W3C traceparent) to every downstream call, where new child spans are recorded with timing and metadata. A tracing backend assembles the spans into a timeline, usually via OpenTelemetry instrumentation.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Find which service made one request slow?',
+      options: ['Metrics only', 'Distributed trace', 'CPU graph', 'DNS logs'],
+      answer: 1,
+      why: 'Spans show where time went.',
+    },
+    {
+      q: 'Which is NOT a golden signal?',
+      options: ['Latency', 'Traffic', 'Number of developers', 'Saturation'],
+      answer: 2,
+      why: 'Latency, traffic, errors, saturation.',
+    },
+    {
+      q: 'What ties logs across services together?',
+      options: ['The hostname', 'A request/trace id', 'The log level', 'The port'],
+      answer: 1,
+      why: 'Correlation id.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Pillar | Use |
+| --- | --- |
+| Logs | JSON · request_id/trace_id · no secrets · retention |
+| Metrics | golden signals · RED · USE · business KPIs |
+| Traces | OpenTelemetry · `traceparent` header · spans |
+| Alerts | on SLO symptoms · actionable · runbook |
+| Dashboards | per service: latency p99, req/s, 5xx, saturation |
+| Tools | CloudWatch · Prometheus/Grafana · ELK/Loki · Jaeger/X-Ray · Sentry |
+
+</CheatSheet>

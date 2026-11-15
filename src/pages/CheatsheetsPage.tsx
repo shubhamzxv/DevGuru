@@ -1,4 +1,5 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Link, useSearchParams } from 'react-router-dom';
 import sheets from 'virtual:devguru-cheatsheets';
 import InlineMarkdown from '../components/content/InlineMarkdown';
@@ -14,6 +15,9 @@ const chip = (active: boolean) =>
       ? 'border-brand-600 bg-brand-600 text-white'
       : 'border-slate-300 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800'
   }`;
+
+/** Sheets drawn at first, and how many more each time the reader nears the end. */
+const BATCH = 12;
 
 /** Keeps only the rows (or notes) that contain the filter text. */
 function filterSheet(entry: CheatSheetEntry, words: string[]): CheatSheetEntry | null {
@@ -61,6 +65,42 @@ export default function CheatsheetsPage() {
 
   const shown = groups.reduce((sum, g) => sum + g.sheets.length, 0);
 
+  // All sheets together are ~20,000 elements: drawing them in one go froze phones
+  // for over a second. Draw a few, and more when the reader scrolls near the end.
+  const [limit, setLimit] = useState(BATCH);
+  useEffect(() => setLimit(BATCH), [text, trackFilter]);
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = end.current;
+    if (!element || limit >= shown || typeof IntersectionObserver === 'undefined') {
+      if (limit < shown && typeof IntersectionObserver === 'undefined') setLimit(shown);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) setLimit((current) => current + BATCH);
+      },
+      { rootMargin: '1200px' },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [limit, shown]);
+  // Printing must include every sheet, even ones not drawn yet.
+  useEffect(() => {
+    const showAll = () => flushSync(() => setLimit(Number.POSITIVE_INFINITY));
+    window.addEventListener('beforeprint', showAll);
+    return () => window.removeEventListener('beforeprint', showAll);
+  }, []);
+
+  let budget = limit;
+  const visibleGroups = groups
+    .map((group) => {
+      const take = group.sheets.slice(0, Math.max(0, budget));
+      budget -= take.length;
+      return { ...group, sheets: take };
+    })
+    .filter((group) => group.sheets.length > 0);
+
   return (
     <div className="mx-auto max-w-4xl">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -72,7 +112,10 @@ export default function CheatsheetsPage() {
         </div>
         <button
           type="button"
-          onClick={() => window.print()}
+          onClick={() => {
+            flushSync(() => setLimit(Number.POSITIVE_INFINITY));
+            window.print();
+          }}
           className="tap rounded-lg border border-slate-300 px-4 font-medium hover:bg-slate-100 print:hidden dark:border-slate-600 dark:hover:bg-slate-800"
         >
           Print / save as PDF
@@ -119,7 +162,7 @@ export default function CheatsheetsPage() {
         </p>
       </div>
 
-      {groups.map(({ track, sheets: trackSheets }) => (
+      {visibleGroups.map(({ track, sheets: trackSheets }) => (
         <section key={track.slug} aria-labelledby={`sheets-${track.slug}`} className="mt-8">
           <h2 id={`sheets-${track.slug}`} className="text-xl font-bold">
             <span aria-hidden="true">{track.icon} </span>
@@ -130,16 +173,16 @@ export default function CheatsheetsPage() {
               <section
                 key={entry.slug}
                 aria-label={entry.title}
-                className="break-inside-avoid rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
+                className="defer-render break-inside-avoid rounded-xl border [contain-intrinsic-size:auto_320px] border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
               >
                 <h3 className="font-semibold">
                   <Link
                     to={`/track/${entry.track}/${entry.slug}`}
-                    className="text-brand-700 underline-offset-2 hover:underline dark:text-brand-300"
+                    className="text-brand-700 underline underline-offset-2 hover:decoration-2 dark:text-brand-300"
                   >
                     {entry.title}
                   </Link>
-                  <span className="ml-2 text-sm font-normal text-slate-500 dark:text-slate-400">
+                  <span className="ml-2 text-sm font-normal text-slate-600 dark:text-slate-400">
                     {entry.module}
                   </span>
                 </h3>
@@ -186,6 +229,11 @@ export default function CheatsheetsPage() {
           </div>
         </section>
       ))}
+      {limit < shown && (
+        <div ref={end} className="py-8 text-center text-sm text-slate-600 dark:text-slate-400">
+          Loading more cheat sheets…
+        </div>
+      )}
     </div>
   );
 }

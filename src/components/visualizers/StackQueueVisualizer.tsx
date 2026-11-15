@@ -68,7 +68,7 @@ export default function StackQueueVisualizer({ mode = 'stack' }: { mode?: 'stack
           </li>
         ))}
         {items.length === 0 && (
-          <li className="text-sm text-slate-500">
+          <li className="text-sm text-slate-600 dark:text-slate-400">
             Empty. Popping now would be an error (underflow).
           </li>
         )}

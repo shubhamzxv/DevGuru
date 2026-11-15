@@ -4,10 +4,10 @@ import { parseDiagram } from '../../simulators/diagram';
 import { extractCode } from '../../utils/extractCode';
 import CodeBlock from '../content/CodeBlock';
 import { H2 } from '../content/Prose';
-import PythonPlayground from './PythonPlayground';
-import SqlPlayground from './SqlPlayground';
 
-// Simulators are separate chunks: a Python page never downloads the Git engine.
+// Every playground is its own chunk: a Python page never downloads the SQL or Git engine.
+const PythonPlayground = lazy(() => import('./PythonPlayground'));
+const SqlPlayground = lazy(() => import('./SqlPlayground'));
 const GitPlayground = lazy(() => import('./GitPlayground'));
 const TerminalPlayground = lazy(() => import('./TerminalPlayground'));
 const HttpPlayground = lazy(() => import('./HttpPlayground'));
@@ -76,7 +76,11 @@ export default function Playground({ kind, children }: PlaygroundProps) {
     <section>
       <H2>Try it yourself</H2>
       <Suspense
-        fallback={<p className="py-6 text-center text-sm text-slate-500">Loading the simulator…</p>}
+        fallback={
+          <p className="py-6 text-center text-sm text-slate-600 dark:text-slate-400">
+            Loading the simulator…
+          </p>
+        }
       >
         {body}
       </Suspense>

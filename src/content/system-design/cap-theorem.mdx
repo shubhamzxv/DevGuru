@@ -1,0 +1,228 @@
+---
+id: system-design-cap-theorem
+title: CAP theorem
+summary: The CAP theorem says that when a network partition splits a distributed system, it must choose between consistency (every read sees the latest write or an error) and availability (every request gets a non-error answer); CP systems refuse some requests, AP systems answer with possibly stale data, and PACELC adds the latency vs consistency trade-off when there is no partition.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Two **branches of a bank** keep copies of your balance and sync over a phone line. The line goes dead (a **partition**). You walk into branch B to withdraw. Branch B can **refuse** ("we cannot confirm your latest balance right now" — **consistent**, not available) or **allow** it using its last known balance ("here is your money" — **available**, but maybe wrong if you just withdrew at branch A). It cannot do both.
+
+</Analogy>
+
+## Simple explanation
+
+| Letter | Means |
+| --- | --- |
+| **C**onsistency | every read returns the most recent write (linearizability), or an error |
+| **A**vailability | every request to a working node gets a non-error response |
+| **P**artition tolerance | the system keeps working even if messages between nodes are lost |
+
+In a distributed system **partitions will happen** (network failures), so P is not optional. The real choice **during a partition** is:
+
+| Choice | Behaviour during a partition | Examples | Good for |
+| --- | --- | --- | --- |
+| **CP** | some requests fail or wait, but no stale/conflicting data | ZooKeeper, etcd, HBase, MongoDB (default majority writes), traditional SQL with sync failover | payments, inventory counts, leader election, locks |
+| **AP** | always answers, may return stale data; reconciles later | Cassandra, DynamoDB (eventually consistent reads), CouchDB, DNS | shopping carts, likes, feeds, product views |
+
+**Without a partition** — **PACELC**: if Partition → choose A or C; Else → choose **L**atency or **C**onsistency. Even on a healthy network, waiting for replicas to confirm (consistency) costs latency.
+
+**Consistency levels** (strongest → weakest): linearizable (strong) → sequential → causal → read-your-writes / monotonic reads → **eventual** (replicas converge "eventually").
+
+**In practice** it is per feature, not per company: the same app can use strongly consistent reads for checkout and eventually consistent reads for "people who viewed this". Many databases let you choose per request (DynamoDB `ConsistentRead=True`, Cassandra `QUORUM` vs `ONE`).
+
+**Common misunderstanding**: CAP's "C" is not ACID's "C" (constraints); and "CA" systems only exist on a single node or a network that never fails.
+
+## Code example
+
+Two replicas, a partition, and the two behaviours:
+
+```python
+class Replica:
+    def __init__(self, name):
+        self.name, self.balance = name, 1000
+
+class Cluster:
+    def __init__(self, mode):
+        self.a, self.b, self.mode = Replica("A"), Replica("B"), mode
+        self.partitioned = False
+
+    def withdraw(self, at, amount):
+        node, other = (self.a, self.b) if at == "A" else (self.b, self.a)
+        if self.partitioned and self.mode == "CP":
+            return f"{node.name}: ERROR, cannot reach {other.name} to confirm (consistent, not available)"
+        if amount > node.balance:
+            return f"{node.name}: declined, balance {node.balance}"
+        node.balance -= amount
+        if not self.partitioned:
+            other.balance = node.balance          # replicate
+        return f"{node.name}: OK, gave {amount}, local balance {node.balance}"
+
+    def heal(self):
+        self.partitioned = False
+        merged = min(self.a.balance, self.b.balance) - (1000 - max(self.a.balance, self.b.balance))
+        self.a.balance = self.b.balance = merged  # reconcile: apply both withdrawals
+        return f"healed: true balance {merged}"
+
+for mode in ["CP", "AP"]:
+    c = Cluster(mode)
+    c.partitioned = True
+    print(f"--- {mode} ---")
+    print(c.withdraw("A", 800))
+    print(c.withdraw("B", 800))
+    if mode == "AP":
+        print(c.heal(), "← overdrawn: the cost of staying available")
+```
+
+```output
+--- CP ---
+A: ERROR, cannot reach B to confirm (consistent, not available)
+B: ERROR, cannot reach A to confirm (consistent, not available)
+--- AP ---
+A: OK, gave 800, local balance 200
+B: OK, gave 800, local balance 200
+healed: true balance -600 ← overdrawn: the cost of staying available
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "u1", "label": "User in Mumbai", "icon": "🧑", "col": 0, "row": 0, "info": "Talks to node A.", "example": "Withdraw ₹800" },
+    { "id": "a", "label": "Node A (Mumbai)", "icon": "🗄️", "col": 1, "row": 0, "info": "Holds a replica of the data.", "example": "balance 1000" },
+    { "id": "net", "label": "Network partition", "icon": "✂️", "col": 2, "row": 1, "info": "The link between regions is down: A and B cannot sync.", "example": "Cable cut / misconfigured route" },
+    { "id": "b", "label": "Node B (Singapore)", "icon": "🗄️", "col": 3, "row": 2, "info": "Holds another replica.", "example": "balance 1000" },
+    { "id": "u2", "label": "User in Singapore", "icon": "🧑", "col": 4, "row": 2, "info": "Talks to node B at the same time.", "example": "Withdraw ₹800" },
+    { "id": "cp", "label": "CP choice", "icon": "🛑", "col": 1, "row": 2, "info": "Refuse or wait: no wrong balance, but some users get errors.", "example": "Payments, stock counts" },
+    { "id": "ap", "label": "AP choice", "icon": "✅", "col": 3, "row": 0, "info": "Answer from local data; reconcile after healing (conflicts possible).", "example": "Carts, likes, feeds" }
+  ],
+  "edges": [
+    ["u1", "a"],
+    ["a", "net", "sync"],
+    ["net", "b", "sync"],
+    ["u2", "b"],
+    ["a", "cp"],
+    ["b", "ap"]
+  ],
+  "flows": [
+    {
+      "name": "Partition happens",
+      "steps": [
+        ["net", "A and B lose contact."],
+        ["u1", "Withdraws at A."],
+        ["u2", "Withdraws at B."],
+        ["cp", "CP: one side refuses → correct but unavailable."],
+        ["ap", "AP: both succeed → available, balance conflict fixed later."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="'We picked CA'">
+
+<Wrong>
+
+```text
+"Our distributed database is CA: consistent and available."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Partitions are unavoidable across machines; the choice is what to give up WHEN one happens (C or A).
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="One consistency level for the whole app">
+
+<Wrong>
+
+```text
+Everything strongly consistent (slow, less available) or everything eventual (wrong stock at checkout).
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Choose per feature: strong for money and stock at checkout; eventual for views, likes, recommendations.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain the CAP theorem.">
+
+A distributed data store cannot simultaneously guarantee consistency (every read sees the latest write), availability (every request receives a non-error response) and partition tolerance (it works despite lost messages between nodes). Since network partitions cannot be ruled out, during a partition a system must choose between consistency (reject or delay some requests) and availability (respond, possibly with stale data).
+
+</QA>
+
+<QA q="Give examples of CP and AP choices.">
+
+CP: ZooKeeper/etcd for coordination, bank balances, inventory reservation — better to fail a request than to be wrong. AP: Cassandra or DynamoDB eventually consistent reads for carts, social feeds, view counters, DNS — better to answer with slightly old data and reconcile later.
+
+</QA>
+
+<QA q="What is PACELC?">
+
+An extension of CAP: if there is a Partition, choose Availability or Consistency; Else, during normal operation, choose Latency or Consistency. It captures that strong consistency costs latency even without failures, e.g. DynamoDB and Cassandra favour latency (PA/EL), while systems like Spanner favour consistency (PC/EC).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'During a partition, a CP system...',
+      options: ['Returns stale data', 'Rejects or delays some requests', 'Ignores the partition', 'Loses data'],
+      answer: 1,
+      why: 'Consistency over availability.',
+    },
+    {
+      q: 'Which is a good fit for AP?',
+      options: ['Bank transfers', 'Leader election', 'Social media likes', 'Stock reservation at checkout'],
+      answer: 2,
+      why: 'Slightly stale is fine.',
+    },
+    {
+      q: 'PACELC adds the trade-off between...',
+      options: ['Cost and speed', 'Latency and consistency (no partition)', 'SQL and NoSQL', 'Read and write'],
+      answer: 1,
+      why: 'Else: L or C.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Meaning |
+| --- | --- |
+| C | latest write or error |
+| A | always a non-error answer |
+| P | survives lost messages (must have) |
+| CP | correct, may refuse (ZooKeeper, etcd, payments) |
+| AP | answers, may be stale (Cassandra, DynamoDB eventual, DNS) |
+| PACELC | no partition: latency vs consistency |
+| Levels | strong → causal → read-your-writes → eventual |
+| Practice | choose per feature / per request |
+
+</CheatSheet>

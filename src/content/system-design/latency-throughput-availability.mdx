@@ -1,0 +1,232 @@
+---
+id: system-design-latency-throughput-availability
+title: Latency, throughput and availability
+summary: Latency is how long one request takes (measure percentiles like p95 and p99, not only the average), throughput is how many requests are handled per second, and availability is the share of time the system works (99.9% allows about 8.8 hours of downtime a year); redundancy raises availability while components in series lower it.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **toll plaza on a highway**:
+
+- **Latency**: how long one car waits at the booth
+- **Throughput**: how many cars pass per minute (add booths to raise it)
+- **Availability**: how often the plaza is open — if a booth breaks but others work, cars still pass
+
+A plaza can have high throughput (many booths) and still bad latency (each booth is slow).
+
+</Analogy>
+
+## Simple explanation
+
+**Latency** = time from request to response.
+
+- Use **percentiles**: p50 (median), **p95**, **p99** — "99% of requests finish within X ms". The average hides the slow tail that annoyed users notice
+- One page may call 10 services; the slowest one decides the page's speed (**tail latency** adds up)
+- Reduce it with caching, CDN, fewer round trips, indexes, async work, closer regions
+
+**Throughput** = requests (or bytes) handled per second (RPS, QPS).
+
+- Raise it with more servers, batching, async processing, efficient code
+- **Little's law**: in-flight requests = throughput × latency (1,000 req/s × 0.2 s = 200 concurrent requests → size your connection pools/threads)
+
+**Availability** = uptime / total time.
+
+| Availability | "nines" | Downtime per year | per month |
+| --- | --- | --- | --- |
+| 99% | two | 3.65 days | 7.3 hours |
+| 99.9% | three | 8.77 hours | 43.8 min |
+| 99.95% | | 4.38 hours | 21.9 min |
+| 99.99% | four | 52.6 min | 4.4 min |
+| 99.999% | five | 5.3 min | 26 s |
+
+- **In series** (A needs B): multiply → 99.9% × 99.9% = **99.8%** (worse)
+- **In parallel** (redundant copies): 1 − (1 − a)ⁿ → two 99% servers = **99.99%** (better)
+- Raise it with redundancy across zones, health checks + failover, no single points of failure, graceful degradation
+
+**SLI / SLO / SLA**: the metric (p99 latency), the internal target (p99 < 300 ms, 99.9% success), and the contract with customers (refunds if broken). **Durability** is different: the chance data is **not lost** (S3: 11 nines).
+
+## Code example
+
+```python
+import random, statistics
+
+random.seed(7)
+latencies = [random.gauss(80, 15) for _ in range(985)] + [random.uniform(800, 2000) for _ in range(15)]
+latencies.sort()
+pct = lambda p: latencies[int(len(latencies) * p / 100) - 1]
+print(f"average {statistics.mean(latencies):.0f} ms | p50 {pct(50):.0f} | p95 {pct(95):.0f} | p99 {pct(99):.0f} | max {latencies[-1]:.0f}")
+
+def downtime(avail):
+    minutes = (1 - avail) * 365 * 24 * 60
+    return f"{minutes / 60:.1f} h/year" if minutes >= 60 else f"{minutes:.1f} min/year"
+
+for a in [0.99, 0.999, 0.9999]:
+    print(f"{a:.2%} → {downtime(a)}")
+
+series = 0.999 * 0.999 * 0.999            # LB → app → DB, all required
+parallel = 1 - (1 - 0.99) ** 2            # two independent copies
+print(f"3 parts in series: {series:.4%}   two 99% copies in parallel: {parallel:.4%}")
+print("Little's law: in-flight =", 1000 * 0.2, "requests at 1000 req/s and 200 ms")
+```
+
+```output
+average 99 ms | p50 81 | p95 106 | p99 954 | max 1941
+99.00% → 87.6 h/year
+99.90% → 8.8 h/year
+99.99% → 52.6 min/year
+3 parts in series: 99.7003%   two 99% copies in parallel: 99.9900%
+Little's law: in-flight = 200.0 requests at 1000 req/s and 200 ms
+```
+
+The average (~100 ms) looks fine, but 1 user in 100 waits over 800 ms — that is what p99 shows.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "user", "label": "User request", "icon": "🧑", "col": 0, "row": 1, "info": "Latency budget: p99 under 300 ms end to end.", "example": "Open order history" },
+    { "id": "lb", "label": "Load balancer (2 AZs)", "icon": "⚖️", "col": 1, "row": 1, "info": "Redundant: if one zone fails the other serves. Parallel = higher availability.", "example": "99.99%" },
+    { "id": "app1", "label": "App AZ-a", "icon": "🖥️", "col": 2, "row": 0, "info": "~20 ms of work per request.", "example": "Healthy" },
+    { "id": "app2", "label": "App AZ-b", "icon": "🖥️", "col": 2, "row": 2, "info": "Copy in another zone.", "example": "Healthy" },
+    { "id": "cache", "label": "Cache", "icon": "⚡", "col": 3, "row": 0, "info": "~1 ms. Cuts latency and DB load.", "example": "Hit rate 85%" },
+    { "id": "db", "label": "Database (Multi-AZ)", "icon": "🗄️", "col": 3, "row": 2, "info": "~5–50 ms per query. In series with the app: its availability multiplies in.", "example": "Standby for failover" },
+    { "id": "slow", "label": "Slow dependency", "icon": "🐢", "col": 4, "row": 1, "info": "A third-party API with a 2 s tail: it ruins p99 unless you add a timeout and fallback.", "example": "Loyalty points service" }
+  ],
+  "edges": [
+    ["user", "lb"],
+    ["lb", "app1"],
+    ["lb", "app2"],
+    ["app1", "cache"],
+    ["app2", "db"],
+    ["app1", "slow", "timeout 300 ms"]
+  ],
+  "flows": [
+    {
+      "name": "Where latency goes",
+      "steps": [
+        ["user", "Request starts."],
+        ["lb", "+2 ms."],
+        ["app1", "+20 ms of code."],
+        ["cache", "Hit: +1 ms. Miss would add a DB query."],
+        ["slow", "Without a timeout, this call alone sets your p99."]
+      ]
+    },
+    {
+      "name": "A zone fails",
+      "steps": [
+        ["app1", "AZ-a goes down."],
+        ["lb", "Health checks fail; traffic goes to AZ-b."],
+        ["app2", "Serves everyone: the system stays available."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Reporting only the average latency">
+
+<Wrong>
+
+```text
+"Average latency is 95 ms, all good" — while 1% of users wait 2 seconds.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Track p50, p95, p99 (and max) per endpoint; set SLOs and alarms on p99.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Adding dependencies without timeouts">
+
+<Wrong>
+
+```text
+Every request calls 5 services in series with no timeout: one slow service makes everything slow and less available.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Timeouts, parallel calls where possible, caching, fallbacks, and removing calls from the critical path.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between latency and throughput?">
+
+Latency is the time to complete one request; throughput is the number of requests completed per unit of time. They are related but independent: adding servers raises throughput without making a single request faster, and batching raises throughput while possibly increasing latency.
+
+</QA>
+
+<QA q="Why use p99 latency instead of the average?">
+
+Averages hide outliers. p99 shows the experience of the slowest 1% of requests, which matters because a single user session or page makes many requests, so most users eventually hit the tail. SLOs are usually defined on high percentiles.
+
+</QA>
+
+<QA q="How much downtime does 99.9% availability allow, and how do you improve availability?">
+
+About 8.8 hours a year or 43 minutes a month. Improve it with redundancy across instances and zones, health checks and automatic failover, removing single points of failure, timeouts and circuit breakers for dependencies, graceful degradation, and safe deployments with quick rollback.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: '99.99% availability allows about...',
+      options: ['8.8 hours/year', '52 minutes/year', '5 minutes/year', '3.6 days/year'],
+      answer: 1,
+      why: 'Four nines.',
+    },
+    {
+      q: 'Two required components each 99.9% → total?',
+      options: ['99.99%', '99.9%', '99.8%', '100%'],
+      answer: 2,
+      why: 'Series: multiply.',
+    },
+    {
+      q: 'Which metric shows the slowest 1% of requests?',
+      options: ['Average', 'p50', 'p99', 'Throughput'],
+      answer: 2,
+      why: '99th percentile.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Remember |
+| --- | --- |
+| Latency | time per request · p50/p95/p99 |
+| Throughput | requests per second |
+| Little's law | in-flight = throughput × latency |
+| Availability | 99.9% ≈ 8.8 h/yr · 99.99% ≈ 53 min/yr |
+| Series | multiply (worse) |
+| Parallel | 1 − (1 − a)ⁿ (better) |
+| SLI / SLO / SLA | metric / target / contract |
+| Durability | data not lost (≠ availability) |
+
+</CheatSheet>

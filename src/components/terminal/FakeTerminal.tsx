@@ -141,7 +141,7 @@ export default function FakeTerminal({ simulator, starters, onChange, label }: F
           onClick={() => inputRef.current?.focus()}
         >
           {entries.length === 0 && (
-            <p className="text-slate-500">Type help to see what this terminal understands.</p>
+            <p className="text-slate-400">Type help to see what this terminal understands.</p>
           )}
           {entries.map((entry) => (
             <div key={entry.id} className="mb-2">
@@ -201,7 +201,7 @@ export default function FakeTerminal({ simulator, starters, onChange, label }: F
           />
           <button
             type="submit"
-            className="tap shrink-0 rounded-lg bg-emerald-600 px-3 text-sm font-semibold text-white hover:bg-emerald-700"
+            className="tap shrink-0 rounded-lg bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800"
           >
             Run
           </button>

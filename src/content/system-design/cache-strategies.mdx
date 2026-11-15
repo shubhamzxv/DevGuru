@@ -1,0 +1,257 @@
+---
+id: system-design-cache-strategies
+title: Cache strategies and invalidation
+summary: Cache-aside, read-through, write-through, write-behind and write-around decide when data enters the cache and how writes reach the database; invalidation keeps cached data fresh with TTLs, deleting keys on update and versioned keys, while stampedes, hot keys and race conditions are handled with locks, jitter and delete-after-write.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **restaurant menu board** outside the shop shows today's prices (the cache); the kitchen's price book is the truth (the database). When the price of biryani changes, someone must **wipe the board** or update it — otherwise customers see the old price. "There are only two hard things in computer science: cache invalidation and naming things."
+
+</Analogy>
+
+## Simple explanation
+
+**Reading strategies**
+
+| Strategy | How | Notes |
+| --- | --- | --- |
+| **Cache-aside** (lazy loading) | app checks cache → on miss reads DB → stores in cache | most common; cache holds only what is used |
+| Read-through | the cache library loads from the DB itself on a miss | same idea, logic inside the cache layer |
+
+**Writing strategies**
+
+| Strategy | How | Pros / cons |
+| --- | --- | --- |
+| **Write-through** | write cache and DB together | cache always fresh; slower writes, caches unused data |
+| **Write-behind** (write-back) | write cache now, DB later in batches | very fast writes; **data loss risk** if the cache dies |
+| Write-around | write only the DB; cache fills on the next read | good for data rarely read again |
+| **Cache-aside writes** | update DB, then **delete** the cache key | simple, the usual choice |
+
+**Invalidation tools**
+
+- **TTL**: every key expires (seconds for prices, hours for static content) — the safety net
+- **Delete on write**: after updating the DB, `DEL product:7`; the next read reloads
+- **Versioned keys**: `product:7:v42` or `/assets/app.3f9a1c.js` — new version, new key, nothing to delete
+- **Events**: services publish "ProductUpdated"; caches subscribe and delete
+
+**Why delete instead of update?** Two concurrent writers can set the cache in the wrong order (stale value stays until TTL). Deleting is idempotent; the next reader loads the latest DB value.
+
+**Common problems**
+
+| Problem | What happens | Fix |
+| --- | --- | --- |
+| **Cache stampede** (thundering herd) | a hot key expires; thousands of misses hit the DB at once | lock / single-flight (one request rebuilds), early refresh, serve stale while refreshing |
+| **Synchronized expiry** | many keys set at the same time expire together | **TTL jitter** (300 s ± random 30 s) |
+| **Cache penetration** | requests for keys that do not exist always miss | cache the "not found" briefly, Bloom filter |
+| **Hot key** | one key gets most traffic | local in-memory copy, replicate the key, CDN |
+| Stale reads after write | read replica / cache lag | read-your-writes from the primary for that user |
+
+## Code example
+
+Simulate a stampede on an expired hot key, with and without a lock:
+
+```python
+import threading, time
+
+db_queries = 0
+def load_from_db(key):
+    global db_queries
+    db_queries += 1
+    time.sleep(0.05)                       # slow query
+    return f"value-of-{key}"
+
+def run(n_requests, use_lock):
+    global db_queries
+    db_queries = 0
+    cache = {}
+    lock = threading.Lock()
+
+    def get(key):
+        if key in cache:
+            return cache[key]
+        if not use_lock:
+            cache[key] = load_from_db(key)  # every concurrent miss queries the DB
+            return cache[key]
+        with lock:                          # single-flight: one rebuilds, others wait
+            if key not in cache:            # check again inside the lock
+                cache[key] = load_from_db(key)
+        return cache[key]
+
+    threads = [threading.Thread(target=get, args=("home-page",)) for _ in range(n_requests)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    return db_queries
+
+print("200 requests right after expiry, no lock:  ", run(200, use_lock=False), "DB queries")
+print("200 requests right after expiry, with lock:", run(200, use_lock=True), "DB query")
+
+import random
+random.seed(1)
+print("TTLs with jitter:", [300 + random.randint(-30, 30) for _ in range(5)])
+
+cache = {"product:7": {"price": 450}}
+db = {"product:7": {"price": 450}}
+def update_price(pid, price):
+    db[pid] = {"price": price}             # 1) write the source of truth
+    cache.pop(pid, None)                   # 2) delete (not update) the cached copy
+update_price("product:7", 399)
+print("after update, cache has product:7?", "product:7" in cache, "| next read loads", db["product:7"])
+```
+
+```output
+200 requests right after expiry, no lock:   200 DB queries
+200 requests right after expiry, with lock: 1 DB query
+TTLs with jitter: [278, 306, 324, 321, 318]
+after update, cache has product:7? False | next read loads {'price': 399}
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "reader", "label": "Readers", "icon": "👥", "col": 0, "row": 0, "info": "Thousands per second for product 7.", "example": "GET /products/7" },
+    { "id": "writer", "label": "Admin update", "icon": "✏️", "col": 0, "row": 2, "info": "Changes the price.", "example": "450 → 399" },
+    { "id": "app", "label": "App (cache-aside)", "icon": "🖥️", "col": 1, "row": 1, "info": "Read: cache → DB on miss → set with TTL. Write: DB first, then DELETE the key.", "example": "TTL 300 s ± 30 s jitter" },
+    { "id": "cache", "label": "Redis", "icon": "⚡", "col": 2, "row": 0, "info": "product:7 → {price}. A lock key (SET NX) lets only one request rebuild after expiry.", "example": "lock:product:7" },
+    { "id": "db", "label": "Database", "icon": "🗄️", "col": 2, "row": 2, "info": "Source of truth.", "example": "UPDATE products SET price = 399" },
+    { "id": "bus", "label": "ProductUpdated event", "icon": "📣", "col": 3, "row": 1, "info": "Other services and the CDN invalidate their own copies.", "example": "CDN invalidation /products/7" }
+  ],
+  "edges": [
+    ["reader", "app"],
+    ["writer", "app"],
+    ["app", "cache", "get / del"],
+    ["app", "db", "miss / write"],
+    ["db", "bus", "event"]
+  ],
+  "flows": [
+    {
+      "name": "Price change",
+      "steps": [
+        ["writer", "Price 450 → 399."],
+        ["db", "Database updated first."],
+        ["cache", "Key deleted."],
+        ["bus", "Event tells other caches to drop it too."],
+        ["reader", "Next read misses, loads 399, caches it."]
+      ]
+    },
+    {
+      "name": "Hot key expires",
+      "steps": [
+        ["cache", "TTL ends for product 7."],
+        ["reader", "500 requests miss at once."],
+        ["app", "Only the request holding the lock queries the DB."],
+        ["db", "1 query instead of 500."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Updating the cache before the database">
+
+<Wrong>
+
+```text
+SET cache = new price; then UPDATE db fails → cache shows a price that never existed.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Write the database first, then delete the cache key (and keep a TTL as a safety net).
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Write-behind for important data">
+
+<Wrong>
+
+```text
+Orders written only to Redis and flushed to the DB every minute; Redis restarts → orders lost.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Important data goes to the durable DB synchronously; write-behind only for loss-tolerant counters/analytics.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain cache-aside, write-through and write-behind.">
+
+Cache-aside: the application reads the cache, loads from the database on a miss and stores the result; on writes it updates the database and invalidates the cache. Write-through: every write goes to the cache and the database synchronously, keeping the cache fresh at the cost of write latency. Write-behind: writes go to the cache and are flushed to the database asynchronously, giving fast writes but risking data loss.
+
+</QA>
+
+<QA q="How do you keep a cache consistent with the database?">
+
+Use TTLs as a safety net, update the database first and then delete the affected cache keys (rather than updating them), use versioned keys for immutable content, publish change events so other caches invalidate, and read from the primary when a user must see their own write immediately.
+
+</QA>
+
+<QA q="What is a cache stampede and how do you prevent it?">
+
+When a popular key expires, many concurrent requests miss and all query the database at once. Prevent it with a lock or single-flight so only one request recomputes, serving stale data while refreshing, refreshing before expiry, and adding random jitter to TTLs so keys do not expire together.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'After updating the DB, the cache key should usually be...',
+      options: ['Updated first', 'Deleted', 'Left alone', 'Copied'],
+      answer: 1,
+      why: 'Next read reloads fresh data.',
+    },
+    {
+      q: 'Fastest writes but risk of data loss?',
+      options: ['Write-through', 'Write-behind', 'Write-around', 'Cache-aside'],
+      answer: 1,
+      why: 'DB written later.',
+    },
+    {
+      q: 'Many keys expiring at the same moment: fix?',
+      options: ['Longer keys', 'TTL jitter', 'Bigger Redis', 'No TTL'],
+      answer: 1,
+      why: 'Spread expiry times.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Strategy | Read | Write |
+| --- | --- | --- |
+| Cache-aside | app loads on miss | DB, then DEL key |
+| Read-through | cache loads on miss | — |
+| Write-through | — | cache + DB together |
+| Write-behind | — | cache now, DB later (risky) |
+| Write-around | fills on next read | DB only |
+
+Invalidation: TTL · delete on write · versioned keys · events
+Problems: stampede → lock/single-flight · sync expiry → jitter · penetration → cache "not found" · hot key → local copy
+
+</CheatSheet>

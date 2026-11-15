@@ -1,0 +1,241 @@
+---
+id: system-design-interview-revision
+title: System design interview revision
+summary: A one-page revision of system design interviews — the step-by-step framework, key numbers for estimates, the building blocks and when to use each, the trade-offs interviewers probe, and short answers to the most common questions.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The night before the exam you do not reread the textbook: you go through the formula sheet and the past papers. This page is both for system design.
+
+</Analogy>
+
+## Simple explanation
+
+**The framework (45 min)**
+
+| Step | Time | Say / produce |
+| --- | --- | --- |
+| 1. Requirements | 5 min | features (in/out of scope), users, scale, latency, availability, consistency |
+| 2. Estimates | 5 min | req/s average + peak, read:write, storage/year, bandwidth |
+| 3. API | 5 min | main endpoints with inputs/outputs |
+| 4. Data model | 5 min | entities, keys, SQL or NoSQL and why |
+| 5. High-level design | 10 min | client → DNS/CDN → LB/gateway → services → cache/DB/queue/storage |
+| 6. Deep dives | 10 min | the bottleneck: scaling DB, caching, hot keys, consistency, failures |
+| 7. Wrap-up | 5 min | trade-offs made, monitoring, what you'd do next |
+
+**Numbers to remember**
+
+| Fact | Value |
+| --- | --- |
+| Seconds per day | ~86,400 ≈ 10⁵ |
+| 1 M req/day | ~12 req/s |
+| RAM / SSD / same-region network / cross-continent | ~100 ns / ~100 µs / ~0.5 ms / ~150 ms |
+| 99.9% / 99.99% downtime | ~8.8 h / ~53 min per year |
+| One app server | ~1,000s of simple req/s |
+| One Postgres primary | ~10,000s of simple queries/s (with good indexes) |
+| Redis | ~100,000 ops/s per node |
+
+**Building blocks → when**
+
+| Block | Use when |
+| --- | --- |
+| CDN | static files, global users |
+| Load balancer | >1 server, high availability |
+| API gateway | many services: auth, rate limits, routing |
+| Cache (Redis) | read-heavy, repeated reads |
+| SQL DB | relations, transactions |
+| NoSQL | key access at huge scale, flexible docs, heavy writes |
+| Replicas / sharding | read scaling / write + storage scaling |
+| Queue | async work, spikes, decoupling |
+| Event stream (Kafka) | many consumers, replay, analytics |
+| Object storage (S3) | files, images, backups |
+| Search engine | full-text search |
+| Rate limiter, circuit breaker | protection and resilience |
+| Observability | always |
+
+**Trade-offs interviewers probe**: consistency vs availability (CAP), latency vs consistency, SQL vs NoSQL, cache freshness vs speed, sync vs async, monolith vs microservices, cost vs performance, push vs pull, normalisation vs denormalisation.
+
+## Code example
+
+A reusable estimate helper (use it on any question):
+
+```python
+def estimate(name, daily_active, actions_per_user, read_ratio, bytes_per_write, peak=5, years=5):
+    writes = daily_active * actions_per_user / 86_400
+    reads = writes * read_ratio
+    storage_tb = daily_active * actions_per_user * bytes_per_write * 365 * years / 1e12
+    print(f"{name}: writes {writes:,.0f}/s (peak {writes * peak:,.0f}), reads {reads:,.0f}/s "
+          f"(peak {reads * peak:,.0f}), storage {storage_tb:,.1f} TB over {years} years")
+
+estimate("URL shortener", 1_000_000, 3, 100, 500)
+estimate("Chat app", 50_000_000, 40, 1, 200)
+estimate("Photo sharing (metadata)", 20_000_000, 2, 50, 1_000)
+estimate("Photo sharing (images 2 MB)", 20_000_000, 2, 50, 2_000_000)
+```
+
+```output
+URL shortener: writes 35/s (peak 174), reads 3,472/s (peak 17,361), storage 2.7 TB over 5 years
+Chat app: writes 23,148/s (peak 115,741), reads 23,148/s (peak 115,741), storage 730.0 TB over 5 years
+Photo sharing (metadata): writes 463/s (peak 2,315), reads 23,148/s (peak 115,741), storage 73.0 TB over 5 years
+Photo sharing (images 2 MB): writes 463/s (peak 2,315), reads 23,148/s (peak 115,741), storage 146,000.0 TB over 5 years
+```
+
+The last line shows why images go to **object storage + CDN**, not the database.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "client", "label": "Clients", "icon": "📱", "col": 0, "row": 2, "info": "Web, mobile, partners.", "example": "Start every design here" },
+    { "id": "edge", "label": "DNS + CDN", "icon": "🌍", "col": 1, "row": 0, "info": "Route to the nearest region; cache static content.", "example": "Route 53 + CloudFront" },
+    { "id": "gw", "label": "LB / API gateway", "icon": "🚪", "col": 1, "row": 2, "info": "TLS, auth, rate limits, routing to services.", "example": "ALB + gateway" },
+    { "id": "svc", "label": "Stateless services", "icon": "🖥️", "col": 2, "row": 2, "info": "Business logic; autoscale; timeouts, retries, circuit breakers.", "example": "orders, users, search" },
+    { "id": "cache", "label": "Cache", "icon": "⚡", "col": 3, "row": 0, "info": "Cache-aside + TTL; protects the database.", "example": "Redis" },
+    { "id": "db", "label": "Databases", "icon": "🗄️", "col": 3, "row": 2, "info": "SQL for transactions; NoSQL for scale; replicas and shards.", "example": "Postgres + DynamoDB" },
+    { "id": "async", "label": "Queues / streams", "icon": "📬", "col": 3, "row": 4, "info": "Async work, fan-out, analytics; DLQs; idempotent consumers.", "example": "SQS / Kafka" },
+    { "id": "blob", "label": "Object storage", "icon": "🪣", "col": 4, "row": 1, "info": "Files and media, served via CDN.", "example": "S3" },
+    { "id": "obs", "label": "Observability", "icon": "📈", "col": 4, "row": 3, "info": "Logs, metrics, traces, alerts on SLOs.", "example": "Golden signals" }
+  ],
+  "edges": [
+    ["client", "edge"],
+    ["client", "gw"],
+    ["gw", "svc"],
+    ["svc", "cache"],
+    ["svc", "db"],
+    ["svc", "async"],
+    ["svc", "blob"],
+    ["svc", "obs"]
+  ],
+  "flows": [
+    {
+      "name": "Use this skeleton in any interview",
+      "steps": [
+        ["client", "Who uses it and how much?"],
+        ["edge", "Global users or static content → CDN."],
+        ["gw", "One entry point with auth and limits."],
+        ["svc", "Stateless services that scale out."],
+        ["cache", "Read-heavy → cache."],
+        ["db", "Pick SQL/NoSQL; replicas, then shards."],
+        ["async", "Slow or fan-out work → queues."],
+        ["obs", "Finish with monitoring and failure handling."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Silent drawing">
+
+<Wrong>
+
+```text
+Drawing 15 boxes without explaining why each exists or what happens when it fails.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+For every box: why it is needed, the alternative you considered, and how it fails and recovers.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="No numbers">
+
+<Wrong>
+
+```text
+"It will need to scale a lot, so we add sharding."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"~4,000 reads/s peak, 40 writes/s, 600 GB in 10 years: one Postgres primary with replicas + Redis is enough; sharding later."
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you scale a system from 1,000 to 10 million users?">
+
+Start with a single app and database; add a load balancer and stateless app servers; add a CDN and cache; move slow work to queues; add read replicas; split services where teams or scaling needs differ; partition the database by a good key; replicate across zones and regions; and add observability, rate limiting and resilience patterns along the way — each step driven by measured bottlenecks.
+
+</QA>
+
+<QA q="How do you design for high availability?">
+
+Remove single points of failure with redundancy across availability zones (load balancers, stateless services, replicated databases with automatic failover), health checks, timeouts, retries with backoff, circuit breakers, graceful degradation, backups and tested disaster recovery, safe deployments with rollback, and monitoring with alerts on SLOs.
+
+</QA>
+
+<QA q="How do you keep data consistent across microservices?">
+
+Avoid distributed transactions; give each service its own data, publish events using the transactional outbox, coordinate multi-step processes with sagas and compensating actions, make consumers idempotent, and accept eventual consistency where the business allows, keeping strong consistency inside a service's own database.
+
+</QA>
+
+<QA q="When would you choose a queue over a direct API call?">
+
+When the caller does not need the result immediately, the work is slow or can spike, several consumers need the same event, or you want retries and buffering when the downstream service is unavailable. Use a direct call when an immediate answer is required to continue.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'First thing to do in a design interview?',
+      options: ['Draw Kafka', 'Clarify requirements and scale', 'Choose a cloud', 'Write SQL'],
+      answer: 1,
+      why: 'Everything depends on it.',
+    },
+    {
+      q: 'Read-heavy system with repeated reads needs...',
+      options: ['More writes', 'A cache and read replicas', 'A bigger CDN only', 'Sharding first'],
+      answer: 1,
+      why: 'Cheapest big win.',
+    },
+    {
+      q: 'Where do user-uploaded images go?',
+      options: ['The SQL database', 'Object storage + CDN', 'Redis', 'Kafka'],
+      answer: 1,
+      why: 'Cheap, durable, fast via CDN.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Topic | Key point |
+| --- | --- |
+| Framework | requirements → estimates → API → data → design → deep dive → wrap-up |
+| Scale out | stateless services + LB + autoscaling |
+| Reads | CDN · cache · replicas |
+| Writes | queues · sharding · NoSQL |
+| Consistency | CAP · per-feature choice · sagas · outbox |
+| Resilience | timeouts · retries + jitter · circuit breakers · bulkheads |
+| Protection | rate limiting · gateway auth |
+| Ops | logs · metrics · traces · SLO alerts |
+| Always | numbers + trade-offs + failure handling |
+
+</CheatSheet>

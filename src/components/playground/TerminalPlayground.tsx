@@ -41,7 +41,7 @@ export default function TerminalPlayground({ initialCode }: { initialCode: strin
           <div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
             <h3 className="text-sm font-bold">Containers (running copies)</h3>
             {containers.length === 0 ? (
-              <p className="mt-1 text-sm text-slate-500">None yet.</p>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">None yet.</p>
             ) : (
               <ul className="mt-1 space-y-1 text-sm">
                 {containers.map((container) => (
@@ -56,7 +56,7 @@ export default function TerminalPlayground({ initialCode }: { initialCode: strin
                       {container.status === 'running' ? 'Up' : 'Exited'}
                     </span>
                     <span className="font-mono">{container.name}</span>
-                    <span className="text-slate-500">
+                    <span className="text-slate-600 dark:text-slate-400">
                       {container.image}
                       {container.status === 'running' &&
                         container.ports.length > 0 &&

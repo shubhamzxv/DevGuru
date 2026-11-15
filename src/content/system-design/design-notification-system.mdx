@@ -1,0 +1,280 @@
+---
+id: system-design-design-notification-system
+title: Design a notification system
+summary: An interview walk-through of a service that sends push, SMS, email and in-app notifications — requirements, estimates, an API that accepts events, user preference and template checks, per-channel queues and workers calling providers like FCM/APNs, SES and SMS gateways, retries with dead-letter queues, deduplication, rate limiting, quiet hours, priorities and delivery tracking.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **post office for a whole city**. Many senders (order service, bank, marketing) drop letters in one place. The post office checks each recipient's wishes ("no flyers", "SMS only at night for emergencies"), sorts letters into separate bags for courier, SMS and email, and different delivery teams handle each bag. If a delivery fails, it is tried again; if it keeps failing, it goes to the "returned mail" shelf. Every delivery is logged.
+
+</Analogy>
+
+## Simple explanation
+
+**1. Requirements**
+
+| Functional | Non-functional |
+| --- | --- |
+| channels: **push** (iOS/Android), **SMS**, **email**, **in-app** | high throughput (sale campaigns: millions/hour) |
+| transactional (OTP, order shipped) and marketing | OTPs within seconds; marketing can wait |
+| user preferences / opt-out, quiet hours | **at-least-once**, no duplicates seen by users |
+| templates in many languages | track delivered / opened / failed |
+
+**2. Estimates** (assumed): 10 M users; 50 M notifications/day ≈ 600/s average, campaigns 10× peaks; most are push.
+
+**3. API**
+
+```text
+POST /v1/notifications
+{"user_id": 42, "type": "order_shipped", "data": {"order": 4, "eta": "Tue"},
+ "priority": "high", "idempotency_key": "order-4-shipped"}            → 202 Accepted {"id": "ntf_7c8d"}
+```
+
+**4. Flow**
+
+1. Notification service validates, **dedupes** by idempotency key, and returns **202** quickly
+2. Loads **user preferences** (opted out of marketing? language? quiet hours?) and **device tokens / email / phone**
+3. Renders the **template** in the user's language
+4. Applies **rate limits** per user (no spamming) and per provider
+5. Puts a message on a **queue per channel and priority** (OTP queue separate from marketing so a campaign never delays OTPs)
+6. **Channel workers** call providers: **APNs/FCM** (push), **SES/SendGrid** (email), **SMS gateway** (Twilio, Indian DLT-registered providers)
+7. **Retries** with backoff for transient failures; permanent failures (invalid token) remove the token; repeated failures → **dead-letter queue**
+8. **Delivery log/status** stored; provider callbacks update delivered/opened
+
+**5. Data**: `preferences(user_id, channel, type, enabled)`, `devices(user_id, token, platform)`, `templates(type, lang, channel, body)`, `notification_log(id, user_id, channel, status, timestamps)` (high-volume → Cassandra/DynamoDB, TTL for old logs).
+
+**6. Deep dives**
+
+| Concern | Solution |
+| --- | --- |
+| Duplicates | idempotency keys at the API + idempotent workers |
+| Campaign blasts | separate low-priority queues, fan-out workers, throttling to provider limits |
+| Provider outage | circuit breaker, fallback provider, retry later |
+| Ordering | usually not needed; per-user ordering via partition key if required |
+| Quiet hours | schedule (delay queue) until morning, except critical alerts |
+| Scale | stateless API, autoscaled workers per queue depth |
+| Monitoring | sent/failed/latency per channel and provider, DLQ size |
+
+## Code example
+
+```python
+from collections import defaultdict, deque
+
+preferences = {42: {"push": True, "email": True, "sms": False, "marketing": False, "lang": "hi", "quiet": (22, 8)}}
+templates = {("order_shipped", "hi"): "आपका ऑर्डर #{order} भेज दिया गया है, {eta} तक पहुँचेगा",
+             ("order_shipped", "en"): "Your order #{order} has shipped, arriving {eta}",
+             ("sale", "hi"): "दिवाली सेल शुरू!"}
+queues = defaultdict(deque)
+seen_keys = set()
+sent_per_user = defaultdict(int)
+
+def in_quiet_hours(hour, quiet):
+    start, end = quiet
+    return hour >= start or hour < end
+
+def notify(user_id, ntype, data, priority, key, hour):
+    if key in seen_keys:
+        return "duplicate ignored"
+    seen_keys.add(key)
+    prefs = preferences[user_id]
+    if ntype == "sale" and not prefs["marketing"]:
+        return "skipped: user opted out of marketing"
+    if sent_per_user[user_id] >= 5:
+        return "skipped: per-user rate limit"
+    text = templates[(ntype, prefs["lang"])].format(**data)
+    channels = [c for c in ("push", "email", "sms") if prefs[c]]
+    delay = priority != "critical" and in_quiet_hours(hour, prefs["quiet"])
+    for c in channels:
+        queues[f"{c}:{'delayed' if delay else priority}"].append((user_id, text))
+    sent_per_user[user_id] += 1
+    return f"queued on {channels}" + (" for the morning (quiet hours)" if delay else "")
+
+print(notify(42, "order_shipped", {"order": 4, "eta": "Tue"}, "high", "order-4-shipped", hour=14))
+print(notify(42, "order_shipped", {"order": 4, "eta": "Tue"}, "high", "order-4-shipped", hour=14))
+print(notify(42, "sale", {}, "low", "sale-diwali-42", hour=15))
+print(notify(42, "order_shipped", {"order": 5, "eta": "Wed"}, "high", "order-5-shipped", hour=23))
+print("queues:", {q: len(v) for q, v in queues.items()})
+
+def push_worker(queue, provider_up, max_attempts=3):
+    dlq = []
+    while queue:
+        user_id, text = queue.popleft()
+        for attempt in range(1, max_attempts + 1):
+            if provider_up(attempt):
+                print(f"  push to {user_id} on attempt {attempt}: {text}")
+                break
+        else:
+            dlq.append((user_id, text))
+    return dlq
+
+print("worker run:")
+dlq = push_worker(queues["push:high"], provider_up=lambda attempt: attempt >= 2)
+print("dead-letter queue:", dlq)
+```
+
+```output
+queued on ['push', 'email']
+duplicate ignored
+skipped: user opted out of marketing
+queued on ['push', 'email'] for the morning (quiet hours)
+queues: {'push:high': 1, 'email:high': 1, 'push:delayed': 1, 'email:delayed': 1}
+worker run:
+  push to 42 on attempt 2: आपका ऑर्डर #4 भेज दिया गया है, Tue तक पहुँचेगा
+dead-letter queue: []
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "producers", "label": "Order / payment / marketing services", "icon": "🏭", "col": 0, "row": 1, "info": "Send events with an idempotency key; do not know about channels.", "example": "order_shipped for user 42" },
+    { "id": "api", "label": "Notification API", "icon": "🚪", "col": 1, "row": 1, "info": "Validates, dedupes, returns 202 Accepted fast.", "example": "POST /v1/notifications" },
+    { "id": "prefs", "label": "Preferences + templates", "icon": "⚙️", "col": 1, "row": 3, "info": "Opt-outs, language, quiet hours, device tokens, templates (cached in Redis).", "example": "lang=hi, marketing=off" },
+    { "id": "qhigh", "label": "Queues per channel + priority", "icon": "📬", "col": 2, "row": 1, "info": "push:critical, push:high, sms:critical, email:low ... Campaigns never block OTPs.", "example": "SQS / Kafka topics" },
+    { "id": "workers", "label": "Channel workers", "icon": "👷", "col": 3, "row": 0, "info": "Autoscale on queue depth; retries with backoff; circuit breaker per provider.", "example": "push ×20, email ×5, sms ×3" },
+    { "id": "providers", "label": "FCM/APNs · SES · SMS gateway", "icon": "📡", "col": 4, "row": 0, "info": "External providers with their own rate limits and callbacks.", "example": "Delivered / bounced" },
+    { "id": "dlq", "label": "Dead-letter queue", "icon": "☠️", "col": 3, "row": 2, "info": "Failed after max attempts: inspect, alert, replay.", "example": "Invalid phone number" },
+    { "id": "log", "label": "Delivery log", "icon": "📒", "col": 4, "row": 2, "info": "Status per notification for support and analytics.", "example": "sent → delivered → opened" }
+  ],
+  "edges": [
+    ["producers", "api", "event"],
+    ["api", "prefs", "check"],
+    ["api", "qhigh", "enqueue"],
+    ["qhigh", "workers"],
+    ["workers", "providers"],
+    ["workers", "dlq", "after retries"],
+    ["providers", "log", "callbacks"]
+  ],
+  "flows": [
+    {
+      "name": "Order shipped",
+      "steps": [
+        ["producers", "order_shipped for user 42 (key order-4-shipped)."],
+        ["api", "New key: accepted (202)."],
+        ["prefs", "Push + email allowed, Hindi template."],
+        ["qhigh", "Messages on push:high and email:high."],
+        ["workers", "Send; first push attempt times out, second succeeds."],
+        ["log", "Delivered status recorded."]
+      ]
+    },
+    {
+      "name": "Diwali campaign",
+      "steps": [
+        ["producers", "Marketing sends 5 M notifications."],
+        ["prefs", "Opted-out users skipped."],
+        ["qhigh", "All go to low-priority queues."],
+        ["workers", "Throttled to provider limits over an hour; OTP queues stay fast."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="One queue for everything">
+
+<Wrong>
+
+```text
+OTP codes wait behind 5 million marketing pushes in a single queue — login takes 40 minutes.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Separate queues (and workers) per channel and priority; critical messages have reserved capacity.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="No deduplication">
+
+<Wrong>
+
+```text
+The order service retries after a timeout → the customer gets three "Order shipped" SMS (and you pay for three).
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Idempotency key per logical notification, checked at the API and in workers.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How would you design a notification system?">
+
+Expose an API that accepts notification events with an idempotency key and returns 202; check user preferences, contact details and templates; enqueue per-channel, per-priority messages; let autoscaled workers deliver via providers (APNs/FCM, email, SMS) with retries, backoff, circuit breakers and dead-letter queues; track status via callbacks; and add rate limiting, quiet hours, deduplication and monitoring.
+
+</QA>
+
+<QA q="How do you make sure OTPs are not delayed by marketing campaigns?">
+
+Separate queues and worker pools by priority and channel, with reserved capacity for critical messages; apply throttling to bulk campaigns; and monitor queue age per priority with alerts.
+
+</QA>
+
+<QA q="How do you handle provider failures?">
+
+Retry transient errors with exponential backoff and jitter, use a circuit breaker to stop hammering a failing provider, fail over to a secondary provider where possible, move messages that keep failing to a dead-letter queue, and handle permanent errors (invalid token, unsubscribed) by updating user data instead of retrying.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'The API should respond to a send request with...',
+      options: ['200 after delivery', '202 Accepted after enqueueing', '500', '301'],
+      answer: 1,
+      why: 'Delivery is asynchronous.',
+    },
+    {
+      q: 'Prevent duplicate SMS when producers retry?',
+      options: ['Bigger queue', 'Idempotency key', 'Longer timeout', 'More workers'],
+      answer: 1,
+      why: 'Dedupe by key.',
+    },
+    {
+      q: 'Invalid device token response from APNs should...',
+      options: ['Retry forever', 'Remove the token', 'Send SMS 10 times', 'Ignore'],
+      answer: 1,
+      why: 'Permanent failure.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Part | Choice |
+| --- | --- |
+| API | `POST /notifications` → 202 + idempotency key |
+| Checks | preferences · opt-out · quiet hours · rate limit |
+| Content | templates per type/language/channel |
+| Queues | per channel × priority |
+| Workers | autoscale on depth · retries + backoff · circuit breaker |
+| Providers | APNs/FCM · SES · SMS gateway (fallbacks) |
+| Failures | DLQ · remove bad tokens |
+| Tracking | delivery log + provider callbacks |
+
+</CheatSheet>

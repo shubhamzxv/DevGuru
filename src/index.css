@@ -34,6 +34,13 @@
   .tap {
     @apply inline-flex min-h-11 min-w-11 items-center justify-center;
   }
+  /* Below-the-fold blocks: the browser skips their layout and paint until they
+     come near the screen, which makes long pages respond sooner on phones.
+     Only for blocks with nothing that pops out of them (no menus or tooltips). */
+  .defer-render {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 600px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -53,5 +60,8 @@
   body {
     background: #fff !important;
     color: #000 !important;
+  }
+  .defer-render {
+    content-visibility: visible;
   }
 }

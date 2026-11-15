@@ -1,14 +1,13 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { python } from '@codemirror/lang-python';
-import { sql } from '@codemirror/lang-sql';
 import {
   bracketMatching,
   defaultHighlightStyle,
+  HighlightStyle,
   indentUnit,
   syntaxHighlighting,
 } from '@codemirror/language';
 import { Compartment, EditorState } from '@codemirror/state';
-import { oneDark } from '@codemirror/theme-one-dark';
+import { oneDarkHighlightStyle, oneDarkTheme } from '@codemirror/theme-one-dark';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { useEffect, useRef, useState } from 'react';
 import { useTheme } from '../../hooks/useTheme';
@@ -40,8 +39,28 @@ const lightTheme = [
   syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
   EditorView.theme({
     '&': { backgroundColor: '#ffffff', color: '#0f172a' },
-    '.cm-gutters': { backgroundColor: '#f1f5f9', color: '#64748b', border: 'none' },
+    '.cm-gutters': { backgroundColor: '#f1f5f9', color: '#475569', border: 'none' },
   }),
+];
+
+/**
+ * One Dark with two colours lightened to reach WCAG AA contrast (4.5:1) on its
+ * #282c34 background: coral (keywords, tags) 4.38 → 4.81 and stone (comments,
+ * line numbers) 3.86 → 4.63.
+ */
+const DARK_FIXES: Record<string, string> = { '#e06c75': '#e27880', '#7d8799': '#8c95a5' };
+const darkTheme = [
+  oneDarkTheme,
+  syntaxHighlighting(
+    HighlightStyle.define(
+      oneDarkHighlightStyle.specs.map((spec) =>
+        typeof spec.color === 'string' && DARK_FIXES[spec.color]
+          ? { ...spec, color: DARK_FIXES[spec.color] }
+          : spec,
+      ),
+    ),
+  ),
+  EditorView.theme({ '.cm-gutters': { color: '#8c95a5' } }, { dark: true }),
 ];
 
 /**
@@ -58,6 +77,7 @@ export default function CodeEditor({
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [themeSlot] = useState(() => new Compartment());
+  const [languageSlot] = useState(() => new Compartment());
   const { theme } = useTheme();
 
   // Keep the newest callbacks without rebuilding the editor.
@@ -81,7 +101,8 @@ export default function CodeEditor({
           bracketMatching(),
           indentUnit.of('    '),
           EditorState.tabSize.of(4),
-          language === 'sql' ? sql() : python(),
+          // Filled in below: each language pack is its own small download.
+          languageSlot.of([]),
           keymap.of([
             {
               key: 'Mod-Enter',
@@ -99,12 +120,28 @@ export default function CodeEditor({
           }),
           EditorView.contentAttributes.of({ 'aria-label': label }),
           baseTheme,
-          themeSlot.of(theme === 'dark' ? oneDark : lightTheme),
+          themeSlot.of(theme === 'dark' ? darkTheme : lightTheme),
         ],
       }),
     });
     viewRef.current = view;
+
+    // Colours and auto-indent arrive a moment later; typing works at once.
+    let cancelled = false;
+    const loadLanguage =
+      language === 'sql'
+        ? import('@codemirror/lang-sql').then((module) => module.sql())
+        : import('@codemirror/lang-python').then((module) => module.python());
+    loadLanguage
+      .then((support) => {
+        if (!cancelled) view.dispatch({ effects: languageSlot.reconfigure(support) });
+      })
+      .catch(() => {
+        // Plain text editing still works.
+      });
+
     return () => {
+      cancelled = true;
       view.destroy();
       viewRef.current = null;
     };
@@ -122,7 +159,7 @@ export default function CodeEditor({
   // Dark / light switch.
   useEffect(() => {
     viewRef.current?.dispatch({
-      effects: themeSlot.reconfigure(theme === 'dark' ? oneDark : lightTheme),
+      effects: themeSlot.reconfigure(theme === 'dark' ? darkTheme : lightTheme),
     });
   }, [theme, themeSlot]);
 

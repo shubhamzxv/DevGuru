@@ -1,5 +1,6 @@
-import { Suspense, useCallback, useState } from 'react';
+import { Suspense, useCallback, useRef, useState } from 'react';
 import { Outlet } from 'react-router-dom';
+import { useRouteFocus } from '../../hooks/useRouteFocus';
 import { useSearchShortcut } from '../../hooks/useSearchShortcut';
 import UpdatePrompt from '../pwa/UpdatePrompt';
 import BottomNav from './BottomNav';
@@ -17,6 +18,8 @@ export default function Layout() {
   const openDrawer = useCallback(() => setDrawerOpen(true), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   useSearchShortcut();
+  const main = useRef<HTMLElement>(null);
+  useRouteFocus(main);
 
   return (
     <div className="min-h-dvh">
@@ -35,7 +38,12 @@ export default function Layout() {
         </aside>
 
         {/* pb-24 keeps content clear of the bottom bar on mobile */}
-        <main id="main" className="min-w-0 flex-1 px-4 pb-24 pt-6 sm:px-6 lg:px-10 lg:pb-12">
+        <main
+          ref={main}
+          id="main"
+          tabIndex={-1}
+          className="min-w-0 flex-1 px-4 outline-none focus-visible:ring-0 focus-visible:ring-offset-0 pb-24 pt-6 sm:px-6 lg:px-10 lg:pb-12"
+        >
           <Suspense
             fallback={
               <p role="status" className="py-10 text-center text-slate-500 dark:text-slate-400">

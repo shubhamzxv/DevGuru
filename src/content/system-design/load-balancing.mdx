@@ -1,0 +1,245 @@
+---
+id: system-design-load-balancing
+title: Load balancing
+summary: A load balancer spreads incoming requests across many servers using an algorithm such as round robin, least connections or consistent hashing, removes unhealthy servers using health checks, and works at layer 4 (TCP) or layer 7 (HTTP, routing by path or host); it is the entry point that makes horizontal scaling and high availability possible.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The **token counter at a bank branch**. A guard at the door sends each customer to a free counter, skips the counter whose clerk is on lunch, and sends business accounts to the business desk. Nobody crowds one counter while others sit idle.
+
+</Analogy>
+
+## Simple explanation
+
+**What a load balancer does**
+
+- Gives one address (`api.shop.com`) for many servers
+- Spreads requests with an **algorithm**
+- **Health checks** (`GET /health` every 10 s): stops sending to broken servers
+- Often terminates **TLS/HTTPS**, adds headers, logs requests
+- Lets you add/remove servers without users noticing (autoscaling, deploys with **connection draining**)
+
+**Algorithms**
+
+| Algorithm | How | Good when |
+| --- | --- | --- |
+| **Round robin** | 1, 2, 3, 1, 2, 3... | similar servers, similar requests |
+| Weighted round robin | bigger servers get more | mixed server sizes, canary 10% |
+| **Least connections** | server with fewest active requests | requests of very different length |
+| Least response time | fastest recent server | latency-sensitive |
+| **IP / key hash** | `hash(client or key) % n` | same user → same server (caching, sessions) |
+| **Consistent hashing** | servers on a ring | caches/shards; adding a server moves only ~1/n keys |
+| Random / power of two choices | pick 2 random, take the less busy | large fleets, simple and effective |
+
+**Layer 4 vs layer 7**
+
+| | L4 (transport) | L7 (application) |
+| --- | --- | --- |
+| Sees | IP, port, TCP/UDP | HTTP: path, host, headers, cookies |
+| Can | forward connections, very fast | route `/api/*` vs `/images/*`, TLS termination, rewrite, rate limit |
+| Examples | AWS NLB, HAProxy (tcp mode) | AWS ALB, Nginx, Envoy, HAProxy (http) |
+
+**Where load balancing happens**: DNS (geo/latency routing between regions) → global/edge LB (CDN) → regional LB → **service-to-service** (client-side LB, service mesh).
+
+**The LB itself must not be a single point of failure**: managed LBs are redundant across zones; self-hosted pairs use failover (keepalived, floating IP).
+
+**Sticky sessions** pin a user to one server (cookie) — easy but uneven load and lost sessions when that server dies; prefer stateless servers with shared session storage.
+
+## Code example
+
+```python
+import hashlib, itertools, random
+from bisect import bisect
+
+servers = ["s1", "s2", "s3"]
+
+rr = itertools.cycle(servers)
+print("round robin:", [next(rr) for _ in range(7)])
+
+active = {"s1": 12, "s2": 3, "s3": 7}
+print("least connections →", min(active, key=active.get))
+
+h = lambda key: int(hashlib.md5(key.encode()).hexdigest(), 16)
+
+def modulo_owner(key, nodes):
+    return nodes[h(key) % len(nodes)]
+
+class Ring:
+    def __init__(self, nodes, vnodes=100):
+        self.ring = sorted((h(f"{n}#{i}"), n) for n in nodes for i in range(vnodes))
+        self.keys = [k for k, _ in self.ring]
+    def owner(self, key):
+        return self.ring[bisect(self.keys, h(key)) % len(self.ring)][1]
+
+keys = [f"user:{i}" for i in range(10_000)]
+before_mod = {k: modulo_owner(k, servers) for k in keys}
+after_mod = {k: modulo_owner(k, servers + ["s4"]) for k in keys}
+moved_mod = sum(before_mod[k] != after_mod[k] for k in keys)
+
+ring3, ring4 = Ring(servers), Ring(servers + ["s4"])
+moved_ring = sum(ring3.owner(k) != ring4.owner(k) for k in keys)
+print(f"add a 4th server: modulo hashing moves {moved_mod / len(keys):.0%} of keys, consistent hashing moves {moved_ring / len(keys):.0%}")
+
+healthy = {"s1": True, "s2": False, "s3": True}
+pool = [s for s in servers if healthy[s]]
+random.seed(3)
+print("after health check, sending to:", sorted({random.choice(pool) for _ in range(20)}))
+```
+
+```output
+round robin: ['s1', 's2', 's3', 's1', 's2', 's3', 's1']
+least connections → s2
+add a 4th server: modulo hashing moves 75% of keys, consistent hashing moves 24%
+after health check, sending to: ['s1', 's3']
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "users", "label": "Users", "icon": "👥", "col": 0, "row": 1, "info": "All use one address: api.shop.com.", "example": "10,000 req/s" },
+    { "id": "lb", "label": "L7 load balancer", "icon": "⚖️", "col": 1, "row": 1, "info": "Terminates HTTPS, routes by path, least-connections algorithm, health checks every 10 s.", "example": "ALB / Nginx" },
+    { "id": "s1", "label": "API server 1", "icon": "🖥️", "col": 2, "row": 0, "info": "Healthy, 12 active requests.", "example": "/api/*" },
+    { "id": "s2", "label": "API server 2", "icon": "🖥️", "col": 2, "row": 1, "info": "Failing /health → removed from the pool until it recovers.", "example": "Unhealthy" },
+    { "id": "s3", "label": "API server 3", "icon": "🖥️", "col": 2, "row": 2, "info": "Healthy, 3 active requests → gets the next request.", "example": "/api/*" },
+    { "id": "img", "label": "Image servers", "icon": "🖼️", "col": 3, "row": 1, "info": "Separate pool for /images/* thanks to layer-7 routing.", "example": "/images/*" }
+  ],
+  "edges": [
+    ["users", "lb", "HTTPS"],
+    ["lb", "s1"],
+    ["lb", "s2", "skipped"],
+    ["lb", "s3"],
+    ["lb", "img", "/images/*"]
+  ],
+  "flows": [
+    {
+      "name": "A request arrives",
+      "steps": [
+        ["users", "GET /api/orders"],
+        ["lb", "Path /api/* → API pool; least connections."],
+        ["s2", "Unhealthy: skipped."],
+        ["s3", "Fewest active requests: chosen."],
+        ["users", "Response comes back through the LB."]
+      ]
+    },
+    {
+      "name": "Deploy without downtime",
+      "steps": [
+        ["s1", "Server 1 is deregistered; draining lets in-flight requests finish."],
+        ["lb", "New requests go to servers 2 and 3."],
+        ["s1", "Updated, passes /health, rejoins the pool."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="hash(key) % n for caches or shards">
+
+<Wrong>
+
+```text
+Adding one cache node changes n → about 3/4 of all keys move → massive cache misses (thundering herd on the DB).
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Consistent hashing (with virtual nodes): only ~1/n of the keys move.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Health check that checks nothing">
+
+<Wrong>
+
+```text
+/health always returns 200, even when the server cannot reach the database.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+A cheap liveness check plus a readiness check of critical dependencies; alarm on the unhealthy target count.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a load balancer and why use one?">
+
+A component that distributes incoming traffic across multiple servers through a single address. It enables horizontal scaling, improves availability by routing around unhealthy servers via health checks, allows zero-downtime deploys and often terminates TLS and routes requests by content.
+
+</QA>
+
+<QA q="Compare round robin, least connections and consistent hashing.">
+
+Round robin cycles through servers evenly, good when requests are similar. Least connections sends to the server with the fewest active requests, good for uneven request durations. Consistent hashing maps keys to servers on a ring so the same key goes to the same server and adding or removing a server moves only a small fraction of keys, which is ideal for caches and shards.
+
+</QA>
+
+<QA q="What is the difference between L4 and L7 load balancing?">
+
+Layer 4 balancers route by IP and port for TCP/UDP without inspecting content, which is very fast and protocol-agnostic. Layer 7 balancers understand HTTP and can route by path, host or headers, terminate TLS, rewrite requests and apply rules, at slightly higher cost.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Requests take very different times. Best algorithm?',
+      options: ['Round robin', 'Least connections', 'Random', 'DNS'],
+      answer: 1,
+      why: 'Avoids piling onto busy servers.',
+    },
+    {
+      q: 'Route /api/* and /images/* to different pools needs...',
+      options: ['L4 LB', 'L7 LB', 'DNS only', 'Sticky sessions'],
+      answer: 1,
+      why: 'Must read the HTTP path.',
+    },
+    {
+      q: 'Adding a cache node should move few keys. Use...',
+      options: ['hash % n', 'Consistent hashing', 'Round robin', 'Least connections'],
+      answer: 1,
+      why: '~1/n keys move.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Choice |
+| --- | --- |
+| Equal servers | round robin |
+| Uneven requests | least connections |
+| Canary / mixed sizes | weighted |
+| Same key → same node | consistent hashing |
+| HTTP routing, TLS | L7 (ALB, Nginx, Envoy) |
+| TCP/UDP, extreme speed | L4 (NLB) |
+| Remove bad servers | health checks |
+| Deploys | connection draining |
+| Avoid | sticky sessions, `% n` for caches |
+
+</CheatSheet>

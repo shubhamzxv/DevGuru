@@ -1,0 +1,310 @@
+---
+id: dsa-interview-revision
+title: Top interview problems
+summary: A revision sheet of the most-asked coding interview problems, each with the pattern, the key idea in one line and its complexity, plus compact Python solutions for the ten classics to rehearse before an interview.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The night before the exam you do not reread the textbook: you go through the formula sheet and the past papers. This page is both for DSA.
+
+</Analogy>
+
+## Simple explanation
+
+**The 30 problems to know**
+
+| # | Problem | Pattern | Key idea | Time |
+| --- | --- | --- | --- | --- |
+| 1 | Two sum | hash map | look up `target - x` | O(n) |
+| 2 | Contains duplicate | set | seen before? | O(n) |
+| 3 | Valid anagram | Counter | equal counts | O(n) |
+| 4 | Group anagrams | hash map | key = sorted letters | O(n·k log k) |
+| 5 | Top k frequent | Counter + heap | `most_common(k)` | O(n log k) |
+| 6 | Product except self | prefix/suffix | left × right products | O(n) |
+| 7 | Longest consecutive sequence | set | start only where `x-1` missing | O(n) |
+| 8 | Valid palindrome | two pointers | skip non-alphanumerics | O(n) |
+| 9 | 3-sum | sort + two pointers | fix one, skip duplicates | O(n²) |
+| 10 | Container with most water | two pointers | move the shorter wall | O(n) |
+| 11 | Best time to buy/sell stock | one pass | track min price so far | O(n) |
+| 12 | Longest substring without repeats | sliding window | last-seen index | O(n) |
+| 13 | Minimum window substring | sliding window | need/have counters | O(n) |
+| 14 | Valid parentheses | stack | match the top | O(n) |
+| 15 | Daily temperatures | monotonic stack | pop smaller | O(n) |
+| 16 | Search in rotated sorted array | binary search | find the sorted half | O(log n) |
+| 17 | Koko eating bananas | binary search on answer | feasibility check | O(n log m) |
+| 18 | Reverse linked list | pointers | prev/curr/next | O(n) |
+| 19 | Linked list cycle | fast/slow | Floyd | O(n) |
+| 20 | Merge k sorted lists | heap | heads in a heap | O(N log k) |
+| 21 | Max depth / invert tree | DFS recursion | combine children | O(n) |
+| 22 | Level order traversal | BFS | `for _ in range(len(q))` | O(n) |
+| 23 | Validate BST | DFS with bounds | (lo, hi) | O(n) |
+| 24 | Number of islands | DFS/BFS on grid | sink each island | O(R·C) |
+| 25 | Course schedule | topological sort | in-degrees / colours | O(V + E) |
+| 26 | Subsets / permutations | backtracking | choose, explore, undo | O(n·2ⁿ) / O(n·n!) |
+| 27 | Climbing stairs / house robber | DP | two previous states | O(n) |
+| 28 | Coin change | DP | `min(dp[a-c] + 1)` | O(A·C) |
+| 29 | Longest common subsequence | 2-D DP | diagonal +1 or max | O(m·n) |
+| 30 | Merge intervals | sort + greedy | extend overlaps | O(n log n) |
+
+## Code example
+
+Ten classics in compact form, run on sample inputs:
+
+```python
+from collections import Counter, deque
+import heapq
+
+def two_sum(nums, t):
+    seen = {}
+    for i, x in enumerate(nums):
+        if t - x in seen: return [seen[t - x], i]
+        seen[x] = i
+
+def max_profit(prices):
+    low, best = float("inf"), 0
+    for p in prices:
+        low, best = min(low, p), max(best, p - low)
+    return best
+
+def valid_parens(s):
+    st, pair = [], {")": "(", "]": "[", "}": "{"}
+    for c in s:
+        if c in pair:
+            if not st or st.pop() != pair[c]: return False
+        else:
+            st.append(c)
+    return not st
+
+def longest_unique(s):
+    last, left, best = {}, 0, 0
+    for r, c in enumerate(s):
+        if last.get(c, -1) >= left: left = last[c] + 1
+        last[c], best = r, max(best, r - left + 1)
+    return best
+
+def min_window(s, t):
+    need, missing = Counter(t), len(t)
+    left = start = 0
+    end = float("inf")
+    for right, c in enumerate(s, 1):
+        if need[c] > 0: missing -= 1
+        need[c] -= 1
+        if missing == 0:
+            while need[s[left]] < 0:
+                need[s[left]] += 1
+                left += 1
+            if right - left < end - start: start, end = left, right
+            need[s[left]] += 1
+            missing += 1
+            left += 1
+    return "" if end == float("inf") else s[start:end]
+
+def search_rotated(a, t):
+    lo, hi = 0, len(a) - 1
+    while lo <= hi:
+        m = (lo + hi) // 2
+        if a[m] == t: return m
+        if a[lo] <= a[m]:
+            lo, hi = (lo, m - 1) if a[lo] <= t < a[m] else (m + 1, hi)
+        else:
+            lo, hi = (m + 1, hi) if a[m] < t <= a[hi] else (lo, m - 1)
+    return -1
+
+def min_eating_speed(piles, h):
+    lo, hi = 1, max(piles)
+    while lo < hi:
+        k = (lo + hi) // 2
+        if sum((p + k - 1) // k for p in piles) <= h: hi = k
+        else: lo = k + 1
+    return lo
+
+def can_finish(n, prereqs):
+    graph, indeg = [[] for _ in range(n)], [0] * n
+    for course, pre in prereqs:
+        graph[pre].append(course); indeg[course] += 1
+    q = deque(i for i in range(n) if indeg[i] == 0)
+    done = 0
+    while q:
+        c = q.popleft(); done += 1
+        for nxt in graph[c]:
+            indeg[nxt] -= 1
+            if indeg[nxt] == 0: q.append(nxt)
+    return done == n
+
+def coin_change(coins, amount):
+    dp = [0] + [float("inf")] * amount
+    for a in range(1, amount + 1):
+        dp[a] = min((dp[a - c] + 1 for c in coins if c <= a), default=float("inf"))
+    return dp[amount] if dp[amount] != float("inf") else -1
+
+def top_k(nums, k):
+    return [x for x, _ in heapq.nlargest(k, Counter(nums).items(), key=lambda p: p[1])]
+
+print("two sum:", two_sum([3, 2, 4], 6))
+print("stock:", max_profit([7, 1, 5, 3, 6, 4]))
+print("parens:", valid_parens("()[]{}"), valid_parens("(]"))
+print("unique substring:", longest_unique("abcabcbb"))
+print("min window:", min_window("ADOBECODEBANC", "ABC"))
+print("rotated:", search_rotated([4, 5, 6, 7, 0, 1, 2], 0))
+print("koko speed:", min_eating_speed([3, 6, 7, 11], 8))
+print("courses:", can_finish(2, [[1, 0]]), can_finish(2, [[1, 0], [0, 1]]))
+print("coins:", coin_change([1, 2, 5], 11))
+print("top k:", top_k([1, 1, 1, 2, 2, 3], 2))
+```
+
+```output
+two sum: [1, 2]
+stock: 5
+parens: True False
+unique substring: 3
+min window: BANC
+rotated: 4
+koko speed: 4
+courses: True False
+coins: 3
+top k: [1, 2]
+```
+
+<Playground kind="python">
+
+```python
+# Rehearse: implement each function, then run the tests.
+
+def is_anagram(a, b):
+    return sorted(a) == sorted(b)          # try a Counter version too
+
+def max_depth(tree):
+    """tree as nested tuples: (value, left, right) or None."""
+    if tree is None:
+        return 0
+    _, left, right = tree
+    return 1 + max(max_depth(left), max_depth(right))
+
+tests = [
+    (is_anagram("listen", "silent"), True),
+    (is_anagram("rat", "car"), False),
+    (max_depth((3, (9, None, None), (20, (15, None, None), (7, None, None)))), 3),
+]
+for i, (got, want) in enumerate(tests, 1):
+    print(f"test {i}:", "PASS" if got == want else f"FAIL (got {got}, want {want})")
+
+# Try it: add merge_intervals and three tests for it.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Memorising solutions instead of patterns">
+
+<Wrong>
+
+```text
+Knowing 300 answers by heart, then freezing when a problem is slightly different.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Know ~15 patterns well, recognise their signals, and practise explaining the idea and complexity.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Skipping edge cases">
+
+<Wrong>
+
+```text
+Testing only the happy example given in the question.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Always try: empty input, one element, duplicates, negatives, all equal, already sorted, no answer.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Best time to buy and sell a stock once?">
+
+Scan prices once keeping the lowest price seen so far and the best profit (current price − lowest so far). O(n) time, O(1) space.
+
+</QA>
+
+<QA q="Find the minimum window of s containing all characters of t.">
+
+Sliding window with counts of what t needs and a counter of missing characters: expand right until nothing is missing, then shrink left while the window stays valid, recording the smallest window. O(|s| + |t|).
+
+</QA>
+
+<QA q="Can you finish all courses given prerequisites?">
+
+Model courses as a directed graph and check for cycles: Kahn's topological sort counts processed courses starting from those with in-degree 0; if every course is processed there is no cycle and all can be finished. O(V + E).
+
+</QA>
+
+<QA q="How do you pick the minimum eating speed (Koko)?">
+
+Binary search the speed k between 1 and the largest pile; for each k compute hours as the sum of ceil(pile / k) and check it is within h. The feasibility is monotonic, so find the smallest feasible k. O(n log max).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Best time to buy/sell stock (one transaction) needs...',
+      options: ['Sorting', 'One pass tracking the minimum', 'DP table n²', 'Binary search'],
+      answer: 1,
+      why: 'Profit = price − min so far.',
+    },
+    {
+      q: 'Course schedule is a question about...',
+      options: ['Shortest path', 'Cycle detection in a directed graph', 'Heaps', 'Strings'],
+      answer: 1,
+      why: 'Topological sort.',
+    },
+    {
+      q: 'Merge intervals first step?',
+      options: ['Sort by start', 'Build a heap', 'Use a stack of ends', 'Binary search'],
+      answer: 0,
+      why: 'Then extend overlaps.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Pattern | Must-know problems |
+| --- | --- |
+| Hashing | two sum · anagram · group anagrams · longest consecutive |
+| Two pointers | palindrome · 3-sum · container |
+| Window | longest unique substring · min window |
+| Stack | valid parentheses · daily temperatures |
+| Binary search | rotated array · Koko |
+| Linked list | reverse · cycle · merge |
+| Heap | top k · merge k lists · median |
+| Trees | depth · invert · level order · validate BST · LCA |
+| Graphs | islands · course schedule · clone graph |
+| Backtracking | subsets · permutations · combination sum |
+| DP | stairs · robber · coins · LCS · edit distance |
+| Greedy | intervals · jump game · meetings |
+
+</CheatSheet>

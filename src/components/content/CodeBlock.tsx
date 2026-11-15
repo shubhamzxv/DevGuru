@@ -1,7 +1,9 @@
-import { Highlight, themes } from 'prism-react-renderer';
-import { useState } from 'react';
+import { Highlight } from 'prism-react-renderer';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useNearViewport } from '../../hooks/useNearViewport';
 import { useTheme } from '../../hooks/useTheme';
+import { darkCodeTheme, lightCodeTheme } from '../../utils/codeThemes';
 import { Prism } from '../../utils/prism';
 
 interface CodeBlockProps {
@@ -29,6 +31,11 @@ export default function CodeBlock({
 }: CodeBlockProps) {
   const { theme } = useTheme();
   const [copied, setCopied] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  // Highlighting every block at once made long topic pages slow to respond on
+  // phones; blocks far below the screen show plain text until you scroll near them.
+  const highlight = useNearViewport(box);
+  const codeTheme = theme === 'dark' ? darkCodeTheme : lightCodeTheme;
 
   const copy = async () => {
     try {
@@ -41,7 +48,10 @@ export default function CodeBlock({
   };
 
   return (
-    <div className="my-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700">
+    <div
+      ref={box}
+      className="my-4 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700"
+    >
       <div className="flex items-center bg-slate-100 pl-4 dark:bg-slate-800">
         <span className="mr-auto text-xs font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-300">
           {label ?? language}
@@ -60,26 +70,36 @@ export default function CodeBlock({
           <span aria-live="polite">{copied ? 'Copied ✓' : 'Copy'}</span>
         </button>
       </div>
-      <Highlight
-        prism={Prism}
-        theme={theme === 'dark' ? themes.nightOwl : themes.github}
-        code={code}
-        language={language}
-      >
-        {({ style, tokens, getLineProps, getTokenProps }) => (
-          <pre style={style} className="overflow-x-auto p-4 leading-relaxed" tabIndex={0}>
-            <code>
-              {tokens.map((line, lineIndex) => (
-                <div key={lineIndex} {...getLineProps({ line })}>
-                  {line.map((token, tokenIndex) => (
-                    <span key={tokenIndex} {...getTokenProps({ token })} />
-                  ))}
-                </div>
-              ))}
-            </code>
-          </pre>
-        )}
-      </Highlight>
+      {highlight ? (
+        <Highlight prism={Prism} theme={codeTheme} code={code} language={language}>
+          {({ style, tokens, getLineProps, getTokenProps }) => (
+            <pre style={style} className="overflow-x-auto p-4 leading-relaxed" tabIndex={0}>
+              <code>
+                {tokens.map((line, lineIndex) => (
+                  <div key={lineIndex} {...getLineProps({ line })}>
+                    {line.map((token, tokenIndex) => (
+                      <span key={tokenIndex} {...getTokenProps({ token })} />
+                    ))}
+                  </div>
+                ))}
+              </code>
+            </pre>
+          )}
+        </Highlight>
+      ) : (
+        <pre
+          style={{ color: codeTheme.plain.color, backgroundColor: codeTheme.plain.backgroundColor }}
+          className="overflow-x-auto p-4 leading-relaxed"
+          tabIndex={0}
+        >
+          <code>
+            {code.split('\n').map((line, lineIndex) => (
+              // Same one-div-per-line shape as the highlighted version: no jump when it switches.
+              <div key={lineIndex}>{line === '' ? '\n' : line}</div>
+            ))}
+          </code>
+        </pre>
+      )}
     </div>
   );
 }

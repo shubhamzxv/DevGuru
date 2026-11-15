@@ -164,7 +164,7 @@ export default function GitGraph({ commits }: { commits: GraphCommit[] }) {
           <>
             <span className="font-mono font-semibold">{chosen.id}</span> {chosen.message}
             {chosen.parents.length > 1 && (
-              <span className="text-slate-500"> (merge commit: 2 parents)</span>
+              <span className="text-slate-600 dark:text-slate-400"> (merge commit: 2 parents)</span>
             )}
           </>
         ) : (

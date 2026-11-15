@@ -1,0 +1,275 @@
+---
+id: system-design-design-url-shortener
+title: Design a URL shortener
+summary: A classic interview walk-through — a service like bit.ly that turns long URLs into short codes and redirects — covering requirements, estimates, the API, base62 code generation (counter or hash), the data model, a read-heavy design with caching and a CDN, redirects with 301 vs 302, analytics through a queue, and scaling and abuse concerns.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **cloakroom token**: you hand over a big coat (the long URL), get a small numbered token (`sho.rt/aZ3k`). Anyone with the token gets the same coat back instantly. The cloakroom must never give two coats the same number, must find coats fast even on a busy night, and should count how often each token is used.
+
+</Analogy>
+
+## Simple explanation
+
+**1. Requirements**
+
+| Functional | Non-functional |
+| --- | --- |
+| shorten a long URL → short code | very fast redirects (p99 < 50 ms) |
+| redirect short code → long URL | highly available (redirects must not break) |
+| optional custom alias, expiry | codes unique, not easily guessable |
+| click analytics | read-heavy: ~100 redirects per create |
+
+**2. Estimates** (assumed): 100 M new URLs/month → ~40 writes/s; 100:1 → ~4,000 redirects/s (peak ~20,000); 500 bytes/row → ~600 GB over 10 years. Codes needed: 100 M × 12 × 10 = 12 billion → base62 with **7 characters** gives 62⁷ ≈ 3.5 trillion.
+
+**3. API**
+
+```text
+POST /api/urls        {"url": "https://...", "alias": "sale", "expires_at": "..."}  → 201 {"code": "aZ3k9Qx", "short_url": "https://sho.rt/aZ3k9Qx"}
+GET  /{code}          → 301/302 Location: https://...  (404 if unknown/expired)
+GET  /api/urls/{code}/stats → {"clicks": 1234, "by_country": {...}}
+```
+
+**4. Code generation**
+
+| Method | How | Pros / cons |
+| --- | --- | --- |
+| **Counter + base62** | unique id (DB sequence, or ranges handed to each server) → base62 | no collisions, short; sequential (shuffle/encode to avoid guessable ids) |
+| Hash (MD5/SHA) of the URL, take 7 chars | deterministic | collisions → check and retry; same URL → same code |
+| Random 7 chars | simple | check uniqueness on insert (rare collisions) |
+| Pre-generated key service | a pool of unused codes | fast; extra component |
+
+**5. Data model**: `urls(code PK, long_url, user_id, created_at, expires_at)`; key-value access by code → DynamoDB/Cassandra or PostgreSQL with an index. Clicks go to a separate analytics store.
+
+**6. High-level design**: client → CDN/LB → stateless redirect service → **Redis cache** (hot codes) → database. Writes go through a create service. Each redirect publishes a click event to a **queue** (Kafka/SQS) → analytics workers → analytics DB. Redirect latency is not affected by analytics.
+
+**7. Deep dives**
+
+- **301 vs 302**: 301 (permanent) is cached by browsers → fewer hits on you but you lose analytics; **302** (temporary) keeps every click visible
+- **Caching**: 20% of links get 80% of clicks → cache-aside with TTL; CDN can cache redirects too
+- **Scaling**: stateless services autoscale; DB sharded by code (hash); replicas for reads
+- **Abuse**: rate-limit creates, scan URLs against malware/phishing lists, block bad domains, expire unused links
+- **Availability**: multi-AZ, cache in front, read replicas; creates can degrade while redirects keep working
+
+## Code example
+
+```python
+import string, hashlib
+
+ALPHABET = string.digits + string.ascii_lowercase + string.ascii_uppercase   # 62 characters
+
+def base62(n):
+    if n == 0:
+        return ALPHABET[0]
+    out = []
+    while n:
+        n, r = divmod(n, 62)
+        out.append(ALPHABET[r])
+    return "".join(reversed(out))
+
+def decode62(s):
+    n = 0
+    for c in s:
+        n = n * 62 + ALPHABET.index(c)
+    return n
+
+print("62^7 =", f"{62 ** 7:,}", "codes")
+for n in [1, 61, 62, 125, 1_000_000, 3_521_614_606_207]:
+    print(f"{n:>16,} → {base62(n):>7} → {decode62(base62(n)):,}")
+
+class Shortener:
+    def __init__(self, start=100_000_000):
+        self.next_id, self.db, self.cache, self.clicks = start, {}, {}, []
+    def shorten(self, url):
+        code = base62(self.next_id); self.next_id += 1
+        self.db[code] = url
+        return f"https://sho.rt/{code}"
+    def redirect(self, code):
+        if code in self.cache:
+            url, src = self.cache[code], "cache"
+        elif code in self.db:
+            url, src = self.db[code], "db"
+            self.cache[code] = url
+        else:
+            return 404, None, None
+        self.clicks.append(code)              # in production: publish to a queue
+        return 302, url, src
+
+s = Shortener()
+short = s.shorten("https://shop.example.com/sale/diwali-2026?utm_source=whatsapp")
+code = short.rsplit("/", 1)[1]
+print(short)
+print(s.redirect(code))
+print(s.redirect(code))
+print(s.redirect("nope"))
+print("clicks recorded:", len(s.clicks))
+print("hash approach, first 7 chars:", hashlib.sha256(b"https://example.com").hexdigest()[:7], "(must check collisions)")
+```
+
+```output
+62^7 = 3,521,614,606,208 codes
+               1 →       1 → 1
+              61 →       Z → 61
+              62 →      10 → 62
+             125 →      21 → 125
+       1,000,000 →    4c92 → 1,000,000
+3,521,614,606,207 → ZZZZZZZ → 3,521,614,606,207
+https://sho.rt/6LAze
+(302, 'https://shop.example.com/sale/diwali-2026?utm_source=whatsapp', 'db')
+(302, 'https://shop.example.com/sale/diwali-2026?utm_source=whatsapp', 'cache')
+(404, None, None)
+clicks recorded: 2
+hash approach, first 7 chars: 100680a (must check collisions)
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "user", "label": "Browser", "icon": "🧑", "col": 0, "row": 1, "info": "Clicks https://sho.rt/1Ly7VK.", "example": "From WhatsApp" },
+    { "id": "lb", "label": "CDN / load balancer", "icon": "⚖️", "col": 1, "row": 1, "info": "Spreads ~4,000 redirects/s over stateless servers.", "example": "Multi-AZ" },
+    { "id": "redirect", "label": "Redirect service", "icon": "↪️", "col": 2, "row": 1, "info": "Looks up the code, returns 302 Location, publishes a click event.", "example": "Stateless ×N" },
+    { "id": "cache", "label": "Redis", "icon": "⚡", "col": 3, "row": 0, "info": "Hot codes cached (80% of clicks hit 20% of links).", "example": "code → long URL, TTL 1 day" },
+    { "id": "db", "label": "URL store", "icon": "🗄️", "col": 3, "row": 2, "info": "code (primary key) → long URL; sharded by code; replicas.", "example": "DynamoDB / PostgreSQL" },
+    { "id": "create", "label": "Create service", "icon": "✂️", "col": 2, "row": 3, "info": "Validates and scans the URL, gets the next id, encodes base62, saves.", "example": "POST /api/urls" },
+    { "id": "queue", "label": "Click queue → analytics", "icon": "📊", "col": 4, "row": 1, "info": "Async: counts by day, country, referrer; never slows redirects.", "example": "Kafka / SQS → ClickHouse" }
+  ],
+  "edges": [
+    ["user", "lb"],
+    ["lb", "redirect"],
+    ["redirect", "cache", "1. lookup"],
+    ["redirect", "db", "2. on miss"],
+    ["create", "db", "insert"],
+    ["redirect", "queue", "click event"]
+  ],
+  "flows": [
+    {
+      "name": "Redirect",
+      "steps": [
+        ["user", "GET /1Ly7VK"],
+        ["lb", "Routed to a redirect server."],
+        ["redirect", "Lookup code."],
+        ["cache", "Hit in ~1 ms."],
+        ["queue", "Click event published (async)."],
+        ["user", "302 → long URL."]
+      ]
+    },
+    {
+      "name": "Create",
+      "steps": [
+        ["create", "POST a long URL; rate limit + malware check."],
+        ["create", "id 100,000,000 → base62 '6LAze'."],
+        ["db", "Saved; short URL returned."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Analytics inside the redirect path">
+
+<Wrong>
+
+```text
+Each redirect does UPDATE urls SET clicks = clicks + 1 — hot rows lock, redirects slow down.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Redirect immediately; publish a click event to a queue; aggregate counts asynchronously.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Using 301 when you need analytics">
+
+<Wrong>
+
+```text
+301 Moved Permanently: browsers cache it, later clicks never reach you — no stats, no way to change the target.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+302 (or 307) for tracked or editable links; 301 only for permanent links where caching is wanted.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How would you generate short codes?">
+
+Use a globally unique counter (a database sequence, or id ranges allocated to each app server, or a Snowflake-style id) and encode it in base62, giving short collision-free codes; 7 characters cover about 3.5 trillion codes. To avoid guessable sequential codes, shuffle bits or encrypt the id before encoding. Hash- or random-based codes need a uniqueness check and retry on collision.
+
+</QA>
+
+<QA q="How do you make redirects fast and highly available?">
+
+Keep the redirect service stateless and replicated across zones behind a load balancer, cache hot codes in Redis (and optionally at the CDN), store mappings in a key-value store sharded by code with replicas, and move analytics off the request path into a queue.
+
+</QA>
+
+<QA q="301 or 302 for a URL shortener?">
+
+302 if you want every click to reach your servers for analytics and the ability to change or expire targets; 301 reduces load because browsers cache it, but you lose visibility. Most commercial shorteners use 302 (or 307).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'How many codes do 7 base62 characters give?',
+      options: ['~62 million', '~3.5 trillion', '~10 billion', '~1 million'],
+      answer: 1,
+      why: '62⁷.',
+    },
+    {
+      q: 'The system is mostly...',
+      options: ['Write-heavy', 'Read-heavy (redirects)', 'Compute-heavy', 'Storage-free'],
+      answer: 1,
+      why: '~100 redirects per create.',
+    },
+    {
+      q: 'Where should click counting happen?',
+      options: ['Synchronously in the redirect', 'Asynchronously via a queue', 'In the browser', 'Never'],
+      answer: 1,
+      why: 'Keep redirects fast.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Part | Choice |
+| --- | --- |
+| Codes | counter → base62 (7 chars ≈ 3.5 T) |
+| Store | code → long URL (key-value, sharded) |
+| Reads | Redis cache + CDN, replicas |
+| Redirect | 302 (analytics) · 301 (cacheable) |
+| Analytics | click events → queue → workers |
+| Abuse | rate limit creates · URL scanning · expiry |
+| Scale | stateless services · autoscaling · multi-AZ |
+
+</CheatSheet>

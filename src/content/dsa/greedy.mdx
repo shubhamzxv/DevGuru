@@ -1,0 +1,220 @@
+---
+id: dsa-greedy
+title: Greedy basics
+summary: A greedy algorithm makes the locally best choice at each step and never reconsiders it; it is fast and simple and gives the optimal answer only when the problem has the greedy-choice property, as in interval scheduling by earliest end, jump game, gas station and Huffman coding, while problems like coin change with arbitrary coins need dynamic programming.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Giving **change with Indian coins and notes** (₹500, 200, 100, 50, 20, 10, 5, 2, 1): always hand over the biggest note that fits. For ₹289 that is 200 + 50 + 20 + 10 + 5 + 2 + 2 — the fewest pieces. This "take the best now" strategy works for this currency system, but with odd coins like `{1, 3, 4}` and amount 6, greedy gives 4 + 1 + 1 (3 coins) while 3 + 3 (2 coins) is better.
+
+</Analogy>
+
+## Simple explanation
+
+**Greedy** = at every step, choose what looks best right now, commit, move on. Usually **sort first**, then one pass: **O(n log n)**.
+
+When is greedy correct? When you can argue that some optimal solution always contains the greedy choice (**exchange argument**: swapping any other choice for the greedy one never makes things worse). If you cannot argue it, test small counter-examples — or use DP.
+
+| Problem | Greedy rule | Why it works |
+| --- | --- | --- |
+| **Activity selection / max meetings in one room** | sort by **end time**, take each meeting that starts after the last chosen ends | finishing earliest leaves the most room |
+| Merge overlapping intervals | sort by start, extend or start a new interval | |
+| Minimum meeting rooms | sort starts and ends / heap of end times | |
+| **Jump game** (can you reach the end?) | track the furthest reachable index | |
+| Gas station | if the tank goes negative, restart from the next station | |
+| Assign cookies / boats | sort both, match smallest to smallest / pair heaviest with lightest | |
+| Fractional knapsack | best value per kg first | (0/1 knapsack needs DP!) |
+| Huffman coding, Dijkstra, Prim, Kruskal | always take the cheapest available | |
+
+**Greedy vs DP**: greedy makes one choice per step and never looks back (fast, but needs proof); DP tries all choices for each subproblem and keeps the best (always correct when the recurrence is right, but slower).
+
+## Code example
+
+```python
+def max_meetings(meetings):
+    chosen, last_end = [], float("-inf")
+    for start, end in sorted(meetings, key=lambda m: m[1]):     # earliest end first
+        if start >= last_end:
+            chosen.append((start, end))
+            last_end = end
+    return chosen
+
+def merge_intervals(intervals):
+    merged = []
+    for s, e in sorted(intervals):
+        if merged and s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], e)                 # overlap: extend
+        else:
+            merged.append([s, e])
+    return merged
+
+def can_jump(nums):
+    furthest = 0
+    for i, step in enumerate(nums):
+        if i > furthest:
+            return False                                          # stuck before i
+        furthest = max(furthest, i + step)
+    return True
+
+def gas_station(gas, cost):
+    if sum(gas) < sum(cost):
+        return -1
+    start = tank = 0
+    for i in range(len(gas)):
+        tank += gas[i] - cost[i]
+        if tank < 0:                                              # cannot start at or before i
+            start, tank = i + 1, 0
+    return start
+
+def greedy_coins(coins, amount):
+    used = []
+    for c in sorted(coins, reverse=True):
+        while amount >= c:
+            amount -= c
+            used.append(c)
+    return used
+
+print("meetings:", max_meetings([(1, 4), (3, 5), (0, 6), (5, 7), (3, 9), (5, 9), (6, 10), (8, 11)]))
+print("merged:", merge_intervals([[1, 3], [8, 10], [2, 6], [15, 18]]))
+print("jump:", can_jump([2, 3, 1, 1, 4]), can_jump([3, 2, 1, 0, 4]))
+print("gas start:", gas_station([1, 2, 3, 4, 5], [3, 4, 5, 1, 2]))
+print("₹289:", greedy_coins([500, 200, 100, 50, 20, 10, 5, 2, 1], 289))
+print("{1,3,4} for 6:", greedy_coins([1, 3, 4], 6), "← greedy, but [3, 3] is better")
+```
+
+```output
+meetings: [(1, 4), (5, 7), (8, 11)]
+merged: [[1, 6], [8, 10], [15, 18]]
+jump: True False
+gas start: 3
+₹289: [200, 50, 20, 10, 5, 2, 2]
+{1,3,4} for 6: [4, 1, 1] ← greedy, but [3, 3] is better
+```
+
+<Playground kind="python">
+
+```python
+import heapq
+
+def min_meeting_rooms(meetings):
+    ends = []                                  # min-heap of end times of rooms in use
+    for start, end in sorted(meetings):
+        if ends and ends[0] <= start:
+            heapq.heapreplace(ends, end)       # reuse the room that frees up first
+        else:
+            heapq.heappush(ends, end)          # need a new room
+    return len(ends)
+
+print(min_meeting_rooms([(0, 30), (5, 10), (15, 20)]))          # 2
+print(min_meeting_rooms([(9, 10), (9, 12), (10, 11), (11, 13)]))  # 2
+
+# Try it: add (9, 13) to the second list.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Greedy without a proof">
+
+<Wrong>
+
+```text
+Coin change with coins [1, 3, 4]: "take the biggest coin" → 4 + 1 + 1 for 6 (3 coins).
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Check a small counter-example; if greedy fails, use DP (dp[a] = min(dp[a - c] + 1)) → 3 + 3.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Sorting by the wrong key">
+
+<Wrong>
+
+```python
+sorted(meetings, key=lambda m: m[0])     # earliest START: one long early meeting blocks many short ones
+```
+
+</Wrong>
+
+<Right>
+
+```python
+sorted(meetings, key=lambda m: m[1])     # earliest END maximises the number of meetings
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a greedy algorithm?">
+
+An algorithm that builds a solution step by step, always taking the choice that looks best at the moment without revisiting earlier decisions. It is efficient (often sort + one pass) but correct only for problems with the greedy-choice property and optimal substructure, which you justify with an exchange argument.
+
+</QA>
+
+<QA q="How do you schedule the maximum number of non-overlapping meetings?">
+
+Sort meetings by end time and pick each meeting whose start is not before the end of the last chosen one. Choosing the meeting that finishes first leaves the most time for the rest, and an exchange argument shows this is optimal. O(n log n).
+
+</QA>
+
+<QA q="Greedy or dynamic programming — how do you decide?">
+
+Try to prove the greedy choice is always safe or find a counter-example on small inputs. If a locally best choice can block a better global solution (0/1 knapsack, coin change with arbitrary coins, longest path), use DP to consider all choices per subproblem.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Max non-overlapping meetings: sort by...',
+      options: ['Start time', 'End time', 'Duration', 'Room number'],
+      answer: 1,
+      why: 'Earliest finish leaves the most room.',
+    },
+    {
+      q: 'Does greedy solve 0/1 knapsack optimally?',
+      options: ['Yes', 'No — use DP', 'Only with sorting', 'Only for small n'],
+      answer: 1,
+      why: 'Fractional knapsack yes, 0/1 no.',
+    },
+    {
+      q: 'Typical greedy time complexity?',
+      options: ['O(2ⁿ)', 'O(n log n)', 'O(n³)', 'O(n!)'],
+      answer: 1,
+      why: 'Sort + one pass.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Problem | Greedy rule |
+| --- | --- |
+| Max meetings | sort by end, take if start ≥ last end |
+| Merge intervals | sort by start, extend overlaps |
+| Meeting rooms | sort by start + heap of ends |
+| Jump game | furthest reachable |
+| Gas station | reset start when tank < 0 |
+| Fractional knapsack | value / weight first |
+| Proof | exchange argument / counter-example |
+| Fails | 0/1 knapsack · odd coin systems → DP |
+
+</CheatSheet>

@@ -1,0 +1,242 @@
+---
+id: system-design-choosing-a-database
+title: Choosing a database (SQL vs NoSQL)
+summary: Relational (SQL) databases store tables with schemas, joins and ACID transactions and are the default for most business data; NoSQL families — key-value, document, wide-column and graph — trade some of that for flexible schemas, simple key access at huge scale or special query types; choose by data shape, access patterns, consistency needs and scale.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Storing things at home. A **steel almirah with labelled shelves** (SQL) keeps everything organised and lets you find "all winter clothes of size M" easily — but every item must fit the shelf layout. A **set of boxes with name tags** (key-value/document) is quick to grab by name and holds odd-shaped things, but asking "which boxes contain a red scarf?" means opening many boxes unless you planned for it.
+
+</Analogy>
+
+## Simple explanation
+
+**Relational / SQL** (PostgreSQL, MySQL, Aurora, SQL Server)
+
+- Tables, rows, columns, fixed **schema**, **foreign keys**, **joins**
+- **ACID** transactions: Atomic, Consistent, Isolated, Durable — money transfers never half-happen
+- Flexible ad-hoc queries, reporting, constraints
+- Scales up well and out for reads (replicas); write sharding is harder (but possible: Citus, Vitess, Aurora)
+
+**NoSQL families**
+
+| Type | Model | Examples | Great for |
+| --- | --- | --- | --- |
+| **Key-value** | key → value | Redis, DynamoDB | caches, sessions, carts, simple lookups at huge scale |
+| **Document** | JSON documents | MongoDB, DynamoDB, Firestore | varied/nested data per item (product catalogs, profiles) |
+| **Wide-column** | partition key + sorted columns | Cassandra, ScyllaDB, Bigtable | huge write volumes, time series, logs |
+| **Graph** | nodes + edges | Neo4j, Neptune | relationships: friends-of-friends, fraud rings, recommendations |
+| Search | inverted index | Elasticsearch, OpenSearch | full-text search, filters, facets |
+| Time series | time-ordered points | TimescaleDB, InfluxDB | metrics, IoT sensor data |
+
+**How to choose**
+
+| Question | Leans to |
+| --- | --- |
+| Data is relational, needs joins and transactions (orders, payments, users) | **SQL** |
+| Ad-hoc queries / reporting / evolving queries | **SQL** |
+| Access is always by key, at massive scale, low latency | key-value (DynamoDB) |
+| Each record has a different shape | document |
+| Write-heavy, time-ordered, multi-region | wide-column |
+| Questions are about connections | graph |
+| Text search | search engine (next to the main DB) |
+
+**Polyglot persistence**: real systems combine them — PostgreSQL for orders, Redis for cache/sessions, Elasticsearch for product search, S3 for files.
+
+**Default advice**: start with **PostgreSQL** (it also has JSONB, full-text search, extensions); add specialised stores when a clear need appears.
+
+## Code example
+
+The same data, relational vs document, using SQLite and plain Python:
+
+```python
+import sqlite3, json
+
+db = sqlite3.connect(":memory:")
+db.executescript("""
+CREATE TABLE users  (id INTEGER PRIMARY KEY, name TEXT);
+CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), total INTEGER);
+INSERT INTO users VALUES (1, 'Asha'), (2, 'Ravi');
+INSERT INTO orders VALUES (10, 1, 450), (11, 1, 848), (12, 2, 199);
+""")
+rows = db.execute("""SELECT u.name, COUNT(o.id), SUM(o.total) FROM users u
+                     JOIN orders o ON o.user_id = u.id GROUP BY u.name ORDER BY u.name""").fetchall()
+print("SQL join + aggregate:", rows)
+
+try:                                         # transaction: all or nothing
+    with db:
+        db.execute("UPDATE orders SET total = total - 100 WHERE id = 10")
+        raise RuntimeError("payment gateway down")
+except RuntimeError:
+    pass
+print("after failed transaction, order 10 total =", db.execute("SELECT total FROM orders WHERE id = 10").fetchone()[0])
+
+documents = {                                # document model: one item holds its nested data
+    "user#1": {"name": "Asha", "orders": [{"id": 10, "total": 450}, {"id": 11, "total": 848}]},
+    "user#2": {"name": "Ravi", "orders": [{"id": 12, "total": 199}], "prime": True},
+}
+print("get by key:", json.dumps(documents["user#1"]))
+print("ad-hoc 'orders over 400' needs a scan:",
+      [o["id"] for d in documents.values() for o in d["orders"] if o["total"] > 400])
+```
+
+```output
+SQL join + aggregate: [('Asha', 2, 1298), ('Ravi', 1, 199)]
+after failed transaction, order 10 total = 450
+get by key: {"name": "Asha", "orders": [{"id": 10, "total": 450}, {"id": 11, "total": 848}]}
+ad-hoc 'orders over 400' needs a scan: [10, 11]
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "app", "label": "E-commerce app", "icon": "🛒", "col": 0, "row": 2, "info": "Uses the right store for each kind of data (polyglot persistence).", "example": "Django / FastAPI" },
+    { "id": "pg", "label": "PostgreSQL", "icon": "🐘", "col": 1, "row": 0, "info": "Users, orders, payments: relations + ACID transactions + reporting.", "example": "JOIN orders ON users" },
+    { "id": "redis", "label": "Redis", "icon": "⚡", "col": 1, "row": 1, "info": "Key-value: sessions, cart, cache, rate limits.", "example": "cart:42" },
+    { "id": "ddb", "label": "DynamoDB", "icon": "🗃️", "col": 1, "row": 3, "info": "Key-value/document at any scale: activity feed by user id, single-digit ms.", "example": "pk USER#42" },
+    { "id": "es", "label": "OpenSearch", "icon": "🔎", "col": 1, "row": 4, "info": "Full-text product search with filters; synced from PostgreSQL.", "example": "'wireless headphones under 2000'" },
+    { "id": "graph", "label": "Graph DB", "icon": "🕸️", "col": 2, "row": 1, "info": "'Customers who bought this also bought' via relationships.", "example": "Neptune / Neo4j" },
+    { "id": "s3", "label": "S3", "icon": "🪣", "col": 2, "row": 3, "info": "Images and invoices: not in a database.", "example": "products/7.jpg" }
+  ],
+  "edges": [
+    ["app", "pg", "orders"],
+    ["app", "redis", "cache"],
+    ["app", "ddb", "feed"],
+    ["app", "es", "search"],
+    ["pg", "es", "sync"],
+    ["app", "graph", "recommend"],
+    ["app", "s3", "files"]
+  ],
+  "flows": [
+    {
+      "name": "Checkout",
+      "steps": [
+        ["app", "Place order."],
+        ["pg", "One ACID transaction: order + items + stock."],
+        ["redis", "Cart cleared."],
+        ["s3", "Invoice PDF stored."]
+      ]
+    },
+    {
+      "name": "Search",
+      "steps": [
+        ["app", "User searches 'wireless headphones'."],
+        ["es", "Ranked full-text results in 20 ms."],
+        ["pg", "Prices/stock confirmed from the source of truth."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Picking NoSQL because it 'scales'">
+
+<Wrong>
+
+```text
+Orders, payments and refunds in a schemaless store "for scale"; later needs joins, reports and transactions everywhere.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Relational data → SQL. Choose NoSQL for a concrete reason: key access at massive scale, flexible documents, huge writes.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Designing a key-value table like SQL">
+
+<Wrong>
+
+```text
+DynamoDB table designed first, access patterns later → every new screen needs a Scan.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+For key-value/wide-column stores, list access patterns first and design keys and indexes for them.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="When would you choose SQL vs NoSQL?">
+
+SQL when data is relational and integrity matters: joins, constraints, ACID transactions, ad-hoc queries and reporting (orders, payments, inventory). NoSQL when the access pattern is simple and known but scale or flexibility is extreme: key-value lookups at very high throughput, documents with varying structure, massive write volumes, or graph traversals. Many systems use both.
+
+</QA>
+
+<QA q="What does ACID mean?">
+
+Atomicity (a transaction applies fully or not at all), Consistency (it moves the database from one valid state to another, respecting constraints), Isolation (concurrent transactions behave as if run one after another, depending on the isolation level) and Durability (committed data survives crashes).
+
+</QA>
+
+<QA q="What is polyglot persistence?">
+
+Using different databases for different needs in one system — e.g. PostgreSQL for transactional data, Redis for caching and sessions, Elasticsearch for search, S3 for blobs — each chosen for its strengths, with sync between them.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Bank transfers between accounts need...',
+      options: ['Eventually consistent cache', 'ACID transactions (SQL)', 'A search index', 'S3'],
+      answer: 1,
+      why: 'All or nothing.',
+    },
+    {
+      q: '"Friends of friends who like cricket" fits...',
+      options: ['Key-value', 'Graph database', 'Time series', 'Object storage'],
+      answer: 1,
+      why: 'Relationship traversal.',
+    },
+    {
+      q: 'Full-text product search usually uses...',
+      options: ['Redis only', 'Elasticsearch/OpenSearch', 'Cassandra', 'S3'],
+      answer: 1,
+      why: 'Inverted index.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Store |
+| --- | --- |
+| Relations, transactions, reports | PostgreSQL / MySQL |
+| Cache, sessions, counters | Redis |
+| Key lookups at huge scale | DynamoDB |
+| Flexible documents | MongoDB / DynamoDB |
+| Massive writes, time-ordered | Cassandra |
+| Relationships | Neo4j / Neptune |
+| Text search | Elasticsearch / OpenSearch |
+| Files | S3 |
+
+Default: start with PostgreSQL; add stores for clear needs.
+
+</CheatSheet>

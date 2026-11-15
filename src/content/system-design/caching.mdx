@@ -1,0 +1,249 @@
+---
+id: system-design-caching
+title: Caching basics
+summary: A cache keeps copies of frequently used data in a faster place — the browser, a CDN, the application's memory or a shared store like Redis — so repeated reads skip slow work; it works best for data read often and changed rarely, is measured by hit rate, and is bounded by memory with eviction policies such as LRU.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Keeping a **water bottle on your desk** instead of walking to the kitchen every time you are thirsty. Most sips come from the bottle (cache **hit**); only when it is empty do you walk to the kitchen (cache **miss**) and refill it. The bottle is small, so you keep only what you use most.
+
+</Analogy>
+
+## Simple explanation
+
+**Where caches live** (closest to the user first):
+
+| Layer | Caches | Example |
+| --- | --- | --- |
+| Browser | static files, API responses | `Cache-Control: max-age=31536000` |
+| **CDN** | images, JS/CSS, even pages | CloudFront, Cloudflare |
+| API gateway / reverse proxy | GET responses for seconds | Nginx, Varnish |
+| Application memory | small hot data per server | `functools.lru_cache`, a dict |
+| **Distributed cache** | shared across servers | **Redis**, Memcached |
+| Database | buffer pool, query cache | PostgreSQL shared buffers |
+
+**Why**: lower latency (RAM ~100 ns vs a DB query ~5 ms), less load on the database, survive traffic spikes, cheaper.
+
+**Key words**
+
+| Term | Meaning |
+| --- | --- |
+| Hit / miss | found / not found in the cache |
+| **Hit rate** | hits ÷ total — 90%+ is common for good candidates |
+| **TTL** | time to live: auto-expiry |
+| **Eviction** | removing items when full: **LRU** (least recently used), LFU (least frequently used), FIFO |
+| Stale data | cache still holds an old value |
+| Cold cache / warm-up | empty after start; pre-load hot keys |
+
+**What to cache**: read-heavy and rarely changing data (product details, configs, user profiles, rendered pages), expensive computations, results of slow external APIs.
+
+**What not to cache (or be careful)**: data that must be exactly current (bank balance shown before a transfer), highly personalised data with low reuse, huge items.
+
+**Local vs distributed cache**: in-process memory is fastest but each server has its own copy (inconsistency, wasted memory); Redis is shared and survives app restarts but costs a network hop (~0.5 ms).
+
+How caches stay correct is the next topic (strategies and invalidation).
+
+## Code example
+
+An LRU cache with hit-rate tracking:
+
+```python
+from collections import OrderedDict
+import time
+
+class LRUCache:
+    def __init__(self, capacity):
+        self.data, self.capacity = OrderedDict(), capacity
+        self.hits = self.misses = 0
+
+    def get(self, key):
+        if key in self.data:
+            self.data.move_to_end(key)          # most recently used
+            self.hits += 1
+            return self.data[key]
+        self.misses += 1
+        return None
+
+    def put(self, key, value):
+        self.data[key] = value
+        self.data.move_to_end(key)
+        if len(self.data) > self.capacity:
+            evicted, _ = self.data.popitem(last=False)   # least recently used
+            print("  evict", evicted)
+
+def slow_db(product_id):
+    time.sleep(0.01)                            # pretend 10 ms query
+    return {"id": product_id, "name": f"Product {product_id}"}
+
+cache = LRUCache(capacity=3)
+def get_product(pid):
+    value = cache.get(pid)
+    if value is None:
+        value = slow_db(pid)
+        cache.put(pid, value)
+    return value
+
+for pid in [1, 2, 3, 1, 1, 2, 4, 1, 2, 5, 1, 2]:
+    get_product(pid)
+print(f"hits={cache.hits} misses={cache.misses} hit rate={cache.hits / (cache.hits + cache.misses):.0%}")
+print("cache keys (old → new):", list(cache.data))
+print(f"database time ≈ {cache.misses * 10} ms instead of {12 * 10} ms without a cache")
+```
+
+```output
+  evict 3
+  evict 4
+hits=7 misses=5 hit rate=58%
+cache keys (old → new): [5, 1, 2]
+database time ≈ 50 ms instead of 120 ms without a cache
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "browser", "label": "Browser cache", "icon": "🧭", "col": 0, "row": 1, "info": "Hashed JS/CSS cached for a year: second visit loads instantly.", "example": "Cache-Control: immutable" },
+    { "id": "cdn", "label": "CDN edge", "icon": "🌍", "col": 1, "row": 0, "info": "Images and static pages served from a nearby city.", "example": "x-cache: Hit" },
+    { "id": "app", "label": "App server", "icon": "🖥️", "col": 1, "row": 2, "info": "Small in-memory LRU for config; asks Redis for shared data.", "example": "lru_cache(maxsize=1024)" },
+    { "id": "redis", "label": "Redis", "icon": "⚡", "col": 2, "row": 1, "info": "Shared cache for all servers; TTL 5 minutes; LRU eviction when memory is full.", "example": "product:7" },
+    { "id": "db", "label": "Database", "icon": "🗄️", "col": 3, "row": 2, "info": "Source of truth; only cache misses reach it.", "example": "10 ms query" }
+  ],
+  "edges": [
+    ["browser", "cdn", "static"],
+    ["browser", "app", "API"],
+    ["app", "redis", "1. look"],
+    ["app", "db", "2. on miss"],
+    ["cdn", "app", "origin on miss"]
+  ],
+  "flows": [
+    {
+      "name": "Product page",
+      "steps": [
+        ["browser", "JS/CSS from the browser cache."],
+        ["cdn", "Product image from the CDN."],
+        ["app", "API call for product details."],
+        ["redis", "Hit: 0.5 ms."],
+        ["db", "Not touched."]
+      ]
+    },
+    {
+      "name": "Rare product",
+      "steps": [
+        ["redis", "Miss."],
+        ["db", "Query 10 ms."],
+        ["redis", "Stored with TTL; next visitors get a hit."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Caching without an expiry or size limit">
+
+<Wrong>
+
+```python
+cache = {}                           # grows forever, never refreshed
+cache[key] = value
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Bounded cache (LRU / maxmemory + eviction policy) and a TTL on every key.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Caching before measuring">
+
+<Wrong>
+
+```text
+Adding Redis everywhere "for speed" while the real problem is a missing database index.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Profile first; fix queries/indexes; then cache the hot, read-heavy paths and track the hit rate.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is caching and where can you cache in a web system?">
+
+Storing copies of data in a faster layer so repeated requests avoid slow work. Caches exist in the browser, CDN, reverse proxy or gateway, application memory, a distributed cache like Redis, and inside the database. Each layer closer to the user saves more latency.
+
+</QA>
+
+<QA q="What is LRU eviction?">
+
+When the cache is full, Least Recently Used eviction removes the item that has not been accessed for the longest time, on the assumption that recently used items are likely to be used again. It can be implemented with a hash map plus a doubly linked list (or Python's OrderedDict) for O(1) get and put.
+
+</QA>
+
+<QA q="What data should not be cached?">
+
+Data that must always be exactly current (balances during transactions, inventory at final checkout), data with very low reuse (one-off personalised results), very large objects, and sensitive data in shared caches without proper keys and expiry.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: '8 hits and 2 misses: hit rate?',
+      options: ['20%', '80%', '8%', '25%'],
+      answer: 1,
+      why: '8 / 10.',
+    },
+    {
+      q: 'LRU evicts the item...',
+      options: ['Added first', 'Used least recently', 'Largest', 'Used most often'],
+      answer: 1,
+      why: 'Least Recently Used.',
+    },
+    {
+      q: 'Shared cache for 20 app servers?',
+      options: ['Local dict', 'Redis', 'Browser cache', 'Database buffer'],
+      answer: 1,
+      why: 'One copy for all servers.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Layers | browser · CDN · proxy · app memory · Redis · DB |
+| Measure | hit rate |
+| Expiry | TTL on every key |
+| Full | eviction: LRU · LFU · FIFO |
+| Good candidates | read often, change rarely, expensive |
+| Avoid | must-be-exact data, low reuse |
+| Python | `functools.lru_cache` · `OrderedDict` |
+| Rule | measure → fix queries → cache hot paths |
+
+</CheatSheet>

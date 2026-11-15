@@ -1,0 +1,261 @@
+---
+id: system-design-retries-and-circuit-breakers
+title: Retries, timeouts and circuit breakers
+summary: Calls to other services can be slow or fail, so every call needs a timeout, transient failures are retried a few times with exponential backoff and jitter (only for idempotent operations), and a circuit breaker stops calling a failing dependency for a while so failures do not cascade; bulkheads, fallbacks and idempotency keys complete the toolkit.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Calling a **busy customer-care number**. You do not hold forever (**timeout**). If it is busy, you try again after 1 minute, then 2, then 4 (**exponential backoff**), and so does everyone else at slightly different times (**jitter**). If it has been down all morning, you stop calling for an hour (**circuit breaker open**), use the website instead (**fallback**), and call once later to check if it works again (**half-open**).
+
+</Analogy>
+
+## Simple explanation
+
+**Timeouts** — every network call needs one. Without it, threads wait forever, pools fill up, and the whole service hangs. Set a connect timeout (~1 s) and a read timeout from the dependency's p99 (e.g. 2 s), and keep an overall **deadline** for the request.
+
+**Retries** — for **transient** errors (timeouts, 502/503/504, connection reset, 429 after Retry-After):
+
+- Only for **idempotent** operations (GET, PUT, DELETE) or with an **idempotency key** (`Idempotency-Key: order-42` for a POST payment)
+- **Few attempts** (2–3), with **exponential backoff** (0.1 s, 0.2 s, 0.4 s...) and **jitter** (randomness) so clients do not retry in sync
+- Do not retry 400/401/403/404/422 — they will fail again
+- Retry at **one layer** only; retries at every layer multiply (3 × 3 × 3 = 27 calls)
+- Use a **retry budget** (e.g. retries ≤ 10% of traffic)
+
+**Circuit breaker** — protects you and the failing service:
+
+| State | Behaviour |
+| --- | --- |
+| **Closed** | calls pass; failures are counted |
+| **Open** | after N failures (or error rate > X%), calls **fail fast** without trying, for a cool-down period |
+| **Half-open** | after the cool-down, let a few test calls through; success → closed, failure → open again |
+
+**Other resilience patterns**
+
+| Pattern | Idea |
+| --- | --- |
+| **Fallback** | cached data, default value, "recommendations unavailable", queue for later |
+| **Bulkhead** | separate connection pools/threads per dependency so one slow service cannot use them all |
+| Load shedding | reject low-priority work when overloaded |
+| Graceful degradation | the core flow (checkout) works even if extras (reviews) fail |
+| Idempotency | safe to repeat; store processed keys |
+
+Libraries: `tenacity` / `backoff` (Python), resilience4j (Java), Polly (.NET); service meshes (Envoy/Istio) can do retries, timeouts and outlier detection centrally.
+
+## Code example
+
+```python
+import random
+
+random.seed(4)
+
+def backoff_delays(attempts, base=0.1, cap=2.0):
+    """Exponential backoff with 'full jitter'."""
+    return [round(random.uniform(0, min(cap, base * 2 ** i)), 3) for i in range(attempts)]
+
+print("backoff delays (s):", backoff_delays(5))
+
+class CircuitBreaker:
+    def __init__(self, threshold=3, cooldown=10):
+        self.threshold, self.cooldown = threshold, cooldown
+        self.failures, self.state, self.opened_at = 0, "closed", None
+
+    def call(self, fn, now):
+        if self.state == "open":
+            if now - self.opened_at < self.cooldown:
+                return "fail fast (open)"
+            self.state = "half-open"
+        try:
+            result = fn()
+        except Exception:
+            self.failures += 1
+            if self.state == "half-open" or self.failures >= self.threshold:
+                self.state, self.opened_at = "open", now
+            return f"error → {self.state}"
+        self.failures, self.state = 0, "closed"
+        return f"ok: {result} → closed"
+
+payment_up = False
+def payment_api():
+    if not payment_up:
+        raise TimeoutError("payment API timed out")
+    return "charged"
+
+cb = CircuitBreaker(threshold=3, cooldown=10)
+for t in [0, 1, 2, 3, 4, 11]:
+    print(f"t={t:>2}s:", cb.call(payment_api, t))
+payment_up = True
+print("t=22s:", cb.call(payment_api, 22))
+print("t=23s:", cb.call(payment_api, 23))
+
+processed = {}
+def charge(idempotency_key, amount):
+    if idempotency_key in processed:
+        return processed[idempotency_key] + " (replayed, not charged again)"
+    processed[idempotency_key] = f"charged ₹{amount}"
+    return processed[idempotency_key]
+
+print(charge("order-42", 848))
+print(charge("order-42", 848))          # client retried after a timeout
+```
+
+```output
+backoff delays (s): [0.024, 0.021, 0.158, 0.124, 0.106]
+t= 0s: error → closed
+t= 1s: error → closed
+t= 2s: error → open
+t= 3s: fail fast (open)
+t= 4s: fail fast (open)
+t=11s: fail fast (open)
+t=22s: ok: charged → closed
+t=23s: ok: charged → closed
+charged ₹848
+charged ₹848 (replayed, not charged again)
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "checkout", "label": "Checkout service", "icon": "🛒", "col": 0, "row": 1, "info": "Calls payment with a 2 s timeout, 2 retries with backoff + jitter, and an idempotency key.", "example": "Idempotency-Key: order-42" },
+    { "id": "cb", "label": "Circuit breaker", "icon": "🔌", "col": 1, "row": 1, "info": "Closed → counts failures. Open → fail fast for 30 s. Half-open → test a few calls.", "example": "Open after 50% errors in 20 calls" },
+    { "id": "pay", "label": "Payment provider", "icon": "💳", "col": 2, "row": 0, "info": "Sometimes slow or down.", "example": "p99 1.2 s, outage today" },
+    { "id": "pool", "label": "Bulkhead pools", "icon": "🧱", "col": 1, "row": 3, "info": "Separate connection pools: payment cannot use up the threads needed for inventory.", "example": "payment 20 · inventory 20" },
+    { "id": "fallback", "label": "Fallback", "icon": "🛟", "col": 2, "row": 2, "info": "Save the order as 'payment pending' and queue a retry; tell the user clearly.", "example": "Pay later link" },
+    { "id": "inv", "label": "Inventory service", "icon": "📦", "col": 3, "row": 3, "info": "Keeps working because its pool is separate.", "example": "Healthy" }
+  ],
+  "edges": [
+    ["checkout", "cb"],
+    ["cb", "pay", "closed / half-open"],
+    ["cb", "fallback", "open"],
+    ["checkout", "pool"],
+    ["pool", "inv"]
+  ],
+  "flows": [
+    {
+      "name": "Payment outage",
+      "steps": [
+        ["checkout", "Calls payment; timeouts after 2 s."],
+        ["cb", "Retries fail; error rate crosses the threshold → OPEN."],
+        ["fallback", "New checkouts fail fast to 'payment pending' instead of hanging."],
+        ["pool", "Inventory calls still have their own threads."],
+        ["cb", "After 30 s: half-open test call."],
+        ["pay", "Succeeds → CLOSED; pending payments are retried with the same idempotency keys."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Retrying non-idempotent calls">
+
+<Wrong>
+
+```text
+POST /payments times out; the client retries 3 times → the customer is charged up to 4 times.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Send an Idempotency-Key; the server stores the result per key and returns it for repeats.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Immediate retries from every client">
+
+<Wrong>
+
+```python
+for _ in range(10):
+    try: return call()
+    except Exception: pass          # instant retries: a retry storm on an already struggling service
+```
+
+</Wrong>
+
+<Right>
+
+```python
+for attempt in range(3):
+    try: return call(timeout=2)
+    except TransientError: time.sleep(random.uniform(0, 0.1 * 2 ** attempt))
+raise
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Why do you need timeouts and how do you choose them?">
+
+Without timeouts, a slow dependency holds threads and connections indefinitely, exhausting resources and making the caller unavailable too. Choose timeouts slightly above the dependency's normal high-percentile latency (e.g. its p99), with separate connect and read timeouts and an overall request deadline that downstream calls respect.
+
+</QA>
+
+<QA q="What is a circuit breaker?">
+
+A wrapper around remote calls that tracks failures; after a threshold it opens and fails calls immediately for a cool-down period, preventing wasted work and cascading failures and giving the dependency time to recover. Then it goes half-open, allowing trial calls, and closes again if they succeed.
+
+</QA>
+
+<QA q="How do you retry safely?">
+
+Retry only transient failures, only idempotent operations or with idempotency keys, a small number of times, with exponential backoff and jitter, at a single layer, within a retry budget and the request deadline, and combine with circuit breakers so retries stop when a dependency is clearly down.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which errors are worth retrying?',
+      options: ['400 Bad Request', '404 Not Found', '503 / timeouts', '401 Unauthorized'],
+      answer: 2,
+      why: 'Transient failures.',
+    },
+    {
+      q: 'Circuit breaker state that fails fast?',
+      options: ['Closed', 'Open', 'Half-open', 'Idle'],
+      answer: 1,
+      why: 'No calls during cool-down.',
+    },
+    {
+      q: 'Why add jitter to backoff?',
+      options: ['Faster retries', 'Avoid clients retrying at the same moment', 'Encrypt requests', 'Reduce payload'],
+      answer: 1,
+      why: 'Prevents synchronized retry storms.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Tool | Rule |
+| --- | --- |
+| Timeout | on every call · connect + read · overall deadline |
+| Retry | transient only · idempotent / idempotency key · 2–3 times |
+| Backoff | exponential + jitter · cap |
+| Layering | retry at one layer · retry budget |
+| Circuit breaker | closed → open (fail fast) → half-open → closed |
+| Fallback | cache · default · queue for later |
+| Bulkhead | separate pools per dependency |
+| Python | `tenacity`, `backoff` |
+
+</CheatSheet>

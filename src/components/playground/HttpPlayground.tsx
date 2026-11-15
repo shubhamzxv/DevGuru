@@ -78,7 +78,7 @@ export default function HttpPlayground({ initialCode }: { initialCode: string })
             Path
           </label>
           <div className="flex min-w-0 flex-1 items-center rounded-lg border border-slate-300 focus-within:border-brand-500 dark:border-slate-700">
-            <span className="hidden shrink-0 pl-3 font-mono text-sm text-slate-500 sm:inline">
+            <span className="hidden shrink-0 pl-3 font-mono text-sm text-slate-600 dark:text-slate-400 sm:inline">
               https://api.devguru.dev
             </span>
             <input
@@ -94,7 +94,10 @@ export default function HttpPlayground({ initialCode }: { initialCode: string })
         </div>
         <div>
           <label htmlFor="http-headers" className="text-sm font-semibold">
-            Headers <span className="font-normal text-slate-500">(one per line: Name: value)</span>
+            Headers{' '}
+            <span className="font-normal text-slate-600 dark:text-slate-400">
+              (one per line: Name: value)
+            </span>
           </label>
           <textarea
             id="http-headers"
@@ -153,7 +156,9 @@ export default function HttpPlayground({ initialCode }: { initialCode: string })
               >
                 {response.status} {response.statusText}
               </span>
-              <span className="text-sm text-slate-500">{response.timeMs} ms</span>
+              <span className="text-sm text-slate-600 dark:text-slate-400">
+                {response.timeMs} ms
+              </span>
             </p>
             <p className="rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-900 dark:bg-sky-950/50 dark:text-sky-100">
               <span aria-hidden="true">💡 </span>
@@ -172,11 +177,13 @@ export default function HttpPlayground({ initialCode }: { initialCode: string })
                 {response.body}
               </pre>
             ) : (
-              <p className="text-sm text-slate-500">(no body)</p>
+              <p className="text-sm text-slate-600 dark:text-slate-400">(no body)</p>
             )}
           </div>
         ) : (
-          <p className="text-sm text-slate-500">Press Send to see the response here.</p>
+          <p className="text-sm text-slate-600 dark:text-slate-400">
+            Press Send to see the response here.
+          </p>
         )}
       </section>
 

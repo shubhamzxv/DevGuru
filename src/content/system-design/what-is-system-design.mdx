@@ -1,0 +1,236 @@
+---
+id: system-design-what-is-system-design
+title: What is system design?
+summary: System design is planning how the parts of a software system — clients, servers, databases, caches, queues and networks — fit together to meet functional needs and non-functional goals like scale, speed, availability and cost; interviews test it with a step-by-step process from requirements to a high-level design and deep dives.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Coding is building **one room**; system design is drawing the **plan of the whole building**: where the entrances are, how many lifts you need for rush hour, where the water tank sits, what happens if one staircase is blocked, and how to add floors later without knocking the building down.
+
+</Analogy>
+
+## Simple explanation
+
+**System design** answers: "How do we build this so it works for **many users**, stays **up**, stays **fast**, and is **affordable** to run and change?"
+
+**Two kinds of requirements**
+
+| Kind | Question | Example (food delivery app) |
+| --- | --- | --- |
+| **Functional** | what must it do? | browse restaurants, place order, track rider |
+| **Non-functional** | how well? | 1 M daily users, p99 < 300 ms, 99.9% uptime, no lost orders |
+
+**Building blocks** you combine:
+
+| Block | Job |
+| --- | --- |
+| Client (web, mobile) | UI |
+| DNS, CDN | find the service, serve static files near users |
+| Load balancer | spread traffic over servers |
+| App servers / services | business logic (stateless) |
+| Database (SQL / NoSQL) | source of truth |
+| Cache (Redis) | fast reads |
+| Message queue | async work, buffering |
+| Object storage (S3) | files, images |
+| Search index | full-text search |
+| Monitoring | logs, metrics, traces |
+
+**The interview process (45 minutes)**
+
+1. **Requirements** (5 min): functional + non-functional; ask about scale
+2. **Estimates** (5 min): users, requests per second, storage — "back-of-the-envelope"
+3. **API design**: main endpoints
+4. **Data model**: main tables/keys
+5. **High-level design**: boxes and arrows from client to database
+6. **Deep dives**: the hard part (scaling the database, caching, consistency, failures)
+7. **Trade-offs & wrap-up**: what you chose and why, bottlenecks, what you would add next
+
+There is **no single correct answer**; interviewers judge how you reason about **trade-offs** (consistency vs availability, cost vs speed, simplicity vs flexibility).
+
+**Handy numbers**: 1 day ≈ 86,400 s ≈ **10⁵ s**; 1 M requests/day ≈ **12 req/s** on average (peak often 2–10×); reading from memory ~100 ns, SSD ~100 µs, a network round trip in one region ~0.5 ms, across continents ~150 ms.
+
+## Code example
+
+A back-of-the-envelope estimate in code:
+
+```python
+daily_users = 2_000_000
+orders_per_user_per_day = 0.5
+reads_per_order = 20                    # browsing menus, tracking
+avg_order_size_kb = 2
+peak_factor = 5                         # dinner rush
+
+seconds_per_day = 86_400
+writes_per_sec = daily_users * orders_per_user_per_day / seconds_per_day
+reads_per_sec = writes_per_sec * reads_per_order
+storage_per_year_gb = daily_users * orders_per_user_per_day * avg_order_size_kb * 365 / 1024 / 1024
+
+print(f"average writes/s: {writes_per_sec:,.0f}   peak: {writes_per_sec * peak_factor:,.0f}")
+print(f"average reads/s:  {reads_per_sec:,.0f}   peak: {reads_per_sec * peak_factor:,.0f}")
+print(f"order storage per year: {storage_per_year_gb:,.0f} GB")
+print("read/write ratio:", reads_per_order, ": 1  → read-heavy: cache + read replicas help")
+```
+
+```output
+average writes/s: 12   peak: 58
+average reads/s:  231   peak: 1,157
+order storage per year: 696 GB
+read/write ratio: 20 : 1  → read-heavy: cache + read replicas help
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "client", "label": "Mobile / web app", "icon": "📱", "col": 0, "row": 1, "info": "What the user touches. Talks to the backend over HTTPS.", "example": "Food delivery app" },
+    { "id": "cdn", "label": "DNS + CDN", "icon": "🌍", "col": 1, "row": 0, "info": "DNS finds the service; the CDN serves images and static files from nearby locations.", "example": "Restaurant photos" },
+    { "id": "lb", "label": "Load balancer", "icon": "⚖️", "col": 1, "row": 2, "info": "Spreads requests over many identical servers and skips unhealthy ones.", "example": "ALB / Nginx" },
+    { "id": "app", "label": "App servers", "icon": "🖥️", "col": 2, "row": 1, "info": "Stateless business logic; add more to handle more traffic.", "example": "Order service ×6" },
+    { "id": "cache", "label": "Cache", "icon": "⚡", "col": 3, "row": 0, "info": "Hot data in memory: menus, restaurant details.", "example": "Redis" },
+    { "id": "db", "label": "Database", "icon": "🗄️", "col": 3, "row": 1, "info": "Source of truth for users, orders, payments.", "example": "PostgreSQL + replicas" },
+    { "id": "queue", "label": "Queue + workers", "icon": "📬", "col": 3, "row": 2, "info": "Slow work outside the request: notifications, invoices, analytics.", "example": "SQS / Kafka" },
+    { "id": "obs", "label": "Monitoring", "icon": "📈", "col": 4, "row": 1, "info": "Logs, metrics, traces, alerts so you know when something breaks.", "example": "CloudWatch / Grafana" }
+  ],
+  "edges": [
+    ["client", "cdn", "static"],
+    ["client", "lb", "API"],
+    ["lb", "app"],
+    ["app", "cache"],
+    ["app", "db"],
+    ["app", "queue"],
+    ["app", "obs"]
+  ],
+  "flows": [
+    {
+      "name": "Place an order",
+      "steps": [
+        ["client", "User taps 'Place order'."],
+        ["lb", "Request goes to a healthy app server."],
+        ["app", "Validates and saves the order."],
+        ["db", "Order stored durably."],
+        ["queue", "'Order placed' message for SMS, restaurant app and analytics."],
+        ["client", "Confirmation shown in ~200 ms."]
+      ]
+    },
+    {
+      "name": "Browse menus",
+      "steps": [
+        ["client", "User opens a restaurant."],
+        ["cdn", "Photos come from the CDN."],
+        ["app", "Menu requested."],
+        ["cache", "Cache hit: no database work."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Jumping straight to boxes">
+
+<Wrong>
+
+```text
+"We'll use Kafka, Cassandra and Kubernetes" in the first minute, before knowing the scale or features.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Ask: who are the users, how many, which features matter most, read- or write-heavy, latency and uptime goals.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Designing for imaginary scale">
+
+<Wrong>
+
+```text
+50 microservices and global sharding for an app with 2,000 users.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Start simple (one service + database + cache), show where it breaks as traffic grows, and how you would evolve it.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you approach a system design interview?">
+
+Clarify functional and non-functional requirements, estimate traffic and storage, define the main APIs and data model, draw a high-level design from client to storage, then deep-dive into the hardest parts (scaling, caching, consistency, failure handling), discussing trade-offs and bottlenecks throughout, and finish with improvements.
+
+</QA>
+
+<QA q="What are non-functional requirements?">
+
+Qualities the system must have rather than features: scalability, latency, throughput, availability, durability, consistency, security, cost and maintainability. They drive most design choices, e.g. 99.99% availability forces redundancy across zones.
+
+</QA>
+
+<QA q="Why do back-of-the-envelope estimates?">
+
+To size the system and spot the bottleneck early: requests per second decide how many servers and whether caching is needed, storage growth decides the database and sharding, and the read/write ratio suggests replicas or caches.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: '"p99 latency under 300 ms" is a...',
+      options: ['Functional requirement', 'Non-functional requirement', 'Data model', 'API'],
+      answer: 1,
+      why: 'It is about how well, not what.',
+    },
+    {
+      q: '1 million requests per day is about...',
+      options: ['1 req/s', '12 req/s', '1,000 req/s', '100,000 req/s'],
+      answer: 1,
+      why: '10⁶ / 86,400 ≈ 11.6.',
+    },
+    {
+      q: 'First step in a design interview?',
+      options: ['Pick a database', 'Clarify requirements', 'Draw microservices', 'Write code'],
+      answer: 1,
+      why: 'Everything depends on them.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | Output |
+| --- | --- |
+| Requirements | features + scale, latency, availability |
+| Estimates | req/s (avg, peak), storage/year, read:write |
+| API | main endpoints |
+| Data model | tables / keys |
+| High level | client → LB → services → cache/DB/queue |
+| Deep dive | bottleneck, failures, consistency |
+| Wrap-up | trade-offs, next steps |
+
+Numbers: 1 day ≈ 10⁵ s · 1 M/day ≈ 12/s · RAM 100 ns · SSD 100 µs · same-region RTT 0.5 ms · cross-continent 150 ms
+
+</CheatSheet>

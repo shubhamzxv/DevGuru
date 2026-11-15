@@ -38,7 +38,7 @@ export default function BinarySearchVisualizer({
           const inRange = i >= frame.lo && i <= frame.hi;
           const style =
             frame.found === i
-              ? 'border-emerald-500 bg-emerald-500 text-white'
+              ? 'border-emerald-700 bg-emerald-700 text-white'
               : frame.mid === i
                 ? 'border-amber-500 bg-amber-100 dark:bg-amber-900/50'
                 : inRange
@@ -51,7 +51,7 @@ export default function BinarySearchVisualizer({
               >
                 {value}
               </span>
-              <span className="text-xs text-slate-500">{i}</span>
+              <span className="text-xs text-slate-600 dark:text-slate-400">{i}</span>
               <span className="h-4 text-[10px] font-bold text-brand-700 dark:text-brand-300">
                 {[i === frame.lo && 'lo', i === frame.mid && 'mid', i === frame.hi && 'hi']
                   .filter(Boolean)
@@ -62,7 +62,7 @@ export default function BinarySearchVisualizer({
         })}
       </ol>
       <PlayerControls player={player} total={frames.length} note={frame.note} />
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-slate-600 dark:text-slate-400">
         Each step halves what is left: 1,000,000 items need at most 20 steps. That is O(log n).
       </p>
     </div>

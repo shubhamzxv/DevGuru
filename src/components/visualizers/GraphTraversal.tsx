@@ -89,7 +89,7 @@ export default function GraphTraversal({ mode = 'bfs' }: { mode?: 'bfs' | 'dfs' 
           {chosen === 'bfs' ? 'Queue (front →):' : 'Stack (top →):'}
         </span>
         {frame.frontier.length === 0 ? (
-          <span className="text-slate-500">empty</span>
+          <span className="text-slate-600 dark:text-slate-400">empty</span>
         ) : (
           frame.frontier.map((n, i) => (
             <span

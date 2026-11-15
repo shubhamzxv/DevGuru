@@ -1,0 +1,272 @@
+---
+id: dsa-graphs
+title: Graphs
+summary: A graph is a set of nodes connected by edges, which may be directed or undirected and weighted or unweighted; it is stored as an adjacency list (dict of neighbour lists) in most problems, explored with BFS or DFS, and used for routes, dependencies, networks, grids and recommendations.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **city metro map**: stations are **nodes**, tracks between them are **edges**. A one-way road would be a **directed** edge; travel time on a track is a **weight**. "Can I get from A to F?", "What is the fewest stops?", "Which stations are cut off?" are all graph questions.
+
+</Analogy>
+
+## Simple explanation
+
+| Term | Meaning | Example |
+| --- | --- | --- |
+| Node (vertex) / edge | things / connections | users / friendships |
+| **Directed** | edges have a direction | follows on Instagram, task A before B |
+| **Weighted** | edges have a cost | road distances |
+| Degree | number of edges at a node (in/out for directed) | |
+| Path / cycle | sequence of edges / path back to the start | |
+| Connected component | a group of nodes reachable from each other | islands |
+| **DAG** | directed acyclic graph | course prerequisites, build steps |
+| Tree | connected graph with no cycles (n − 1 edges) | |
+
+**Storing a graph** (V nodes, E edges)
+
+| Representation | Space | Check edge u–v | List neighbours | Use |
+| --- | --- | --- | --- | --- |
+| **Adjacency list** `{u: [v, ...]}` | O(V + E) | O(degree) | fast | most problems (sparse graphs) |
+| Adjacency matrix `m[u][v]` | O(V²) | O(1) | O(V) | dense graphs, small V |
+| Edge list `[(u, v, w)]` | O(E) | O(E) | slow | input format, Kruskal |
+| **Grid** | implicit | — | 4 (or 8) neighbours | mazes, islands, flood fill |
+
+**Algorithms map**
+
+| Question | Algorithm |
+| --- | --- |
+| Reachable? components? | BFS or DFS, O(V + E) |
+| Fewest edges (unweighted shortest path) | **BFS** |
+| Shortest path, non-negative weights | **Dijkstra** (heap), O(E log V) |
+| Order tasks with dependencies / detect cycle in a DAG | **Topological sort** (Kahn's BFS with in-degrees) |
+| Cycle in undirected graph, dynamic connectivity | DFS with parent / **Union-Find** |
+| Minimum spanning tree | Kruskal (sort + union-find) / Prim (heap) |
+
+<Visual caption="The same graph explored two ways: BFS (queue) spreads level by level, DFS (stack) goes deep first.">
+
+<GraphTraversal mode="bfs" />
+
+</Visual>
+
+## Code example
+
+```python
+from collections import defaultdict, deque
+import heapq
+
+edges = [("A", "B"), ("A", "C"), ("B", "D"), ("C", "D"), ("D", "E"), ("F", "G")]
+graph = defaultdict(list)
+for u, v in edges:                      # undirected: add both directions
+    graph[u].append(v)
+    graph[v].append(u)
+print("neighbours of D:", graph["D"])
+
+def components(graph, nodes):
+    seen, groups = set(), []
+    for start in nodes:
+        if start in seen:
+            continue
+        seen.add(start)
+        group, q = [], deque([start])
+        while q:
+            n = q.popleft()
+            group.append(n)
+            for m in graph[n]:
+                if m not in seen:
+                    seen.add(m)
+                    q.append(m)
+        groups.append(sorted(group))
+    return groups
+
+print("components:", components(graph, "ABCDEFG"))
+
+def topo_sort(tasks, deps):
+    """Kahn's algorithm. deps: (before, after). Returns an order or None if there is a cycle."""
+    out_edges, indeg = defaultdict(list), {t: 0 for t in tasks}
+    for a, b in deps:
+        out_edges[a].append(b)
+        indeg[b] += 1
+    q = deque(sorted(t for t in tasks if indeg[t] == 0))
+    order = []
+    while q:
+        t = q.popleft()
+        order.append(t)
+        for nxt in out_edges[t]:
+            indeg[nxt] -= 1
+            if indeg[nxt] == 0:
+                q.append(nxt)
+    return order if len(order) == len(tasks) else None
+
+print("build order:", topo_sort(["install", "migrate", "test", "deploy"],
+                                [("install", "migrate"), ("install", "test"), ("migrate", "deploy"), ("test", "deploy")]))
+print("with a cycle:", topo_sort(["a", "b"], [("a", "b"), ("b", "a")]))
+
+def dijkstra(wgraph, src):
+    dist = {src: 0}
+    heap = [(0, src)]
+    while heap:
+        d, u = heapq.heappop(heap)
+        if d > dist.get(u, float("inf")):
+            continue                     # stale entry
+        for v, w in wgraph[u]:
+            if d + w < dist.get(v, float("inf")):
+                dist[v] = d + w
+                heapq.heappush(heap, (d + w, v))
+    return dist
+
+roads = {"Home": [("Mall", 4), ("Office", 1)], "Office": [("Mall", 2), ("Gym", 5)], "Mall": [("Gym", 1)], "Gym": []}
+print("km from Home:", dijkstra(roads, "Home"))
+```
+
+```output
+neighbours of D: ['B', 'C', 'E']
+components: [['A', 'B', 'C', 'D', 'E'], ['F', 'G']]
+build order: ['install', 'migrate', 'test', 'deploy']
+with a cycle: None
+km from Home: {'Home': 0, 'Mall': 3, 'Office': 1, 'Gym': 4}
+```
+
+<Playground kind="python">
+
+```python
+def count_islands(grid):
+    rows, cols = len(grid), len(grid[0])
+    seen = set()
+
+    def sink(r, c):                      # DFS over the 4 neighbours
+        if r < 0 or c < 0 or r >= rows or c >= cols or grid[r][c] == "0" or (r, c) in seen:
+            return
+        seen.add((r, c))
+        for dr, dc in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
+            sink(r + dr, c + dc)
+
+    islands = 0
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r][c] == "1" and (r, c) not in seen:
+                islands += 1
+                sink(r, c)
+    return islands
+
+grid = ["11000",
+        "11000",
+        "00100",
+        "00011"]
+print(count_islands(grid))           # 3
+
+# Try it: change one "0" to "1" to join two islands.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="No visited set">
+
+<Wrong>
+
+```python
+def dfs(n):
+    for m in graph[n]:
+        dfs(m)                 # A → B → A → B ... infinite recursion on any cycle
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def dfs(n):
+    seen.add(n)
+    for m in graph[n]:
+        if m not in seen:
+            dfs(m)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="BFS for weighted shortest paths">
+
+<Wrong>
+
+```text
+BFS on roads with different distances: finds the path with the FEWEST roads, not the shortest distance.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Dijkstra with a heap for non-negative weights (Bellman-Ford if weights can be negative).
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you represent a graph?">
+
+Usually as an adjacency list (a dict mapping each node to its neighbours, with weights if needed), which uses O(V + E) space and lists neighbours quickly. An adjacency matrix uses O(V²) space but answers "is there an edge?" in O(1), good for dense graphs. Grids are implicit graphs with up to 4 or 8 neighbours per cell.
+
+</QA>
+
+<QA q="How do you find an order of tasks with dependencies?">
+
+Topological sort on the dependency DAG: Kahn's algorithm computes in-degrees, starts with nodes of in-degree 0 in a queue, removes them and decrements their neighbours' in-degrees, enqueuing any that reach 0. If not all nodes are output, there is a cycle. O(V + E).
+
+</QA>
+
+<QA q="Which shortest-path algorithm would you use?">
+
+BFS for unweighted graphs (fewest edges), Dijkstra with a priority queue for non-negative weights (O(E log V)), Bellman-Ford when negative edges exist (and to detect negative cycles), and Floyd-Warshall for all pairs on small graphs.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Most common graph representation in interviews?',
+      options: ['Adjacency matrix', 'Adjacency list', 'Edge list only', 'Linked list'],
+      answer: 1,
+      why: 'O(V + E) space, fast neighbours.',
+    },
+    {
+      q: 'Course prerequisites ordering uses...',
+      options: ['Dijkstra', 'Topological sort', 'Binary search', 'Heap sort'],
+      answer: 1,
+      why: 'Order a DAG.',
+    },
+    {
+      q: 'BFS and DFS run in...',
+      options: ['O(V)', 'O(E log V)', 'O(V + E)', 'O(V²) always'],
+      answer: 2,
+      why: 'Each node and edge once.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Tool |
+| --- | --- |
+| Store | `defaultdict(list)` · undirected = add both ways |
+| Reachability / components | BFS / DFS + `seen` |
+| Fewest edges | BFS |
+| Weighted shortest | Dijkstra + heap |
+| Dependencies | topological sort (Kahn) |
+| Grid | 4 directions `[(1,0),(-1,0),(0,1),(0,-1)]` |
+| Connectivity / cycles | Union-Find |
+| Cost | O(V + E) traversals |
+
+</CheatSheet>

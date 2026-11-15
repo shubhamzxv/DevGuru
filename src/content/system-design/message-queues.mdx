@@ -1,0 +1,236 @@
+---
+id: system-design-message-queues
+title: Message queues (Kafka, RabbitMQ, SQS)
+summary: A message queue lets producers hand off work to consumers asynchronously, which decouples services, absorbs traffic spikes and enables retries; SQS and RabbitMQ deliver each message to one consumer and delete it after acknowledgement, while Kafka keeps an ordered, replayable log split into partitions that consumer groups read at their own offsets.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **restaurant's order spike**: the waiter (producer) pins order slips on a rail (the queue) and goes back to customers; cooks (consumers) take slips when they are free. If 50 orders arrive at once, slips wait on the rail instead of the waiter standing in the kitchen. **Kafka** is more like a **CCTV recording** of all orders: anyone (billing, inventory, analytics) can watch it from any point, even replay yesterday.
+
+</Analogy>
+
+## Simple explanation
+
+**Why queues**
+
+| Benefit | Example |
+| --- | --- |
+| **Asynchronous** work | checkout returns in 100 ms; invoice + email happen later |
+| **Decoupling** | order service does not know who consumes "order placed" |
+| **Buffering spikes** | sale traffic piles up in the queue; workers drain it steadily |
+| **Retries** | failed messages are retried, then go to a dead-letter queue |
+| Scaling | add consumers to process faster |
+
+**Delivery guarantees**: at-most-once (may lose), **at-least-once** (may duplicate — the common default), exactly-once (hard; usually "at-least-once + **idempotent** consumers").
+
+**The three popular choices**
+
+| | **SQS** | **RabbitMQ** | **Kafka** |
+| --- | --- | --- | --- |
+| Model | queue (managed AWS) | broker with exchanges → queues | distributed **log** with partitions |
+| After consume | deleted | deleted after ack | **kept** (retention days/forever) |
+| Replay | no | no | **yes** (reset offsets) |
+| Many readers of the same data | via SNS fan-out | exchanges (fanout/topic) | **consumer groups**, each reads everything |
+| Ordering | FIFO queues per group | per queue | **per partition** |
+| Throughput | high, zero ops | medium-high | very high (millions/s) |
+| Best for | simple jobs on AWS | routing patterns, task queues (Celery) | event streams, analytics, event sourcing, CDC |
+
+**Kafka words**: **topic** (stream of events), **partition** (ordered shard; key decides partition → same key keeps order), **offset** (position), **consumer group** (each partition read by one consumer in the group → parallelism = number of partitions), **retention**.
+
+**Patterns**: work queue (competing consumers), pub/sub (fan-out), request–reply, **dead-letter queue**, **outbox pattern** (write DB change + event in one transaction, publish from the outbox table).
+
+## Code example
+
+A small in-memory model of both styles:
+
+```python
+from collections import deque
+
+# 1) Work queue (SQS / RabbitMQ style): each message processed by ONE worker, then gone
+queue = deque(f"order-{i}" for i in range(1, 7))
+workers = {"w1": [], "w2": []}
+while queue:
+    for w in workers:
+        if queue:
+            workers[w].append(queue.popleft())
+print("work queue:", workers, "| left in queue:", len(queue))
+
+# 2) Log (Kafka style): events KEPT; each consumer group has its own offset; key → partition
+partitions = {0: [], 1: []}
+for user, event in [("asha", "placed"), ("ravi", "placed"), ("asha", "paid"), ("asha", "shipped"), ("ravi", "cancelled")]:
+    p = sum(map(ord, user)) % 2                      # same key → same partition → ordered per user
+    partitions[p].append(f"{user}:{event}")
+print("partitions:", partitions)
+
+offsets = {"billing": {0: 0, 1: 0}, "analytics": {0: 0, 1: 0}}
+def poll(group, p, n):
+    start = offsets[group][p]
+    batch = partitions[p][start:start + n]
+    offsets[group][p] += len(batch)                  # commit the offset
+    return batch
+
+print("billing reads p0:", poll("billing", 0, 10))
+print("analytics reads p0:", poll("analytics", 0, 2), "(its own offset)")
+offsets["billing"][0] = 0                            # replay from the start
+print("billing replay p0:", poll("billing", 0, 1))
+```
+
+```output
+work queue: {'w1': ['order-1', 'order-3', 'order-5'], 'w2': ['order-2', 'order-4', 'order-6']} | left in queue: 0
+partitions: {0: ['ravi:placed', 'ravi:cancelled'], 1: ['asha:placed', 'asha:paid', 'asha:shipped']}
+billing reads p0: ['ravi:placed', 'ravi:cancelled']
+analytics reads p0: ['ravi:placed', 'ravi:cancelled'] (its own offset)
+billing replay p0: ['ravi:placed']
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "api", "label": "Order service", "icon": "🛒", "col": 0, "row": 1, "info": "Saves the order, publishes OrderPlaced, returns immediately.", "example": "Producer" },
+    { "id": "kafka", "label": "Kafka topic: orders", "icon": "📜", "col": 1, "row": 1, "info": "Partitioned, replicated log; events kept 7 days; key = user id keeps each user's events in order.", "example": "3 partitions" },
+    { "id": "billing", "label": "Billing group", "icon": "💳", "col": 2, "row": 0, "info": "Reads every event at its own offset.", "example": "Offset 1,204" },
+    { "id": "analytics", "label": "Analytics group", "icon": "📊", "col": 2, "row": 2, "info": "Reads the same events independently; can replay history.", "example": "Rebuild a report" },
+    { "id": "sqs", "label": "SQS: email-jobs", "icon": "📬", "col": 3, "row": 0, "info": "Work queue: each email job handled by one worker, deleted after success.", "example": "Visibility timeout 60 s" },
+    { "id": "dlq", "label": "Dead-letter queue", "icon": "☠️", "col": 4, "row": 0, "info": "Jobs that failed 5 times, for inspection.", "example": "Bad email address" },
+    { "id": "workers", "label": "Email workers ×N", "icon": "👷", "col": 4, "row": 2, "info": "Scale with queue depth; idempotent (no double emails).", "example": "Celery / Lambda" }
+  ],
+  "edges": [
+    ["api", "kafka", "publish"],
+    ["kafka", "billing"],
+    ["kafka", "analytics"],
+    ["billing", "sqs", "email job"],
+    ["sqs", "workers"],
+    ["sqs", "dlq", "after 5 failures"]
+  ],
+  "flows": [
+    {
+      "name": "Sale spike",
+      "steps": [
+        ["api", "5,000 orders in a minute."],
+        ["kafka", "Events are appended; nothing is lost or slowed."],
+        ["billing", "Billing consumes at its pace."],
+        ["sqs", "Email jobs pile up."],
+        ["workers", "Autoscaling adds workers; the queue drains."]
+      ]
+    },
+    {
+      "name": "Bug in analytics",
+      "steps": [
+        ["analytics", "A report was wrong for 2 days."],
+        ["kafka", "Events are still retained."],
+        ["analytics", "Fix the code, reset the offset, replay."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Non-idempotent consumers">
+
+<Wrong>
+
+```text
+At-least-once delivery + "charge the card" consumer → a redelivered message charges the customer twice.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Idempotency key per message (order id): check "already processed?" in the DB before acting.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Using Kafka where a simple queue fits">
+
+<Wrong>
+
+```text
+A 3-person team runs a Kafka cluster just to send password-reset emails.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Simple background jobs: SQS or RabbitMQ/Celery. Kafka when you need high-volume streams, replay or many independent readers.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Why use a message queue?">
+
+To process work asynchronously so user requests stay fast, decouple producers from consumers, absorb traffic spikes by buffering, retry failed work with dead-letter queues, and scale consumers independently.
+
+</QA>
+
+<QA q="What is the difference between Kafka and RabbitMQ/SQS?">
+
+RabbitMQ and SQS are message brokers/queues: a message is delivered to a consumer and removed after acknowledgement, suited to task distribution. Kafka is a distributed append-only log: messages are retained, ordered within partitions, and each consumer group tracks its own offset, so many systems can read the same stream and replay it; it handles very high throughput.
+
+</QA>
+
+<QA q="How do you avoid processing a message twice?">
+
+Assume at-least-once delivery and make consumers idempotent: use a unique message or business key, record processed keys (or use upserts / conditional writes) and skip duplicates. Kafka offers idempotent producers and transactions for exactly-once within Kafka, but side effects outside still need idempotency.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which keeps messages after they are read and allows replay?',
+      options: ['SQS', 'RabbitMQ', 'Kafka', 'Redis list'],
+      answer: 2,
+      why: 'Retention + offsets.',
+    },
+    {
+      q: 'Kafka ordering is guaranteed...',
+      options: ['Across the whole topic', 'Within a partition', 'Never', 'Per consumer'],
+      answer: 1,
+      why: 'Use a key to keep related events together.',
+    },
+    {
+      q: 'Common delivery guarantee you should design for?',
+      options: ['Exactly once', 'At least once', 'At most once', 'Never'],
+      answer: 1,
+      why: 'So consumers must be idempotent.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Choice |
+| --- | --- |
+| Background jobs on AWS | SQS (+ DLQ) |
+| Routing patterns, Celery | RabbitMQ |
+| Event streams, replay, many readers | Kafka |
+| Fan-out | SNS → SQS · RabbitMQ fanout · Kafka groups |
+| Order per entity | FIFO group / Kafka key |
+| Duplicates | idempotent consumers |
+| Failures | retries + dead-letter queue |
+| DB + event atomically | outbox pattern |
+
+</CheatSheet>

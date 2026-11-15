@@ -271,10 +271,14 @@ export default function JoinVisualizer({ type = 'inner' }: JoinVisualizerProps) 
             <tbody>
               {visible.map((row, index) => (
                 <tr key={index}>
-                  <td className={`${cell} ${row.employee ? '' : 'italic text-slate-500'}`}>
+                  <td
+                    className={`${cell} ${row.employee ? '' : 'italic text-slate-600 dark:text-slate-400'}`}
+                  >
                     {row.employee ?? 'NULL'}
                   </td>
-                  <td className={`${cell} ${row.department ? '' : 'italic text-slate-500'}`}>
+                  <td
+                    className={`${cell} ${row.department ? '' : 'italic text-slate-600 dark:text-slate-400'}`}
+                  >
                     {row.department ?? 'NULL'}
                   </td>
                 </tr>

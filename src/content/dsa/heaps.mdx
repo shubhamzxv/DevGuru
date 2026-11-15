@@ -1,0 +1,243 @@
+---
+id: dsa-heaps
+title: Heaps and priority queues
+summary: A binary heap is a complete tree stored in a list where every parent is smaller than its children (a min-heap), giving O(1) access to the minimum and O(log n) push and pop; Python's heapq powers priority queues, top-k, k-th largest, merging sorted lists, running medians and Dijkstra's algorithm.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **hospital emergency room**. Patients are not seen in arrival order but by **urgency**: the most urgent one is always next. When a new patient arrives, they are slotted in by urgency; when a doctor is free, the most urgent patient is taken. That is a **priority queue**, and a heap is the fast way to build one.
+
+</Analogy>
+
+## Simple explanation
+
+**Min-heap property**: each parent ≤ its children, so the **smallest item is at index 0**. It is a complete binary tree stored in a plain list:
+
+```text
+index:  0  1  2  3  4  5
+heap:  [1, 3, 2, 7, 4, 5]          children of i are 2i+1 and 2i+2; parent is (i-1)//2
+
+          1
+        /   \
+       3     2
+      / \   /
+     7   4 5
+```
+
+| Operation | `heapq` | Time |
+| --- | --- | --- |
+| Smallest | `h[0]` | O(1) |
+| Push | `heappush(h, x)` (bubble up) | O(log n) |
+| Pop smallest | `heappop(h)` (move last to top, sift down) | O(log n) |
+| Push then pop | `heappushpop(h, x)` | O(log n) |
+| Build from list | `heapify(a)` | **O(n)** |
+| k largest / smallest | `nlargest(k, a)`, `nsmallest(k, a)` | O(n log k) |
+
+**Max-heap** in Python: push **negated** values (`-x`), or tuples `(-priority, item)`. Tuples compare by the first element, then the second — add a counter to break ties for items that cannot be compared.
+
+**Patterns**
+
+| Problem | Heap idea |
+| --- | --- |
+| k-th largest / top-k | **min-heap of size k**: push, pop when size > k → top is the k-th largest. O(n log k) |
+| k most frequent | Counter + heap of size k |
+| Merge k sorted lists | heap of the current head of each list |
+| Running median | max-heap for the lower half + min-heap for the upper half |
+| Task scheduling, meeting rooms | heap of end times |
+| Dijkstra / Prim | heap of (distance, node) |
+
+A heap is **not sorted**: only the top is guaranteed. Sorting by popping everything is heap sort, O(n log n).
+
+## Code example
+
+```python
+import heapq
+from collections import Counter
+
+h = []
+for x in [5, 3, 8, 1, 9, 2]:
+    heapq.heappush(h, x)
+print("heap list:", h, "| smallest:", h[0])
+print("pops:", [heapq.heappop(h) for _ in range(3)])
+
+def kth_largest(nums, k):
+    heap = []
+    for x in nums:
+        heapq.heappush(heap, x)
+        if len(heap) > k:
+            heapq.heappop(heap)          # drop the smallest: keep the k largest
+    return heap[0]
+
+def top_k_frequent(words, k):
+    return [w for w, _ in heapq.nlargest(k, Counter(words).items(), key=lambda p: p[1])]
+
+def merge_k_sorted(lists):
+    heap = [(lst[0], i, 0) for i, lst in enumerate(lists) if lst]
+    heapq.heapify(heap)
+    out = []
+    while heap:
+        val, i, j = heapq.heappop(heap)
+        out.append(val)
+        if j + 1 < len(lists[i]):
+            heapq.heappush(heap, (lists[i][j + 1], i, j + 1))
+    return out
+
+print("2nd largest:", kth_largest([3, 2, 1, 5, 6, 4], 2))
+print("top 2 words:", top_k_frequent(["a", "b", "a", "c", "b", "a"], 2))
+print("merged:", merge_k_sorted([[1, 4, 7], [2, 5, 8], [3, 6, 9]]))
+
+tasks = []                               # max-priority with negation
+for priority, name in [(2, "email"), (5, "fix prod bug"), (1, "tidy desk"), (5, "call client")]:
+    heapq.heappush(tasks, (-priority, len(tasks), name))   # counter breaks ties in order
+print("do first:", [heapq.heappop(tasks)[2] for _ in range(4)])
+```
+
+```output
+heap list: [1, 3, 2, 5, 9, 8] | smallest: 1
+pops: [1, 2, 3]
+2nd largest: 5
+top 2 words: ['a', 'b']
+merged: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+do first: ['fix prod bug', 'call client', 'email', 'tidy desk']
+```
+
+<Playground kind="python">
+
+```python
+import heapq
+
+class RunningMedian:
+    def __init__(self):
+        self.low = []      # max-heap (negated): smaller half
+        self.high = []     # min-heap: larger half
+
+    def add(self, x):
+        heapq.heappush(self.low, -x)
+        heapq.heappush(self.high, -heapq.heappop(self.low))   # move the biggest of low to high
+        if len(self.high) > len(self.low):
+            heapq.heappush(self.low, -heapq.heappop(self.high))
+
+    def median(self):
+        if len(self.low) > len(self.high):
+            return -self.low[0]
+        return (-self.low[0] + self.high[0]) / 2
+
+m = RunningMedian()
+for x in [5, 15, 1, 3, 8]:
+    m.add(x)
+    print("added", x, "→ median", m.median())
+
+# Try it: add more numbers and check against sorted(...) by hand.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Expecting the heap list to be sorted">
+
+<Wrong>
+
+```python
+h = [5, 3, 8, 1]
+heapq.heapify(h)
+print(h[-1])               # NOT the largest; only h[0] (the smallest) is guaranteed
+```
+
+</Wrong>
+
+<Right>
+
+```python
+smallest = h[0]
+largest = max(h)           # O(n), or keep a separate max-heap
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Sorting everything for top-k">
+
+<Wrong>
+
+```python
+top = sorted(scores, reverse=True)[:10]      # O(n log n) and O(n) memory for a stream
+```
+
+</Wrong>
+
+<Right>
+
+```python
+top = heapq.nlargest(10, scores)             # O(n log k), works on any iterable
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a heap and what are its operation costs?">
+
+A complete binary tree satisfying the heap property (parent ≤ children for a min-heap), usually stored in an array. The minimum is at the root (O(1)); insert and remove-min are O(log n) by sifting up or down; building a heap from n items is O(n).
+
+</QA>
+
+<QA q="Find the k-th largest element in an array.">
+
+Keep a min-heap of size k: push each element and pop when the size exceeds k; the root is then the k-th largest. O(n log k) time, O(k) space, and it works for streams. Quickselect gives average O(n).
+
+</QA>
+
+<QA q="How do you make a max-heap with Python's heapq?">
+
+heapq only provides a min-heap, so push negated keys (−x) or tuples (−priority, counter, item) and negate again when popping. A counter in the tuple breaks ties so items never need to be compared directly.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In a min-heap list, the smallest item is at...',
+      options: ['The end', 'Index 0', 'The middle', 'Anywhere'],
+      answer: 1,
+      why: 'The root.',
+    },
+    {
+      q: 'heappush / heappop cost?',
+      options: ['O(1)', 'O(log n)', 'O(n)', 'O(n log n)'],
+      answer: 1,
+      why: 'One path of the tree.',
+    },
+    {
+      q: 'Top-k with a size-k heap costs...',
+      options: ['O(n log n)', 'O(n log k)', 'O(k)', 'O(n²)'],
+      answer: 1,
+      why: 'n pushes on a heap of size k.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Code |
+| --- | --- |
+| Push / pop min | `heappush(h, x)` / `heappop(h)` |
+| Peek | `h[0]` |
+| Build | `heapify(a)` O(n) |
+| Max-heap | push `-x` or `(-p, i, item)` |
+| Top-k | `nlargest(k, a)` · size-k min-heap |
+| k-th largest | size-k min-heap → `h[0]` |
+| Merge k lists | heap of (value, list i, index) |
+| Median | max-heap low + min-heap high |
+| Children / parent | `2i+1, 2i+2` / `(i-1)//2` |
+
+</CheatSheet>

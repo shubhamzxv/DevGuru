@@ -1,0 +1,247 @@
+---
+id: system-design-api-gateway
+title: API gateway
+summary: An API gateway is the single entry point in front of many backend services; it routes each request to the right service and handles shared concerns — authentication, rate limiting, TLS, request/response transformation, aggregation, caching, logging and versioning — so services do not each reimplement them.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The **reception of a large hospital**. Patients do not wander the corridors looking for cardiology or the lab. Reception checks their ID card, notes the visit, tells them which department to go to, and stops anyone without an appointment. Departments focus on treatment, not on checking IDs.
+
+</Analogy>
+
+## Simple explanation
+
+Without a gateway, the mobile app must know the address of every microservice, and every service must check tokens, rate-limit and log on its own. With a gateway:
+
+```text
+Mobile / web ──▶ API gateway ──▶ /users/*    → user-service
+                                 /orders/*   → order-service
+                                 /payments/* → payment-service
+```
+
+**What it does**
+
+| Concern | Example |
+| --- | --- |
+| **Routing** | path, host, header, version (`/v1`, `/v2`) |
+| **Authentication** | validate JWT / API key once, pass the user id downstream |
+| **Rate limiting & quotas** | 100 req/min per user, per-partner plans |
+| TLS termination | HTTPS outside, plain HTTP or mTLS inside |
+| Transformation | rename fields, protocol translation (REST ↔ gRPC) |
+| **Aggregation** | one call returns user + orders + recommendations |
+| Caching | cache GET responses for a few seconds |
+| Observability | request ids, access logs, metrics, tracing headers |
+| Resilience | timeouts, retries, circuit breaking |
+| Canary releases | send 5% of traffic to the new version |
+
+**Backend for Frontend (BFF)**: separate gateways shaped for mobile vs web vs partners, so each client gets exactly the data it needs.
+
+**Gateway vs load balancer vs service mesh**
+
+| | Main job |
+| --- | --- |
+| Load balancer | spread traffic over copies of **one** service |
+| **API gateway** | north–south traffic: clients → many services, with API policies |
+| Service mesh (Istio, Linkerd) | east–west traffic: service ↔ service (mTLS, retries) |
+
+**Tools**: AWS API Gateway, Kong, Nginx, Envoy, Traefik, Apigee, Azure APIM.
+
+**Risks**: it is on every request — keep it **thin** (no business logic), redundant and fast; avoid making it a "god service" every team must change.
+
+## Code example
+
+A tiny gateway in Python: routing, auth and per-user rate limiting in one place.
+
+```python
+import time
+
+SERVICES = {
+    "/users": lambda path, user: {"service": "user-service", "user": user},
+    "/orders": lambda path, user: {"service": "order-service", "orders_of": user},
+}
+TOKENS = {"token-asha": "asha", "token-ravi": "ravi"}
+LIMIT, WINDOW = 3, 60
+hits = {}
+
+def gateway(path, token, now):
+    user = TOKENS.get(token)
+    if user is None:
+        return 401, "invalid token"                       # auth checked once, here
+    recent = [t for t in hits.get(user, []) if t > now - WINDOW]
+    if len(recent) >= LIMIT:
+        return 429, "too many requests"                   # rate limit per user
+    hits[user] = recent + [now]
+    for prefix, service in SERVICES.items():
+        if path.startswith(prefix):
+            return 200, service(path, user)               # route to the service
+    return 404, "no route"
+
+t = time.time()
+print(gateway("/orders/7", "token-asha", t))
+print(gateway("/users/me", "bad-token", t))
+print(gateway("/payments", "token-ravi", t))
+for i in range(3):
+    print(gateway("/users/me", "token-asha", t + i))
+```
+
+```output
+(200, {'service': 'order-service', 'orders_of': 'asha'})
+(401, 'invalid token')
+(404, 'no route')
+(200, {'service': 'user-service', 'user': 'asha'})
+(200, {'service': 'user-service', 'user': 'asha'})
+(429, 'too many requests')
+```
+
+Asha's 4th request within a minute gets 429; the services never had to implement auth or limits.
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "mobile", "label": "Mobile app", "icon": "📱", "col": 0, "row": 0, "info": "Knows only api.shop.com.", "example": "Bearer token" },
+    { "id": "web", "label": "Web app", "icon": "💻", "col": 0, "row": 2, "info": "Same gateway (or its own BFF).", "example": "React" },
+    { "id": "gw", "label": "API gateway", "icon": "🚪", "col": 1, "row": 1, "info": "Validates the token, rate-limits, adds a request id, routes by path, logs.", "example": "Kong / AWS API Gateway" },
+    { "id": "users", "label": "user-service", "icon": "👤", "col": 2, "row": 0, "info": "Gets X-User-Id from the gateway; no token parsing.", "example": "/users/*" },
+    { "id": "orders", "label": "order-service", "icon": "🧾", "col": 2, "row": 1, "info": "Business logic only.", "example": "/orders/*" },
+    { "id": "pay", "label": "payment-service", "icon": "💳", "col": 2, "row": 2, "info": "Stricter rate limit configured at the gateway.", "example": "/payments/*" },
+    { "id": "logs", "label": "Logs + metrics", "icon": "📈", "col": 3, "row": 1, "info": "One place to see every API call, status and latency.", "example": "Request id abc-123" }
+  ],
+  "edges": [
+    ["mobile", "gw", "HTTPS"],
+    ["web", "gw", "HTTPS"],
+    ["gw", "users"],
+    ["gw", "orders"],
+    ["gw", "pay"],
+    ["gw", "logs"]
+  ],
+  "flows": [
+    {
+      "name": "Valid request",
+      "steps": [
+        ["mobile", "GET /orders with a token."],
+        ["gw", "Token valid, under the rate limit, request id added."],
+        ["orders", "Returns the user's orders."],
+        ["logs", "200 in 45 ms logged with the request id."]
+      ]
+    },
+    {
+      "name": "Abuse",
+      "steps": [
+        ["web", "A script sends 500 req/min."],
+        ["gw", "429 Too Many Requests; services are protected."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Business logic in the gateway">
+
+<Wrong>
+
+```text
+Discount rules and order validation coded inside gateway plugins: every feature change needs a gateway release.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Gateway = cross-cutting concerns only (auth, limits, routing, logs). Business rules stay in services.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Services trusting anything">
+
+<Wrong>
+
+```text
+Services accept X-User-Id from any caller — someone bypasses the gateway and impersonates users.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Make services reachable only from the gateway (private network) or verify a signed token/mTLS internally too.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is an API gateway and why use it with microservices?">
+
+A single entry point that routes client requests to the right backend service and centralises cross-cutting concerns such as authentication, rate limiting, TLS, logging, transformations and response aggregation. Clients see one stable API while services stay simple and can change independently.
+
+</QA>
+
+<QA q="What is the difference between an API gateway and a load balancer?">
+
+A load balancer distributes traffic among instances of the same service, mainly for scale and availability. An API gateway sits in front of many different services and applies API-level policies: routing by path or version, auth, quotas, transformations and aggregation. They are often used together.
+
+</QA>
+
+<QA q="What are the downsides of an API gateway?">
+
+It adds a network hop and latency, is a potential bottleneck and single point of failure unless scaled redundantly, and can become a bottleneck for teams if business logic creeps into it. Keep it thin, highly available and automated.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where should JWT validation for all services happen?',
+      options: ['In every service separately', 'At the API gateway', 'In the database', 'In the browser'],
+      answer: 1,
+      why: 'Once, centrally.',
+    },
+    {
+      q: 'Service-to-service mTLS and retries is mainly the job of...',
+      options: ['API gateway', 'Service mesh', 'CDN', 'DNS'],
+      answer: 1,
+      why: 'East–west traffic.',
+    },
+    {
+      q: 'A BFF is...',
+      options: ['A database', 'A gateway tailored to one client type', 'A cache', 'A queue'],
+      answer: 1,
+      why: 'Backend for Frontend.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Gateway does | Not |
+| --- | --- |
+| routing by path/host/version | business rules |
+| auth (JWT, API keys) | data storage |
+| rate limits, quotas | long processing |
+| TLS, CORS, headers | |
+| aggregation (BFF) | |
+| logs, metrics, request ids | |
+| canary, versioning | |
+
+Tools: AWS API Gateway · Kong · Nginx · Envoy · Traefik
+
+</CheatSheet>

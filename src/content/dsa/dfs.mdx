@@ -1,0 +1,250 @@
+---
+id: dsa-dfs
+title: Depth-first search (DFS)
+summary: Depth-first search follows one path as deep as possible before backtracking, using recursion or an explicit stack; it explores components, flood-fills grids, detects cycles with three node colours, drives topological sort and backtracking, and runs in O(V + E).
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Exploring a **cave system** with a ball of string. You keep taking the next unexplored tunnel as deep as it goes. At a dead end you follow the string back to the last junction with an unexplored tunnel and go down that one. You never explore the same chamber twice because you chalk-mark every one you enter.
+
+</Analogy>
+
+## Simple explanation
+
+```python
+def dfs(node):
+    seen.add(node)
+    for nxt in graph[node]:
+        if nxt not in seen:
+            dfs(nxt)              # go deep first; return = backtrack
+```
+
+Iterative (no recursion limit): a **stack** instead of a queue.
+
+```python
+stack = [start]
+while stack:
+    node = stack.pop()
+    if node in seen: continue
+    seen.add(node)
+    stack.extend(graph[node])
+```
+
+| Use | How |
+| --- | --- |
+| Connected components, islands, flood fill | start DFS from each unvisited node |
+| Path exists? / all paths | DFS (+ backtracking for all paths) |
+| **Cycle in a directed graph** | colours: white (new), grey (on the current path), black (done); reaching a **grey** node = cycle |
+| Cycle in an undirected graph | DFS with parent; a seen neighbour that is not the parent = cycle |
+| Topological sort | add a node to the order **after** all its descendants (postorder), then reverse |
+| Tree problems | recursive DFS is natural |
+| Clone a graph | DFS with a map old → new |
+
+| | DFS | BFS |
+| --- | --- | --- |
+| Structure | stack / recursion | queue |
+| Finds | any path, deep structure | shortest path (edges) |
+| Memory | O(depth) | O(width) |
+
+Python recursion depth is ~1000: for big grids (e.g. 1000 × 1000) use the iterative version or BFS.
+
+<Visual caption="DFS keeps a stack: it dives down one branch and only backs up when there is nothing new.">
+
+<GraphTraversal mode="dfs" />
+
+</Visual>
+
+## Code example
+
+```python
+graph = {"A": ["B", "C"], "B": ["D", "E"], "C": ["F", "G"], "D": [], "E": ["H"], "F": ["H"], "G": [], "H": []}
+
+order, seen = [], set()
+def dfs(node):
+    seen.add(node)
+    order.append(node)
+    for nxt in graph[node]:
+        if nxt not in seen:
+            dfs(nxt)
+dfs("A")
+print("DFS order:", order)
+
+def all_paths(graph, start, goal, path=None):
+    path = (path or []) + [start]
+    if start == goal:
+        return [path]
+    return [p for nxt in graph[start] for p in all_paths(graph, nxt, goal, path)]
+
+print("all paths A → H:", all_paths(graph, "A", "H"))
+
+def has_cycle(graph):
+    WHITE, GREY, BLACK = 0, 1, 2
+    colour = {n: WHITE for n in graph}
+    def visit(n):
+        colour[n] = GREY                        # on the current path
+        for m in graph[n]:
+            if colour[m] == GREY:
+                return True                     # back edge → cycle
+            if colour[m] == WHITE and visit(m):
+                return True
+        colour[n] = BLACK                       # finished
+        return False
+    return any(colour[n] == WHITE and visit(n) for n in graph)
+
+def topo_dfs(graph):
+    seen, out = set(), []
+    def visit(n):
+        seen.add(n)
+        for m in graph[n]:
+            if m not in seen:
+                visit(m)
+        out.append(n)                           # after all descendants
+    for n in graph:
+        if n not in seen:
+            visit(n)
+    return out[::-1]
+
+print("cycle?", has_cycle(graph), "| with C → A:", has_cycle({**graph, "C": ["F", "G", "A"]}))
+print("topological:", topo_dfs({"shirt": ["tie"], "tie": ["jacket"], "trousers": ["shoes", "belt"],
+                                "belt": ["jacket"], "shoes": [], "jacket": []}))
+```
+
+```output
+DFS order: ['A', 'B', 'D', 'E', 'H', 'C', 'F', 'G']
+all paths A → H: [['A', 'B', 'E', 'H'], ['A', 'C', 'F', 'H']]
+cycle? False | with C → A: True
+topological: ['trousers', 'belt', 'shoes', 'shirt', 'tie', 'jacket']
+```
+
+<Playground kind="python">
+
+```python
+def flood_fill(image, r, c, new):
+    old = image[r][c]
+    if old == new:
+        return image
+    stack = [(r, c)]                            # iterative DFS: no recursion limit
+    while stack:
+        r, c = stack.pop()
+        if 0 <= r < len(image) and 0 <= c < len(image[0]) and image[r][c] == old:
+            image[r][c] = new
+            stack.extend([(r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)])
+    return image
+
+img = [[1, 1, 1],
+       [1, 1, 0],
+       [1, 0, 1]]
+for row in flood_fill(img, 1, 1, 2):
+    print(row)
+
+# Try it: start the fill at (2, 2) instead.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using only 'visited' to detect cycles in a directed graph">
+
+<Wrong>
+
+```text
+A → B, A → C, C → B: reaching B a second time is NOT a cycle, but a plain visited check says it is.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Three colours: only an edge to a GREY node (still on the current path) is a cycle.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Deep recursion on big grids">
+
+<Wrong>
+
+```python
+def sink(r, c): ... sink(r + 1, c) ...     # 1000×1000 land → RecursionError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+stack = [(r, c)]                           # iterative DFS (or BFS)
+while stack: ...
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is DFS and when would you use it over BFS?">
+
+Depth-first search explores as far as possible along each branch before backtracking, using recursion or a stack, in O(V + E). Use it to explore all reachable nodes, count components, detect cycles, topologically sort, enumerate paths or solve backtracking problems; use BFS when you need the shortest path by edges.
+
+</QA>
+
+<QA q="How do you detect a cycle in a directed graph?">
+
+DFS with three states: unvisited, visiting (on the current recursion path) and done. If DFS reaches a node that is currently 'visiting', there is a back edge and therefore a cycle. Alternatively, Kahn's topological sort fails to output all nodes when a cycle exists.
+
+</QA>
+
+<QA q="Count the number of islands in a grid.">
+
+Scan every cell; when you find unvisited land, increase the count and run DFS (or BFS) from it to mark the whole connected island as visited. Each cell is visited once, so O(rows × cols).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Iterative DFS uses a...',
+      options: ['Queue', 'Stack', 'Heap', 'Deque from the left'],
+      answer: 1,
+      why: 'Last in, first out = go deep.',
+    },
+    {
+      q: 'Directed cycle detected when you reach a node that is...',
+      options: ['White', 'Grey (on current path)', 'Black', 'A leaf'],
+      answer: 1,
+      why: 'Back edge.',
+    },
+    {
+      q: 'DFS shortest path guarantee (unweighted)?',
+      options: ['Yes', 'No', 'Only on trees', 'Only with a heap'],
+      answer: 1,
+      why: 'Use BFS for that.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Technique |
+| --- | --- |
+| Recursive | `seen.add(n)` · recurse on unseen neighbours |
+| Iterative | `stack.pop()` · skip seen · push neighbours |
+| Components / islands | DFS from each unvisited node |
+| Directed cycle | white / grey / black |
+| Undirected cycle | seen neighbour ≠ parent |
+| Topological | postorder, then reverse |
+| Big inputs | iterative (recursion limit ~1000) |
+| Cost | O(V + E) |
+
+</CheatSheet>

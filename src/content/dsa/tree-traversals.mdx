@@ -1,0 +1,230 @@
+---
+id: dsa-tree-traversals
+title: Tree traversals
+summary: Depth-first traversals visit a node before (preorder), between (inorder) or after (postorder) its subtrees, and breadth-first level-order traversal visits the tree level by level with a queue; inorder on a BST gives sorted values, and every traversal can be written recursively or with an explicit stack.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Reading a **book's table of contents**:
+
+- **Preorder**: read a chapter title, then its sections (top-down: chapter → sections)
+- **Postorder**: you can only total a chapter's page count after counting all its sections (children first)
+- **Level order**: read all chapter titles first, then all section titles, then all sub-sections
+
+</Analogy>
+
+## Simple explanation
+
+```text
+        1
+       / \
+      2   3
+     / \    \
+    4   5    6
+```
+
+| Traversal | Order | Result | Typical use |
+| --- | --- | --- | --- |
+| **Preorder** | node, left, right | 1 2 4 5 3 6 | copy/serialize a tree, print structure |
+| **Inorder** | left, node, right | 4 2 5 1 3 6 | **sorted order in a BST**, validate BST |
+| **Postorder** | left, right, node | 4 5 2 6 3 1 | delete a tree, compute heights/sizes (children first) |
+| **Level order** (BFS) | level by level | 1 · 2 3 · 4 5 6 | shortest depth, right-side view, zigzag, per-level averages |
+
+All are **O(n)** time. DFS uses O(h) space (stack); BFS uses O(width) space (queue).
+
+**Iterative versions** (avoid recursion limits): preorder with a stack (push right before left); inorder with a stack ("go left as far as possible, pop, visit, go right"); level order with a `deque`, processing `len(queue)` nodes per level.
+
+**Reconstruction**: preorder + inorder (or postorder + inorder) uniquely define a tree with distinct values.
+
+<Visual caption="Breadth-first (queue) vs depth-first (stack) on a small graph — a tree is a graph without cycles, so level order behaves like BFS here.">
+
+<GraphTraversal mode="bfs" />
+
+</Visual>
+
+## Code example
+
+```python
+from collections import deque
+
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val, self.left, self.right = val, left, right
+
+root = Node(1, Node(2, Node(4), Node(5)), Node(3, None, Node(6)))
+
+def preorder(n):
+    return [n.val] + preorder(n.left) + preorder(n.right) if n else []
+
+def inorder(n):
+    return inorder(n.left) + [n.val] + inorder(n.right) if n else []
+
+def postorder(n):
+    return postorder(n.left) + postorder(n.right) + [n.val] if n else []
+
+def inorder_iterative(root):
+    out, stack, n = [], [], root
+    while stack or n:
+        while n:                       # go left as far as possible
+            stack.append(n)
+            n = n.left
+        n = stack.pop()
+        out.append(n.val)              # visit
+        n = n.right                    # then the right subtree
+    return out
+
+def level_order(root):
+    levels, q = [], deque([root] if root else [])
+    while q:
+        level = []
+        for _ in range(len(q)):        # exactly the nodes of this level
+            n = q.popleft()
+            level.append(n.val)
+            if n.left: q.append(n.left)
+            if n.right: q.append(n.right)
+        levels.append(level)
+    return levels
+
+print("pre: ", preorder(root))
+print("in:  ", inorder(root), inorder_iterative(root) == inorder(root))
+print("post:", postorder(root))
+print("levels:", level_order(root))
+print("right side view:", [lvl[-1] for lvl in level_order(root)])
+```
+
+```output
+pre:  [1, 2, 4, 5, 3, 6]
+in:   [4, 2, 5, 1, 3, 6] True
+post: [4, 5, 2, 6, 3, 1]
+levels: [[1], [2, 3], [4, 5, 6]]
+right side view: [1, 3, 6]
+```
+
+<Playground kind="python">
+
+```python
+def build(preorder, inorder):
+    """Rebuild a tree (as nested tuples) from preorder + inorder lists."""
+    if not preorder:
+        return None
+    root = preorder[0]
+    i = inorder.index(root)                  # left part of inorder = left subtree
+    return (root,
+            build(preorder[1:i + 1], inorder[:i]),
+            build(preorder[i + 1:], inorder[i + 1:]))
+
+print(build([1, 2, 4, 5, 3, 6], [4, 2, 5, 1, 3, 6]))
+
+# Try it: write zigzag level order (left→right, then right→left).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Mixing levels in level-order traversal">
+
+<Wrong>
+
+```python
+while q:
+    n = q.popleft()
+    level.append(n.val)          # one flat list: you cannot tell where a level ends
+```
+
+</Wrong>
+
+<Right>
+
+```python
+while q:
+    level = []
+    for _ in range(len(q)):      # snapshot the size = nodes on this level
+        ...
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Wrong push order in iterative preorder">
+
+<Wrong>
+
+```python
+stack.append(n.left); stack.append(n.right)   # right is popped first → node, right, left
+```
+
+</Wrong>
+
+<Right>
+
+```python
+stack.append(n.right); stack.append(n.left)   # left on top → node, left, right
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the differences between preorder, inorder and postorder traversal?">
+
+They differ in when the node is visited relative to its subtrees: preorder visits the node first (useful to copy or serialize), inorder visits it between left and right (sorted order for BSTs), postorder visits it last (useful when children's results are needed first, like heights or deletion). All are O(n).
+
+</QA>
+
+<QA q="How do you traverse a tree level by level?">
+
+Breadth-first search with a queue: start with the root; repeatedly take the current queue size as the level size, pop that many nodes, record their values and enqueue their children. O(n) time, O(width) space.
+
+</QA>
+
+<QA q="How do you do an inorder traversal without recursion?">
+
+Use a stack: push nodes while going left, pop one and visit it, then move to its right child and repeat until both the stack is empty and the current node is None.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Inorder traversal of a BST gives...',
+      options: ['Random order', 'Sorted order', 'Level order', 'Reverse insertion order'],
+      answer: 1,
+      why: 'Left < node < right.',
+    },
+    {
+      q: 'Level-order traversal uses a...',
+      options: ['Stack', 'Queue', 'Heap', 'Hash map'],
+      answer: 1,
+      why: 'It is BFS.',
+    },
+    {
+      q: 'Compute subtree sizes before the parent: which order?',
+      options: ['Preorder', 'Inorder', 'Postorder', 'Level order'],
+      answer: 2,
+      why: 'Children first.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Order | Sequence | Use |
+| --- | --- | --- |
+| Pre | N L R | copy, serialize |
+| In | L N R | BST sorted, validate |
+| Post | L R N | heights, delete, sizes |
+| Level | queue by level | depth, views, per level |
+
+Iterative: preorder push R then L · inorder "left, pop, right" · level `for _ in range(len(q))`
+
+</CheatSheet>

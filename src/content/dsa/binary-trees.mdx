@@ -1,0 +1,249 @@
+---
+id: dsa-binary-trees
+title: Binary trees
+summary: A binary tree is a set of nodes where each node has at most two children, left and right; most tree problems are solved recursively by combining answers from the two subtrees (height, size, sums, diameter, balance, mirror), in O(n) time and O(h) stack space where h is the height.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **family tree turned upside down**, or a **knock-out tournament bracket**: one node at the top (the **root**), each match splits into two earlier matches (left and right **children**), down to the players who have no earlier matches (the **leaves**). Asking "how many rounds?" is asking for the tree's **height**.
+
+</Analogy>
+
+## Simple explanation
+
+```text
+        1          root (depth 0)
+       / \
+      2   3        children of 1
+     / \    \
+    4   5    6     leaves: 4, 5, 6   height = 3 levels (2 edges)
+```
+
+| Term | Meaning |
+| --- | --- |
+| Root / leaf | top node / node with no children |
+| Parent, child, sibling | as in a family |
+| Depth of a node | edges from the root |
+| Height of the tree | longest root-to-leaf path |
+| Subtree | a node and everything below it |
+| **Full** | every node has 0 or 2 children |
+| **Complete** | all levels full except the last, filled left to right (heaps) |
+| **Balanced** | heights of left and right differ by at most 1 everywhere → height O(log n) |
+
+**The recursive recipe**: "the answer for a node = combine(answer for left, answer for right, the node itself)", with `None` as the base case.
+
+| Question | Combine |
+| --- | --- |
+| Size | `1 + size(L) + size(R)` |
+| Height / max depth | `1 + max(h(L), h(R))` |
+| Sum | `val + sum(L) + sum(R)` |
+| Same tree | values equal and both subtrees same |
+| Mirror / invert | swap children recursively |
+| Diameter | max over nodes of `h(L) + h(R)` |
+| Balanced | both balanced and heights differ ≤ 1 |
+| Path sum exists | subtract value, check at leaves |
+| Lowest common ancestor | return the node where p and q split |
+
+Time O(n) (each node once); space O(h): O(log n) when balanced, O(n) when the tree is a chain.
+
+## Code example
+
+```python
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val, self.left, self.right = val, left, right
+
+#        1
+#       / \
+#      2   3
+#     / \    \
+#    4   5    6
+root = Node(1, Node(2, Node(4), Node(5)), Node(3, None, Node(6)))
+
+def size(n):
+    return 0 if n is None else 1 + size(n.left) + size(n.right)
+
+def height(n):
+    return 0 if n is None else 1 + max(height(n.left), height(n.right))
+
+def diameter(root):
+    best = 0
+    def h(n):
+        nonlocal best
+        if n is None:
+            return 0
+        l, r = h(n.left), h(n.right)
+        best = max(best, l + r)          # longest path through this node (in edges)
+        return 1 + max(l, r)
+    h(root)
+    return best
+
+def has_path_sum(n, target):
+    if n is None:
+        return False
+    if n.left is None and n.right is None:
+        return n.val == target
+    return has_path_sum(n.left, target - n.val) or has_path_sum(n.right, target - n.val)
+
+def lca(n, p, q):
+    if n is None or n.val in (p, q):
+        return n
+    left, right = lca(n.left, p, q), lca(n.right, p, q)
+    return n if left and right else left or right
+
+def invert(n):
+    if n:
+        n.left, n.right = invert(n.right), invert(n.left)
+    return n
+
+print("size", size(root), "height", height(root), "diameter", diameter(root))
+print("path sum 7?", has_path_sum(root, 7), " path sum 10?", has_path_sum(root, 10))
+print("LCA(4, 5) =", lca(root, 4, 5).val, " LCA(4, 6) =", lca(root, 4, 6).val)
+inv = invert(root)
+print("after invert, root.left =", inv.left.val, ", root.left.left =", inv.left.left.val)
+```
+
+```output
+size 6 height 3 diameter 4
+path sum 7? True  path sum 10? True
+LCA(4, 5) = 2  LCA(4, 6) = 1
+after invert, root.left = 3 , root.left.left = 6
+```
+
+<Playground kind="python">
+
+```python
+class Node:
+    def __init__(self, val, left=None, right=None):
+        self.val, self.left, self.right = val, left, right
+
+def is_balanced(n):
+    def check(n):                     # returns height, or -1 if unbalanced
+        if n is None:
+            return 0
+        l, r = check(n.left), check(n.right)
+        if l < 0 or r < 0 or abs(l - r) > 1:
+            return -1
+        return 1 + max(l, r)
+    return check(n) >= 0
+
+balanced = Node(1, Node(2, Node(4)), Node(3))
+chain = Node(1, Node(2, Node(3, Node(4))))
+print(is_balanced(balanced), is_balanced(chain))
+
+# Try it: write max_value(n) that returns the largest value in the tree.
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting the None base case">
+
+<Wrong>
+
+```python
+def height(n):
+    return 1 + max(height(n.left), height(n.right))   # AttributeError at the leaves' children
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def height(n):
+    if n is None:
+        return 0
+    return 1 + max(height(n.left), height(n.right))
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Recomputing heights (O(n²) balance check)">
+
+<Wrong>
+
+```python
+def is_balanced(n):
+    return n is None or (abs(height(n.left) - height(n.right)) <= 1
+                         and is_balanced(n.left) and is_balanced(n.right))   # height recomputed everywhere
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Return the height and the balanced flag together in one post-order pass (see the playground): O(n).
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you find the maximum depth of a binary tree?">
+
+Recursively: depth(None) = 0, otherwise 1 + max(depth(left), depth(right)). Or iteratively with BFS counting levels. O(n) time; O(h) space for recursion, O(width) for BFS.
+
+</QA>
+
+<QA q="What is the diameter of a binary tree and how do you compute it?">
+
+The number of edges on the longest path between any two nodes, which may not pass through the root. Do a post-order traversal computing each node's height; at each node the longest path through it is height(left) + height(right); keep the maximum. O(n).
+
+</QA>
+
+<QA q="Find the lowest common ancestor of two nodes in a binary tree.">
+
+Recurse: if the node is None or equals p or q, return it. Otherwise search left and right; if both return non-null, the current node is the LCA; otherwise return whichever side is non-null. O(n) time, O(h) space. In a BST you can instead walk down using value comparisons.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A node with no children is a...',
+      options: ['Root', 'Leaf', 'Parent', 'Subtree'],
+      answer: 1,
+      why: 'Leaves are at the bottom.',
+    },
+    {
+      q: 'Height of a balanced tree with n nodes?',
+      options: ['O(1)', 'O(log n)', 'O(n)', 'O(n²)'],
+      answer: 1,
+      why: 'Each level doubles.',
+    },
+    {
+      q: 'Space of recursive traversal on a chain-like tree?',
+      options: ['O(1)', 'O(log n)', 'O(n)', 'O(n²)'],
+      answer: 2,
+      why: 'Depth equals n.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Recurrence |
+| --- | --- |
+| Base | `if n is None: return 0 / False / None` |
+| Size | `1 + size(L) + size(R)` |
+| Height | `1 + max(h(L), h(R))` |
+| Diameter | max `h(L) + h(R)` |
+| Invert | swap children recursively |
+| Path sum | subtract, check at leaf |
+| LCA | both sides found → current node |
+| Cost | O(n) time · O(h) space |
+
+</CheatSheet>

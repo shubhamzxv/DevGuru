@@ -1,0 +1,253 @@
+---
+id: dsa-common-patterns
+title: Common interview patterns
+summary: Most coding interview questions map to a small set of patterns — hashing, two pointers, sliding window, prefix sums, binary search, stacks, heaps, BFS/DFS, backtracking, dynamic programming, greedy, intervals and union-find — and recognising the signals in the question plus following a fixed problem-solving routine matters more than memorising solutions.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A doctor does not memorise every patient; they learn **symptoms → likely cause → standard treatment**. In interviews, the "symptoms" are words in the question ("sorted", "contiguous", "top k", "shortest", "all combinations"), and each points to a standard pattern.
+
+</Analogy>
+
+## Simple explanation
+
+**Signal → pattern**
+
+| If the question says... | Try | Typical time |
+| --- | --- | --- |
+| "seen before", "count", "pair with sum", "group" | **hash map / set** | O(n) |
+| sorted array, pair/triple, palindrome, in place | **two pointers** | O(n) |
+| contiguous subarray/substring, longest/shortest with a rule | **sliding window** | O(n) |
+| range sums, subarray sum = k (negatives) | **prefix sum + hash map** | O(n) |
+| sorted / monotonic, "minimum capacity such that..." | **binary search** (on index or answer) | O(log n) · O(n log range) |
+| matching brackets, next greater, undo | **stack / monotonic stack** | O(n) |
+| top k, k-th largest, merge k sorted, scheduling | **heap** | O(n log k) |
+| shortest steps, levels, nearest | **BFS** | O(V + E) |
+| islands, components, cycles, all paths | **DFS** | O(V + E) |
+| dependencies / ordering | **topological sort** | O(V + E) |
+| all subsets / permutations / combinations, puzzles | **backtracking** | exponential |
+| count ways, min/max cost, "can we reach", choices overlap | **dynamic programming** | states × work |
+| intervals, meetings, "max number of..." with sorting | **greedy / sort + sweep** | O(n log n) |
+| connected groups that merge over time | **union-find** | ~O(1) per op |
+| linked list middle / cycle | **fast & slow pointers** | O(n) |
+
+**Input size hints** (rough, for about 1 second in Python):
+
+| n up to | Acceptable complexity |
+| --- | --- |
+| 10–20 | O(2ⁿ), O(n!) — backtracking |
+| 1,000 | O(n²) |
+| 100,000 – 1,000,000 | O(n log n) or O(n) |
+| bigger / 10⁹ values | O(log n) or math |
+
+**The interview routine** (say it out loud):
+
+1. **Clarify**: inputs, sizes, edge cases (empty, duplicates, negatives), expected output
+2. **Examples**: work one small example by hand, plus an edge case
+3. **Brute force first**: state it and its complexity
+4. **Optimise**: which pattern removes the repeated work?
+5. **Code** cleanly with good names
+6. **Test**: walk through your example; check edge cases
+7. **Complexity**: time and space, and trade-offs
+
+## Code example
+
+**Union-find** (disjoint set), the pattern not covered elsewhere:
+
+```python
+class UnionFind:
+    def __init__(self, n):
+        self.parent = list(range(n))
+        self.size = [1] * n
+        self.groups = n
+
+    def find(self, x):
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]   # path compression (halving)
+            x = self.parent[x]
+        return x
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra == rb:
+            return False                                    # already connected → this edge makes a cycle
+        if self.size[ra] < self.size[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra                                # union by size
+        self.size[ra] += self.size[rb]
+        self.groups -= 1
+        return True
+
+uf = UnionFind(6)
+for a, b in [(0, 1), (1, 2), (3, 4)]:
+    uf.union(a, b)
+print("groups:", uf.groups, "| 0 and 2 connected:", uf.find(0) == uf.find(2), "| 0 and 3:", uf.find(0) == uf.find(3))
+
+edges = [(0, 1), (1, 2), (2, 0), (3, 4)]
+uf2 = UnionFind(5)
+print("redundant edge:", [e for e in edges if not uf2.union(*e)])
+
+def merge_accounts(pairs):
+    """Friends of friends are one group: count friend circles."""
+    names = sorted({n for p in pairs for n in p})
+    idx = {n: i for i, n in enumerate(names)}
+    uf = UnionFind(len(names))
+    for a, b in pairs:
+        uf.union(idx[a], idx[b])
+    circles = {}
+    for n in names:
+        circles.setdefault(uf.find(idx[n]), []).append(n)
+    return list(circles.values())
+
+print(merge_accounts([("asha", "ravi"), ("ravi", "meera"), ("kiran", "john")]))
+```
+
+```output
+groups: 3 | 0 and 2 connected: True | 0 and 3: False
+redundant edge: [(2, 0)]
+[['asha', 'meera', 'ravi'], ['john', 'kiran']]
+```
+
+<Playground kind="python">
+
+```python
+# Practise recognising patterns: pick one and solve it below.
+problems = {
+    "Longest substring with at most 2 distinct letters": "sliding window + Counter",
+    "Kth closest point to the origin": "heap of size k",
+    "Minimum days to make m bouquets": "binary search on the answer",
+    "Course schedule (can you finish?)": "topological sort / cycle detection",
+    "Number of ways to decode '226'": "dynamic programming",
+    "Daily temperatures": "monotonic stack",
+}
+for p, pattern in problems.items():
+    print(f"{p:<52} → {pattern}")
+
+def decode_ways(s):
+    prev2, prev1 = 1, 1 if s and s[0] != "0" else 0
+    for i in range(1, len(s)):
+        cur = prev1 if s[i] != "0" else 0
+        if 10 <= int(s[i - 1:i + 1]) <= 26:
+            cur += prev2
+        prev2, prev1 = prev1, cur
+    return prev1
+
+print(decode_ways("226"), decode_ways("06"), decode_ways("11106"))
+
+# Try it: solve "Kth closest point" with heapq.nsmallest(k, points, key=...).
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Coding before understanding">
+
+<Wrong>
+
+```text
+Start typing in the first minute, discover halfway that duplicates/negatives break the approach.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Clarify constraints and edge cases, do one example by hand, state brute force + complexity, then optimise.
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Silent thinking">
+
+<Wrong>
+
+```text
+Five minutes of silence, then a finished answer (or none). The interviewer cannot give hints or credit.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Think aloud: "This is contiguous, so a sliding window could work; the rule is at most k distinct letters..."
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you approach a coding problem you have never seen?">
+
+Clarify inputs, outputs and constraints; work through a small example and edge cases; describe a brute-force solution with its complexity; look for signals (sorted, contiguous, top-k, shortest, all combinations) that suggest a pattern to remove repeated work; code it clearly; test by walking through examples; and state the final time and space complexity.
+
+</QA>
+
+<QA q="What is union-find and when do you use it?">
+
+A disjoint-set structure that tracks which elements are in the same group, with find (which group?) and union (merge two groups). With path compression and union by size/rank both are almost O(1). Use it for connected components that grow over time, detecting cycles in undirected graphs, Kruskal's minimum spanning tree and merging accounts.
+
+</QA>
+
+<QA q="How do input sizes guide your choice of algorithm?">
+
+They tell you the target complexity: n ≤ 20 allows exponential backtracking, n ≈ 10³ allows O(n²), n ≈ 10⁵–10⁶ needs O(n log n) or O(n), and very large values or ranges suggest O(log n) or binary search on the answer.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: '"Longest substring with at most k distinct characters" suggests...',
+      options: ['Heap', 'Sliding window', 'Union-find', 'Topological sort'],
+      answer: 1,
+      why: 'Contiguous + longest with a rule.',
+    },
+    {
+      q: '"Fewest steps from start to exit in a grid" suggests...',
+      options: ['DFS', 'BFS', 'Greedy', 'Binary search'],
+      answer: 1,
+      why: 'Unweighted shortest path.',
+    },
+    {
+      q: 'n = 100,000: which complexity is too slow?',
+      options: ['O(n)', 'O(n log n)', 'O(n²)', 'O(log n)'],
+      answer: 2,
+      why: '10¹⁰ operations.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Signal | Pattern |
+| --- | --- |
+| seen / count / pair | hash map |
+| sorted + pair | two pointers |
+| contiguous + longest/shortest | sliding window |
+| subarray sum = k | prefix sum + dict |
+| monotonic / min feasible | binary search |
+| next greater / brackets | stack |
+| top k / k-th | heap |
+| shortest steps | BFS |
+| components / cycles | DFS · union-find |
+| ordering | topological sort |
+| all combinations | backtracking |
+| count ways / min cost | DP |
+| intervals | sort + greedy |
+
+Routine: clarify → example → brute force → optimise → code → test → complexity
+
+</CheatSheet>

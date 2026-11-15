@@ -38,7 +38,7 @@ export function PlayerControls({ player, total, note, children }: PlayerControls
           Reset
         </button>
         {children}
-        <span className="text-sm text-slate-500">
+        <span className="text-sm text-slate-600 dark:text-slate-400">
           {player.index + 1} / {total}
         </span>
       </div>

@@ -4,7 +4,7 @@ import { H2 } from './Prose';
 /** Template block 7: wraps 2 to 4 <Mistake> items. */
 export function Mistakes({ children }: { children: ReactNode }) {
   return (
-    <section>
+    <section className="defer-render">
       <H2>Common mistakes</H2>
       <div className="space-y-4">{children}</div>
     </section>
