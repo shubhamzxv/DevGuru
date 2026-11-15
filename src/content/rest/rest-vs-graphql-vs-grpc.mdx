@@ -1,0 +1,210 @@
+---
+id: rest-rest-vs-graphql-vs-grpc
+title: REST vs GraphQL vs gRPC
+summary: REST serves fixed resources over URLs, GraphQL lets the client ask for exactly the fields it needs through one endpoint, and gRPC makes fast typed calls between services using Protocol Buffers.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Three ways to order food:
+
+- **REST** is a set menu counter: "Thali", "Dosa plate". Each plate is fixed; if you want dal from one and rice from another, you order two plates
+- **GraphQL** is a buffet with a waiter who brings exactly what you list: "2 rotis, paneer, no salad", all on one plate
+- **gRPC** is the kitchen's internal order slip system: short codes, very fast, everyone in the kitchen follows the same printed format, but customers never use it directly
+
+</Analogy>
+
+## Simple explanation
+
+| | REST | GraphQL | gRPC |
+| --- | --- | --- | --- |
+| Shape | many URLs (resources) | one endpoint, `POST /graphql` | service methods, `GetUser(...)` |
+| Data format | JSON (text) | JSON | Protocol Buffers (binary) |
+| Contract | OpenAPI (optional) | schema (required, typed) | `.proto` file (required, typed) |
+| Client chooses fields | no (server decides) | **yes, exactly** | no (fixed messages) |
+| Transport | HTTP/1.1 or 2 | HTTP | HTTP/2 |
+| Streaming | limited (SSE, WebSockets separately) | subscriptions | **built in, both directions** |
+| HTTP caching | **easy** (GET + URLs) | harder (mostly POST) | not HTTP-cacheable |
+| Browsers | native | native | needs gRPC-Web proxy |
+| Best for | public APIs, simple CRUD | many client screens with different data needs | internal service-to-service, low latency |
+
+**REST** problems GraphQL solves:
+
+- **Over-fetching**: `GET /users/7` returns 30 fields when the screen needs 2
+- **Under-fetching**: a screen needs the user, their last 5 orders and each order's items, so the app makes many calls
+
+**GraphQL** costs: more complex server (resolvers, the **N+1 problem**, solved with DataLoader batching), query cost limits to stop huge queries, and harder HTTP caching.
+
+**gRPC** strengths: small binary messages, HTTP/2 multiplexing, strong types with generated clients in many languages, deadlines and streaming built in. Costs: not human-readable, needs tooling (grpcurl) to debug, not directly usable from browsers.
+
+Many companies use all three: **REST** for the public API, **GraphQL** as a gateway for their web and mobile apps, **gRPC** between internal microservices.
+
+## Code example
+
+The same data in REST: several calls, fixed fields:
+
+```text
+GET /users/7              -> {"id":7,"name":"Asha","email":"...","address":{...}, ... 25 more fields}
+GET /users/7/orders?limit=2 -> [{"id":1042,"total":499,...}, {"id":1043,"total":1299,...}]
+```
+
+In GraphQL: one request, only the fields asked for:
+
+```text
+POST /graphql
+{
+  user(id: 7) {
+    name
+    orders(last: 2) { id total }
+  }
+}
+```
+
+```output
+{"data": {"user": {"name": "Asha", "orders": [{"id": 1042, "total": 499}, {"id": 1043, "total": 1299}]}}}
+```
+
+In gRPC: a typed contract, then a generated client call:
+
+```text
+service UserService {
+  rpc GetUser (GetUserRequest) returns (User);
+  rpc StreamOrders (GetUserRequest) returns (stream Order);   // server streaming
+}
+message GetUserRequest { int64 id = 1; }
+message User  { int64 id = 1; string name = 2; }
+message Order { int64 id = 1; int32 total = 2; }
+```
+
+```python
+import grpc
+import users_pb2, users_pb2_grpc          # generated from users.proto
+
+with grpc.insecure_channel("user-service:50051") as channel:
+    stub = users_pb2_grpc.UserServiceStub(channel)
+    user = stub.GetUser(users_pb2.GetUserRequest(id=7), timeout=0.5)   # 500 ms deadline
+    print(user.name)
+```
+
+```output
+Asha
+```
+
+<Playground kind="http">
+
+```http
+GET /books/1
+```
+
+</Playground>
+
+This is REST: one URL, one resource, all its fields. A GraphQL version could return only the title of each book in one call.
+
+<Mistakes>
+
+<Mistake title="Choosing GraphQL for a simple CRUD API">
+
+<Wrong>
+
+```text
+A small internal admin tool with 5 tables gets a GraphQL server, resolvers,
+DataLoaders and query-cost limits.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Plain REST endpoints (or Django admin / FastAPI CRUD) for simple data;
+GraphQL when many different screens need very different shapes of the same data.
+```
+
+</Right>
+
+GraphQL pays off with many clients and complex, nested data. For simple APIs it is extra machinery.
+
+</Mistake>
+
+<Mistake title="Exposing gRPC directly to browsers">
+
+<Wrong>
+
+```text
+React app -> gRPC service on port 50051   (browsers cannot speak native gRPC)
+```
+
+</Wrong>
+
+<Right>
+
+```text
+React app -> REST/GraphQL gateway (or gRPC-Web via Envoy) -> gRPC services
+```
+
+</Right>
+
+gRPC is excellent behind the gateway; at the edge, use a protocol browsers support.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Compare REST, GraphQL and gRPC.">
+
+REST exposes resources through URLs and HTTP methods with JSON; it is simple, widely understood and easy to cache. GraphQL exposes a typed schema through one endpoint, and clients request exactly the fields they need, avoiding over- and under-fetching, at the cost of server complexity and harder caching. gRPC uses Protocol Buffers over HTTP/2 for fast, strongly typed RPC with streaming and code generation; it suits internal service communication but is not browser-native or human-readable.
+
+</QA>
+
+<QA q="What is the N+1 problem in GraphQL and how is it solved?">
+
+Resolving a list of N items and then a field on each item can trigger one query for the list plus N queries for the field (for example each order's customer). It is solved by batching and caching per request with a DataLoader, which collects the ids and loads them in one query.
+
+</QA>
+
+<QA q="Why is gRPC faster than REST with JSON?">
+
+Protobuf messages are compact binary and fast to parse, HTTP/2 multiplexes many calls over one connection with header compression, and generated stubs avoid manual serialization. The gain matters most for high-volume, low-latency internal calls.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which lets the client choose exactly which fields come back?',
+      options: ['REST', 'GraphQL', 'gRPC', 'SOAP'],
+      answer: 1,
+      why: 'The GraphQL query lists the fields wanted.',
+    },
+    {
+      q: 'Which uses Protocol Buffers and HTTP/2 by default?',
+      options: ['REST', 'GraphQL', 'gRPC', 'Webhooks'],
+      answer: 2,
+      why: 'gRPC messages are defined in .proto files and sent over HTTP/2.',
+    },
+    {
+      q: 'Which is easiest to cache with normal HTTP caches?',
+      options: ['REST', 'GraphQL', 'gRPC', 'All equally'],
+      answer: 0,
+      why: 'GET requests on stable URLs work with browsers and CDNs out of the box.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Pick |
+| --- | --- |
+| Public API, simple resources | REST |
+| Many screens, nested data, mobile bandwidth | GraphQL |
+| Internal service calls, low latency, streaming | gRPC |
+| Browser clients | REST or GraphQL (gRPC needs gRPC-Web) |
+| Strong typed contract | GraphQL schema / `.proto` (REST: OpenAPI) |
+| CDN caching | REST |
+
+</CheatSheet>

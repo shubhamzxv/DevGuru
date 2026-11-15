@@ -1,0 +1,191 @@
+---
+id: rest-idempotency
+title: Idempotency and safe methods
+summary: A safe request changes nothing, and an idempotent request has the same effect whether you send it once or many times, which is what makes retries safe.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Pressing the lift button once or five times has the same result: the lift comes once. That button is **idempotent**.
+
+Dropping a ₹10 coin into a vending machine five times gives you five drinks and costs ₹50. That action is **not idempotent**.
+
+Looking at the floor display does nothing at all to the lift. That is **safe**.
+
+</Analogy>
+
+## Simple explanation
+
+- **Safe**: the request does not change server state. GET, HEAD, OPTIONS
+- **Idempotent**: repeating the request leaves the server in the same state as doing it once. GET, HEAD, OPTIONS, **PUT**, **DELETE**
+- **Not idempotent**: **POST** (each call creates another order) and usually **PATCH** (a patch like "add 1 to stock" changes the result every time)
+
+Idempotency is about the **state on the server**, not the response. `DELETE /books/3` returns 204 the first time and 404 the second time, but either way book 3 is gone, so it is idempotent.
+
+Why it matters: networks fail. A client sends a request, the connection drops, and it cannot tell whether the server received it. If the request is idempotent, it can simply **retry**. Load balancers, proxies and HTTP libraries retry GET, PUT and DELETE automatically, but not POST.
+
+How to make POST safe to retry: the **idempotency key** pattern, used by Stripe, Razorpay and most payment APIs:
+
+1. The client generates a unique key (a UUID) for the operation and sends it in an `Idempotency-Key` header
+2. The server stores the key with the result of the first request
+3. A repeat with the same key returns the **saved result** instead of doing the work again
+
+A database **unique constraint** on the key makes this safe even if two retries arrive at the same moment.
+
+## Code example
+
+A payment endpoint that is safe to retry:
+
+```python
+from fastapi import FastAPI, Header
+
+app = FastAPI()
+results: dict[str, dict] = {}       # in real life: a database table with a UNIQUE key column
+charges = 0
+
+@app.post("/payments", status_code=201)
+def pay(amount: int, idempotency_key: str = Header(...)):
+    global charges
+    if idempotency_key in results:              # seen before: do NOT charge again
+        return results[idempotency_key]
+    charges += 1                                # the real work happens once
+    result = {"payment_id": f"pay_{charges}", "amount": amount, "status": "captured"}
+    results[idempotency_key] = result
+    return result
+```
+
+```python
+from fastapi.testclient import TestClient
+client = TestClient(app)
+for attempt in range(3):                        # the client retries after a timeout
+    r = client.post("/payments?amount=500", headers={"Idempotency-Key": "order-1042"})
+    print(attempt + 1, r.json())
+print("charged", charges, "time(s)")
+```
+
+```output
+1 {'payment_id': 'pay_1', 'amount': 500, 'status': 'captured'}
+2 {'payment_id': 'pay_1', 'amount': 500, 'status': 'captured'}
+3 {'payment_id': 'pay_1', 'amount': 500, 'status': 'captured'}
+charged 1 time(s)
+```
+
+<Playground kind="http">
+
+```http
+DELETE /books/3
+```
+
+</Playground>
+
+Send it twice: 204, then 404, but the state is the same (book 3 is gone). Now try `POST /books` with a JSON body twice: you get two different ids, because POST is not idempotent.
+
+<Mistakes>
+
+<Mistake title="A PUT that is not idempotent">
+
+<Wrong>
+
+```python
+@app.put("/products/{pid}/stock")
+def add_stock(pid: int, qty: int):
+    stock[pid] += qty            # every retry adds again
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.put("/products/{pid}/stock")
+def set_stock(pid: int, qty: int):
+    stock[pid] = qty             # set the final value: same result every time
+```
+
+</Right>
+
+Clients and proxies may retry a PUT. "Set to X" is idempotent; "add X" is not, so it should be a POST.
+
+</Mistake>
+
+<Mistake title="Retrying POST without a key">
+
+<Wrong>
+
+```python
+session.mount("https://", HTTPAdapter(max_retries=Retry(total=3, allowed_methods=None)))  # retries POST too
+```
+
+</Wrong>
+
+<Right>
+
+```python
+requests.post(url, json=body, headers={"Idempotency-Key": str(uuid.uuid4())})   # same key on every retry
+```
+
+</Right>
+
+Retrying a POST blindly can create duplicate orders or payments. Generate the key once per operation and reuse it on retries.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is idempotency in REST APIs?">
+
+An operation is idempotent if performing it several times has the same effect on server state as performing it once. GET, HEAD, OPTIONS, PUT and DELETE are idempotent by definition; POST is not. It makes retries after timeouts safe.
+
+</QA>
+
+<QA q="How would you make a payment API safe against duplicate requests?">
+
+Require a client-generated Idempotency-Key header. Store the key with the request's outcome in a table with a unique constraint; on a repeated key, return the stored response instead of charging again. Expire keys after a period (such as 24 hours) and reject a reused key with a different request body.
+
+</QA>
+
+<QA q="Is DELETE idempotent if the second call returns 404?">
+
+Yes. Idempotency concerns the server's state, not the response code: after one or several deletes, the resource does not exist.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which is safe AND idempotent?',
+      options: ['GET', 'PUT', 'DELETE', 'POST'],
+      answer: 0,
+      why: 'GET does not change anything. PUT and DELETE are idempotent but not safe.',
+    },
+    {
+      q: 'Why is "set stock to 10" idempotent but "add 10 to stock" not?',
+      options: ['Numbers differ', 'Repeating "set" gives the same final state; repeating "add" keeps changing it', 'Both are idempotent', 'Neither is'],
+      answer: 1,
+      why: 'Idempotent = same state after one or many calls.',
+    },
+    {
+      q: 'What does an Idempotency-Key let the server do?',
+      options: ['Encrypt the request', 'Return the saved result instead of repeating the work', 'Skip authentication', 'Cache GET requests'],
+      answer: 1,
+      why: 'A repeated key means "same operation", so the first result is returned.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Method | Safe | Idempotent | Retry freely? |
+| --- | --- | --- | --- |
+| GET, HEAD, OPTIONS | yes | yes | yes |
+| PUT | no | yes | yes |
+| DELETE | no | yes | yes |
+| PATCH | no | not always | only if designed so |
+| POST | no | no | only with an Idempotency-Key |
+
+</CheatSheet>

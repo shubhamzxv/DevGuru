@@ -1,0 +1,209 @@
+---
+id: rest-http-methods
+title: HTTP methods
+summary: The method says what you want to do with a resource; GET reads, POST creates, PUT replaces, PATCH changes part, and DELETE removes.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a library register of books. You can **look up** a book (GET), **add** a new book (POST), **rewrite** a book's whole entry (PUT), **correct one detail** such as the year (PATCH), or **strike it off** (DELETE).
+
+The book is the same; what changes is the action. In HTTP, that action is the **method**.
+
+</Analogy>
+
+## Simple explanation
+
+| Method | Action | Typical URL | Body? | Success code |
+| --- | --- | --- | --- | --- |
+| **GET** | read | `/books`, `/books/3` | no | 200 |
+| **POST** | create (or run an action) | `/books` | yes | 201 |
+| **PUT** | replace the whole resource | `/books/3` | yes, complete | 200 or 204 |
+| **PATCH** | change some fields | `/books/3` | yes, partial | 200 |
+| **DELETE** | remove | `/books/3` | no | 204 |
+| HEAD | like GET, headers only | `/books/3` | no | 200 |
+| OPTIONS | which methods are allowed (CORS preflight) | any | no | 204 |
+
+Two properties that interviewers always ask about:
+
+- **Safe**: does not change anything on the server. GET, HEAD and OPTIONS are safe
+- **Idempotent**: doing it once or ten times leaves the server in the same state. GET, PUT, DELETE (and the safe ones) are idempotent. **POST is not**: sending it twice creates two books. PATCH is not guaranteed to be idempotent (for example "add 1 to the stock")
+
+Why it matters: browsers, caches, proxies and retry logic rely on these rules. A GET can be cached and retried freely; a POST must not be retried blindly or you may charge a customer twice.
+
+POST is also used for actions that do not fit CRUD, such as `POST /orders/42/cancel` or `POST /login`.
+
+## Code example
+
+The five methods with Python `requests`:
+
+```python
+import requests
+
+base = "https://api.devguru.dev"
+print(requests.get(f"{base}/books/1").json())
+print(requests.post(f"{base}/books", json={"title": "Gitanjali", "author": "Tagore"}).status_code)
+print(requests.put(f"{base}/books/1", json={"title": "Malgudi Days", "author": "R. K. Narayan", "year": 1943}).status_code)
+print(requests.patch(f"{base}/books/1", json={"year": 1944}).json())
+print(requests.delete(f"{base}/books/1").status_code)
+```
+
+```output
+{'id': 1, 'title': 'Malgudi Days', 'author': 'R. K. Narayan', 'year': 1943}
+201
+200
+{'id': 1, 'title': 'Malgudi Days', 'author': 'R. K. Narayan', 'year': 1944}
+204
+```
+
+The same endpoints in FastAPI:
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/books")                          # read many
+def list_books(): ...
+
+@app.post("/books", status_code=201)        # create
+def create_book(book: dict): ...
+
+@app.put("/books/{book_id}")                # replace
+def replace_book(book_id: int, book: dict): ...
+
+@app.patch("/books/{book_id}")              # partial update
+def update_book(book_id: int, changes: dict): ...
+
+@app.delete("/books/{book_id}", status_code=204)   # remove
+def delete_book(book_id: int): ...
+```
+
+<Playground kind="http">
+
+```http
+PATCH /books/2
+Content-Type: application/json
+
+{"year": 1959}
+```
+
+</Playground>
+
+Then try the same body with PUT (it fails: PUT needs the whole book), DELETE /books/2 twice (204, then 404), and OPTIONS /books to see which methods are allowed.
+
+<Mistakes>
+
+<Mistake title="Using GET to change data">
+
+<Wrong>
+
+```text
+GET /books/3/delete
+```
+
+</Wrong>
+
+<Right>
+
+```text
+DELETE /books/3
+```
+
+</Right>
+
+GET must be safe. Browsers prefetch links, crawlers follow them and caches replay them, so a GET that deletes will delete by accident.
+
+</Mistake>
+
+<Mistake title="Retrying a POST without protection">
+
+<Wrong>
+
+```python
+for _ in range(3):                      # timeout? try again...
+    requests.post(f"{base}/payments", json={"amount": 500})   # may charge three times
+```
+
+</Wrong>
+
+<Right>
+
+```python
+requests.post(f"{base}/payments", json={"amount": 500},
+              headers={"Idempotency-Key": "order-1042"})   # server ignores repeats with the same key
+```
+
+</Right>
+
+POST is not idempotent. Payment APIs accept an idempotency key so a retried request is processed only once.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the main HTTP methods and what do they do?">
+
+GET reads a resource, POST creates one or triggers an action, PUT replaces a resource completely, PATCH partially updates it, and DELETE removes it. HEAD returns only headers, and OPTIONS describes allowed methods (used for CORS preflight).
+
+</QA>
+
+<QA q="Which HTTP methods are idempotent?">
+
+GET, HEAD, OPTIONS, PUT and DELETE. Repeating them leaves the server in the same state (the response code may differ, such as 204 then 404 for DELETE). POST is not idempotent, and PATCH is not guaranteed to be.
+
+</QA>
+
+<QA q="What is the difference between safe and idempotent?">
+
+Safe methods do not modify server state at all (GET, HEAD, OPTIONS). Idempotent methods may modify state, but doing them several times has the same effect as once (PUT, DELETE). Every safe method is idempotent, but not every idempotent method is safe.
+
+</QA>
+
+<QA q="When would you use POST for something that is not a create?">
+
+For actions or commands that do not map to replacing or deleting a resource, such as `POST /orders/42/cancel`, `POST /login`, or `POST /reports/generate`, and for complex searches with large criteria that do not fit in a query string.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which method is NOT idempotent?',
+      options: ['GET', 'PUT', 'DELETE', 'POST'],
+      answer: 3,
+      why: 'Each POST to /books creates a new book.',
+    },
+    {
+      q: 'You want to change only the price of product 5. Best method?',
+      options: ['GET', 'PUT', 'PATCH', 'POST'],
+      answer: 2,
+      why: 'PATCH sends only the fields that change.',
+    },
+    {
+      q: 'Which method is safe?',
+      options: ['GET', 'POST', 'PATCH', 'DELETE'],
+      answer: 0,
+      why: 'GET only reads; it must not change data.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Method | Does | Safe | Idempotent | Success |
+| --- | --- | --- | --- | --- |
+| GET | read | yes | yes | 200 |
+| POST | create / action | no | no | 201 |
+| PUT | replace all | no | yes | 200 / 204 |
+| PATCH | change part | no | not always | 200 |
+| DELETE | remove | no | yes | 204 |
+| HEAD | headers only | yes | yes | 200 |
+| OPTIONS | allowed methods | yes | yes | 204 |
+
+</CheatSheet>

@@ -1,0 +1,220 @@
+---
+id: rest-error-responses
+title: Error responses
+summary: A good error response uses the right status code and a consistent JSON body that says what went wrong, which field caused it and what to do, without leaking internal details.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Two railway counters reject your form. One clerk just says "Wrong." The other says "Your date of birth is missing in box 4; please fill it and come back to this counter."
+
+A good API error is the second clerk: it says **what** failed, **where**, and **how to fix it**, in the same format every time.
+
+</Analogy>
+
+## Simple explanation
+
+An error response has two parts:
+
+1. The **status code**, the first thing clients and monitoring look at (4xx = the client must change the request, 5xx = the server failed)
+2. A **JSON body** with details, in **one consistent shape** across the whole API
+
+A practical shape:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "Some fields are invalid.",
+    "details": [{"field": "email", "problem": "must be a valid email address"}],
+    "request_id": "req-7f3a"
+  }
+}
+```
+
+- **code**: a stable machine-readable string the client can check in `if` statements (messages may change; codes must not)
+- **message**: short, human-readable, safe to show
+- **details**: per-field problems for validation errors
+- **request_id**: lets support find the exact log lines
+
+There is also a standard, **RFC 9457 Problem Details** (`Content-Type: application/problem+json`) with fields `type`, `title`, `status`, `detail`, `instance`. FastAPI's default is `{"detail": ...}`, with a list of field errors for 422.
+
+Rules:
+
+- **Never** return 200 with an error inside
+- **Never** expose stack traces, SQL, file paths or internal hostnames in production: log them server-side with the request id, and return a generic 500 message
+- Validation errors: list **all** problems at once, not one per request
+- Do not reveal whether an account exists in login and password-reset errors ("Invalid email or password")
+- Add `Retry-After` for 429 and 503
+
+## Code example
+
+One error format for the whole FastAPI app:
+
+```python
+import logging
+import uuid
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+app = FastAPI()
+log = logging.getLogger("api")
+
+class ApiError(Exception):
+    def __init__(self, status: int, code: str, message: str):
+        self.status, self.code, self.message = status, code, message
+
+def body(code, message, details=None):
+    return {"error": {"code": code, "message": message, "details": details or [],
+                      "request_id": f"req-{uuid.uuid4().hex[:6]}"}}
+
+@app.exception_handler(ApiError)
+async def api_error(_: Request, exc: ApiError):
+    return JSONResponse(status_code=exc.status, content=body(exc.code, exc.message))
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_: Request, exc: RequestValidationError):
+    details = [{"field": ".".join(map(str, e["loc"][1:])), "problem": e["msg"]} for e in exc.errors()]
+    return JSONResponse(status_code=422, content=body("VALIDATION_FAILED", "Some fields are invalid.", details))
+
+@app.exception_handler(Exception)
+async def unexpected(_: Request, exc: Exception):
+    log.exception("Unhandled error")                       # full details go to the logs only
+    return JSONResponse(status_code=500, content=body("INTERNAL_ERROR", "Something went wrong. Please try again."))
+
+@app.get("/books/{book_id}")
+def get_book(book_id: int):
+    raise ApiError(404, "BOOK_NOT_FOUND", f"No book with id {book_id}.")
+```
+
+```output
+GET /books/99   -> 404 {"error": {"code": "BOOK_NOT_FOUND", "message": "No book with id 99.", "details": [], "request_id": "req-3c9e1a"}}
+GET /books/abc  -> 422 {"error": {"code": "VALIDATION_FAILED", "message": "Some fields are invalid.",
+                         "details": [{"field": "book_id", "problem": "Input should be a valid integer, unable to parse string as an integer"}], ...}}
+```
+
+<Playground kind="http">
+
+```http
+POST /books
+Content-Type: application/json
+
+{"title": 42}
+```
+
+</Playground>
+
+The 422 body lists every problem: author is missing and title has the wrong type. Then try `GET /bug` for a 500 that reveals nothing internal.
+
+<Mistakes>
+
+<Mistake title="Leaking internals in a 500">
+
+<Wrong>
+
+```json
+{"error": "psycopg.errors.UndefinedColumn: column \"emial\" does not exist at /srv/app/db.py line 88"}
+```
+
+</Wrong>
+
+<Right>
+
+```json
+{"error": {"code": "INTERNAL_ERROR", "message": "Something went wrong. Please try again.", "request_id": "req-3c9e1a"}}
+```
+
+</Right>
+
+Stack traces and SQL help attackers. Log them with the request id; show the client only a safe message.
+
+</Mistake>
+
+<Mistake title="A different error shape on every endpoint">
+
+<Wrong>
+
+```text
+/books   -> {"error": "not found"}
+/orders  -> {"msg": "Order missing", "ok": false}
+/users   -> "User does not exist"
+```
+
+</Wrong>
+
+<Right>
+
+```text
+every endpoint -> {"error": {"code": "...", "message": "...", "details": [...], "request_id": "..."}}
+```
+
+</Right>
+
+Clients write one error handler. Different shapes force special cases everywhere.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you design error responses for an API?">
+
+Use correct HTTP status codes and one consistent JSON error body across all endpoints: a stable machine-readable code, a human-readable message, field-level details for validation errors and a request or trace id. Consider the RFC 9457 Problem Details standard. Never leak stack traces or internals; log them server-side.
+
+</QA>
+
+<QA q="How do you return custom errors in FastAPI?">
+
+Raise `HTTPException(status_code, detail)` for simple cases. For a consistent format, define custom exception classes and register handlers with `@app.exception_handler(...)`, including handlers for `RequestValidationError` (422) and a catch-all `Exception` handler that logs and returns a safe 500.
+
+</QA>
+
+<QA q="Why include a machine-readable error code as well as a message?">
+
+Messages are for humans and may be reworded or translated; clients need a stable value to branch on, for example showing a "verify your email" screen when the code is EMAIL_NOT_VERIFIED. Codes also make errors easy to search in logs and docs.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What should a production 500 response contain?',
+      options: ['The full stack trace', 'The SQL query', 'A safe message and a request id', 'Nothing at all, not even JSON'],
+      answer: 2,
+      why: 'Details go to the logs; the client gets a safe message and an id for support.',
+    },
+    {
+      q: 'Why use a stable error code like BOOK_NOT_FOUND?',
+      options: ['It is shorter', 'Clients can rely on it even if the message text changes', 'HTTP requires it', 'For SEO'],
+      answer: 1,
+      why: 'Code is for machines, message is for people.',
+    },
+    {
+      q: 'Login fails. Which message is safest?',
+      options: ['"No account with that email"', '"Wrong password for asha@example.com"', '"Invalid email or password"', '"Database error"'],
+      answer: 2,
+      why: 'It does not reveal which emails have accounts.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Part | Example |
+| --- | --- |
+| Status | 400, 401, 403, 404, 409, 422, 429, 500 |
+| code | `"VALIDATION_FAILED"` (stable) |
+| message | `"Some fields are invalid."` (human) |
+| details | `[{"field": "email", "problem": "..."}]` |
+| request_id | `"req-7f3a"` (match the logs) |
+| Standard | RFC 9457 `application/problem+json` |
+| FastAPI | `HTTPException`, `@app.exception_handler(...)` |
+
+Never 200 for errors; never stack traces in responses; list all validation errors at once.
+
+</CheatSheet>

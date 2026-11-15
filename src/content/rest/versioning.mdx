@@ -1,0 +1,199 @@
+---
+id: rest-versioning
+title: Versioning
+summary: API versioning lets you make breaking changes in a new version while old clients keep using the old one, most often with a /v1/ prefix in the URL.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A school changes its syllabus. Students already in class 10 finish with the old syllabus; new students start with the new one. Both run side by side for a while, then the old one is retired.
+
+**API versioning** works the same way: old mobile apps keep calling `/v1`, new ones call `/v2`, and `/v1` is switched off after everyone has moved.
+
+</Analogy>
+
+## Simple explanation
+
+Once an API is public, clients depend on it: mobile apps that users have not updated, partner systems, other services. You cannot change it freely.
+
+**Non-breaking changes** (safe in the same version):
+
+- adding a new endpoint
+- adding a new **optional** field to a request
+- adding a new field to a response (clients should ignore unknown fields)
+
+**Breaking changes** (need a new version):
+
+- removing or renaming a field or endpoint
+- changing a field's type or meaning (`price` from rupees to paise)
+- making an optional field required
+- changing status codes or error formats clients rely on
+
+Ways to put the version in the request:
+
+| Style | Example | Notes |
+| --- | --- | --- |
+| **URL path** | `/v1/books` | most common; obvious, easy to route and cache |
+| Header | `Accept: application/vnd.devguru.v2+json` or `X-API-Version: 2` | clean URLs, harder to test in a browser |
+| Query parameter | `/books?version=2` | easy, but mixes with real filters |
+| Date-based | `Stripe-Version: 2024-06-20` | each client is pinned to the date it started |
+
+Good habits:
+
+- Version **only on breaking changes**: `v1`, `v2`, not `v1.3.7`
+- Run old and new side by side, and **deprecate** the old one with notice: `Deprecation` and `Sunset` headers, emails, logs of who still calls it
+- Share code between versions: often v2 is a thin adapter over the same service layer
+
+## Code example
+
+Two versions side by side in FastAPI:
+
+```python
+from fastapi import APIRouter, FastAPI, Response
+
+app = FastAPI()
+v1 = APIRouter(prefix="/v1")
+v2 = APIRouter(prefix="/v2")
+
+BOOK = {"id": 1, "title": "Malgudi Days", "price_paise": 29900}
+
+@v1.get("/books/{book_id}")
+def get_book_v1(book_id: int, response: Response):
+    response.headers["Deprecation"] = "true"
+    response.headers["Sunset"] = "Wed, 31 Mar 2027 00:00:00 GMT"   # date v1 will be removed
+    return {"id": BOOK["id"], "name": BOOK["title"], "price": BOOK["price_paise"] / 100}
+
+@v2.get("/books/{book_id}")
+def get_book_v2(book_id: int):                   # v2 renamed name -> title, price in paise
+    return {"id": BOOK["id"], "title": BOOK["title"], "price_paise": BOOK["price_paise"]}
+
+app.include_router(v1)
+app.include_router(v2)
+```
+
+```output
+GET /v1/books/1 -> {"id": 1, "name": "Malgudi Days", "price": 299.0}
+                   Deprecation: true, Sunset: Wed, 31 Mar 2027 00:00:00 GMT
+GET /v2/books/1 -> {"id": 1, "title": "Malgudi Days", "price_paise": 29900}
+```
+
+<Playground kind="http">
+
+```http
+GET /books/1
+```
+
+</Playground>
+
+The pretend API has no version prefix. Notice: adding a new field to this response would not break clients, but renaming `title` would, and would need a `/v2`.
+
+<Mistakes>
+
+<Mistake title="Breaking a field in the same version">
+
+<Wrong>
+
+```text
+Monday:  GET /v1/books/1 -> {"price": 299.0}
+Tuesday: GET /v1/books/1 -> {"price": 29900}     (paise now; every old app shows ₹29,900)
+```
+
+</Wrong>
+
+<Right>
+
+```text
+GET /v1/books/1 -> {"price": 299.0}                       (unchanged)
+GET /v2/books/1 -> {"price_paise": 29900}                 (new name, new version)
+```
+
+</Right>
+
+Changing the meaning of a field is a breaking change, even if the name stays the same.
+
+</Mistake>
+
+<Mistake title="New version for every small addition">
+
+<Wrong>
+
+```text
+/v1 -> /v2 (added a field) -> /v3 (added an endpoint) -> /v4 ...
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Add optional fields and endpoints inside v1. Create v2 only for breaking changes.
+```
+
+</Right>
+
+Every live version must be maintained, tested and documented. Additive changes do not need one.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you version a REST API?">
+
+Most often with a major version in the URL path (`/v1/...`), alternatively through a custom header, media-type versioning in the Accept header, or a query parameter. Bump the version only for breaking changes, keep old versions running for a deprecation period, and announce removal with Deprecation and Sunset headers.
+
+</QA>
+
+<QA q="What counts as a breaking change?">
+
+Anything that can make an existing client fail: removing or renaming fields or endpoints, changing types or units, making optional inputs required, changing authentication, error format or status codes. Adding endpoints, optional request fields and new response fields is normally non-breaking.
+
+</QA>
+
+<QA q="URL versioning vs header versioning: pros and cons?">
+
+URL versioning is explicit, easy to test in a browser, simple to route and cache, but technically puts version information into resource identifiers. Header versioning keeps URLs clean and is closer to REST theory, but it is less visible, harder to test and needs caches to vary on the header.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which change needs a new API version?',
+      options: ['Adding a new endpoint', 'Adding a new optional field', 'Renaming a response field', 'Adding a response field'],
+      answer: 2,
+      why: 'Clients reading the old name would break.',
+    },
+    {
+      q: 'Most common place to put the version?',
+      options: ['In the URL path, /v1/...', 'In the body', 'In a cookie', 'In the fragment'],
+      answer: 0,
+      why: 'It is explicit and easy to route.',
+    },
+    {
+      q: 'Which header announces when an old version will be removed?',
+      options: ['Retry-After', 'Sunset', 'Expires', 'Location'],
+      answer: 1,
+      why: 'The Sunset header gives the date the endpoint will stop working.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Change | Breaking? |
+| --- | --- |
+| New endpoint | no |
+| New optional request field | no |
+| New response field | no |
+| Remove or rename a field | yes |
+| Change type or unit | yes |
+| Optional becomes required | yes |
+
+Version styles: `/v1/books` (most common), `Accept: application/vnd.app.v2+json`, `X-API-Version: 2`, date-based. Deprecate with `Deprecation` and `Sunset` headers.
+
+</CheatSheet>

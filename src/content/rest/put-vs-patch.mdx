@@ -1,0 +1,210 @@
+---
+id: rest-put-vs-patch
+title: PUT vs PATCH
+summary: PUT replaces the whole resource with what you send, while PATCH changes only the fields you send and keeps the rest.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+You fill in a new admission form from scratch and hand it in: the old form is thrown away and the new one replaces it completely. Any box you left empty is now empty. That is **PUT**.
+
+You hand in a small slip: "Change my phone number to 98100 00000". Everything else stays as it was. That is **PATCH**.
+
+</Analogy>
+
+## Simple explanation
+
+| | PUT | PATCH |
+| --- | --- | --- |
+| Meaning | replace the resource | apply partial changes |
+| Body | the **complete** resource | only the fields to change |
+| Fields you leave out | removed or reset to default | unchanged |
+| Idempotent | yes | not guaranteed |
+| Validation | all required fields needed | each sent field validated |
+| Typical use | "save this whole form" | "change the price", "mark as read" |
+
+PUT can also **create** a resource at a URL the client chooses (`PUT /settings/theme`), returning 201. Most APIs create with POST and use PUT only for replacing.
+
+PATCH formats:
+
+- **Merge patch** (the common one, `application/merge-patch+json`): send a partial object. `{"price": 499}` changes the price. Sending `null` for a field removes it
+- **JSON Patch** (`application/json-patch+json`): a list of operations, such as `[{"op": "replace", "path": "/price", "value": 499}]`. More precise, rarely needed
+
+In FastAPI, the clean way to PATCH is a model with every field optional, then `model_dump(exclude_unset=True)` to get only the fields the client actually sent.
+
+Watch out for **lost updates**: two people edit the same record; the second PUT overwrites the first person's changes. PATCH reduces this, and `ETag` with `If-Match` prevents it completely (the server returns 412 if the version changed).
+
+## Code example
+
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+app = FastAPI()
+books = {1: {"id": 1, "title": "Malgudi Days", "author": "R. K. Narayan", "year": 1943}}
+
+class BookFull(BaseModel):          # for PUT: everything required
+    title: str
+    author: str
+    year: int | None = None
+
+class BookPatch(BaseModel):         # for PATCH: everything optional
+    title: str | None = None
+    author: str | None = None
+    year: int | None = None
+
+@app.put("/books/{book_id}")
+def replace(book_id: int, book: BookFull):
+    if book_id not in books:
+        raise HTTPException(404)
+    books[book_id] = {"id": book_id, **book.model_dump()}
+    return books[book_id]
+
+@app.patch("/books/{book_id}")
+def update(book_id: int, changes: BookPatch):
+    if book_id not in books:
+        raise HTTPException(404)
+    books[book_id].update(changes.model_dump(exclude_unset=True))   # only fields that were sent
+    return books[book_id]
+```
+
+```output
+PATCH /books/1  {"year": 1944}
+  -> {"id": 1, "title": "Malgudi Days", "author": "R. K. Narayan", "year": 1944}
+
+PUT   /books/1  {"title": "Swami and Friends", "author": "R. K. Narayan"}
+  -> {"id": 1, "title": "Swami and Friends", "author": "R. K. Narayan", "year": null}
+
+PUT   /books/1  {"year": 1935}
+  -> 422 (title and author are required)
+```
+
+<Playground kind="http">
+
+```http
+PUT /books/1
+Content-Type: application/json
+
+{"year": 1944}
+```
+
+</Playground>
+
+PUT with only one field fails with 422. Change the method to PATCH and send again: only the year changes.
+
+<Mistakes>
+
+<Mistake title="PATCH that wipes the fields you did not send">
+
+<Wrong>
+
+```python
+@app.patch("/books/{book_id}")
+def update(book_id: int, changes: BookPatch):
+    books[book_id].update(changes.model_dump())     # unsent fields become None
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.patch("/books/{book_id}")
+def update(book_id: int, changes: BookPatch):
+    books[book_id].update(changes.model_dump(exclude_unset=True))
+```
+
+</Right>
+
+Without `exclude_unset=True`, every optional field the client left out is written as `None`, which turns PATCH into a broken PUT.
+
+</Mistake>
+
+<Mistake title="Using PUT with partial data">
+
+<Wrong>
+
+```http
+PUT /users/7
+Content-Type: application/json
+
+{"phone": "9810000000"}
+```
+
+</Wrong>
+
+<Right>
+
+```http
+PATCH /users/7
+Content-Type: application/json
+
+{"phone": "9810000000"}
+```
+
+</Right>
+
+By the rules, a PUT with only the phone means "the user is now only a phone number". Use PATCH for partial changes.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between PUT and PATCH?">
+
+PUT replaces the entire resource with the representation in the request; omitted fields are removed or reset, and it is idempotent. PATCH applies a partial modification: only the fields sent change. PATCH is not guaranteed to be idempotent and usually uses merge-patch semantics in JSON APIs.
+
+</QA>
+
+<QA q="How do you implement PATCH in FastAPI?">
+
+Define a Pydantic model where every field is optional, then apply `model.model_dump(exclude_unset=True)` to the stored object, so only fields actually present in the request are updated. Validate the merged result if fields depend on each other.
+
+</QA>
+
+<QA q="How do you prevent two users overwriting each other's edits?">
+
+Optimistic concurrency: return an ETag (or a version number) with the resource; the client sends it back in `If-Match` with the PUT or PATCH; the server applies the change only if the version still matches, otherwise it returns 412 Precondition Failed and the client reloads.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A resource has title, author, year. You PUT only title and author. What happens to year?',
+      options: ['It stays the same', 'It is removed or reset', 'The request is always rejected', 'It doubles'],
+      answer: 1,
+      why: 'PUT replaces the whole resource with what you sent.',
+    },
+    {
+      q: 'Which is guaranteed idempotent?',
+      options: ['PATCH', 'PUT', 'Both', 'Neither'],
+      answer: 1,
+      why: 'Sending the same full replacement again gives the same state.',
+    },
+    {
+      q: 'In FastAPI, which call returns only the fields the client sent?',
+      options: ['model_dump()', 'model_dump(exclude_unset=True)', 'dict()', 'json()'],
+      answer: 1,
+      why: 'exclude_unset leaves out fields that were not in the request.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| | PUT | PATCH |
+| --- | --- | --- |
+| Sends | whole resource | changed fields |
+| Missing fields | removed / default | kept |
+| Idempotent | yes | not always |
+| FastAPI | required-field model | optional-field model + `exclude_unset=True` |
+| Success | 200 (or 201 if created) | 200 |
+| Concurrency | `If-Match: <etag>` → 412 if changed | same |
+
+</CheatSheet>

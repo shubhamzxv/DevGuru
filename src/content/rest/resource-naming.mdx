@@ -1,0 +1,202 @@
+---
+id: rest-resource-naming
+title: Naming resources
+summary: Good REST URLs use plural nouns, lower-case words with hyphens, ids for single items, and short nesting for things that belong to a parent.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A well-designed library has clear signs: "Fiction", then shelf "Fiction / Indian authors", then a numbered spot for each book. Anyone can guess where a book is without asking.
+
+Good URLs work like those signs: a reader should **guess** the URL of a resource before reading the docs.
+
+</Analogy>
+
+## Simple explanation
+
+The rules most teams follow:
+
+1. **Nouns, not verbs**: `/orders`, not `/getOrders`. The method is the verb
+2. **Plural for collections**: `/books` and `/books/3` (not `/book/3`). Same word for the list and the item
+3. **Lower case, hyphens between words**: `/order-items`, not `/orderItems` or `/order_items`
+4. **Ids for single items**: `/users/7`. Use stable ids (numbers or UUIDs), not names that change
+5. **Nest for ownership, but only one level**: `/users/7/orders` = orders of user 7. Avoid `/countries/in/states/up/cities/9/streets/4`; once an item has its own id, give it a top-level URL: `/orders/42`
+6. **Query strings for filters**, not new paths: `/orders?status=paid`, not `/paid-orders`
+7. **No file extensions or technology**: `/books/3`, not `/books/3.json` or `/api.php?id=3`. Use the `Accept` header for format
+8. **Version prefix** if you version in the URL: `/v1/books` (see Versioning)
+9. **Actions that are not CRUD**: model them as a sub-resource or a state change:
+   - `POST /orders/42/cancellation` or simply `POST /orders/42/cancel`
+   - `PATCH /orders/42` with `{"status": "cancelled"}`
+
+Be **consistent** more than perfect: the same naming, casing and plurals across every endpoint matters most.
+
+## Code example
+
+A consistent set of endpoints:
+
+```text
+GET     /v1/users                     list users
+POST    /v1/users                     create a user
+GET     /v1/users/7                   one user
+PATCH   /v1/users/7                   change some fields
+DELETE  /v1/users/7                   delete
+
+GET     /v1/users/7/orders            orders of user 7
+POST    /v1/users/7/orders            place an order for user 7
+GET     /v1/orders/42                 one order (top level: it has its own id)
+GET     /v1/orders?status=paid&sort=-created_at
+POST    /v1/orders/42/cancel          an action that is not plain CRUD
+GET     /v1/order-items?order_id=42   multi-word resource with a hyphen
+```
+
+The same structure with FastAPI routers:
+
+```python
+from fastapi import APIRouter, FastAPI
+
+users = APIRouter(prefix="/v1/users", tags=["users"])
+orders = APIRouter(prefix="/v1/orders", tags=["orders"])
+
+@users.get("/{user_id}/orders")
+def orders_of_user(user_id: int, status: str | None = None):
+    return {"user_id": user_id, "status": status}
+
+@orders.post("/{order_id}/cancel", status_code=202)
+def cancel_order(order_id: int):
+    return {"order_id": order_id, "status": "cancelling"}
+
+app = FastAPI()
+app.include_router(users)
+app.include_router(orders)
+```
+
+```output
+GET  /v1/users/7/orders?status=paid  -> {"user_id": 7, "status": "paid"}
+POST /v1/orders/42/cancel            -> 202 {"order_id": 42, "status": "cancelling"}
+```
+
+<Playground kind="http">
+
+```http
+GET /books/4
+```
+
+</Playground>
+
+The pretend API names its resources this way: `/books` for the list, `/books/4` for one item, and query strings for filters (`/books?author=roy`).
+
+<Mistakes>
+
+<Mistake title="Mixing styles">
+
+<Wrong>
+
+```text
+GET /Users
+GET /user/7
+GET /user_orders?userId=7
+GET /getOrderDetails/42
+```
+
+</Wrong>
+
+<Right>
+
+```text
+GET /users
+GET /users/7
+GET /users/7/orders
+GET /orders/42
+```
+
+</Right>
+
+Four different styles force every client developer to read the docs for every call.
+
+</Mistake>
+
+<Mistake title="Very deep nesting">
+
+<Wrong>
+
+```text
+GET /users/7/orders/42/items/3/reviews/9
+```
+
+</Wrong>
+
+<Right>
+
+```text
+GET /reviews/9
+GET /order-items/3/reviews
+```
+
+</Right>
+
+Deep URLs are long, fragile and force the client to know every parent id. Nest at most one level.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are best practices for naming REST endpoints?">
+
+Use plural nouns for collections, ids for items, lower-case kebab-case words, HTTP methods instead of verbs, query parameters for filtering, sorting and pagination, at most one level of nesting for owned resources, no file extensions, and consistent conventions across the whole API.
+
+</QA>
+
+<QA q="How do you design an endpoint for an action like 'cancel order' that is not CRUD?">
+
+Either treat it as a state change, `PATCH /orders/42` with `{"status": "cancelled"}`, or as a sub-resource or controller action, `POST /orders/42/cancel` (or `POST /orders/42/cancellations`). POST is used because the action has side effects and may not be idempotent.
+
+</QA>
+
+<QA q="Should URLs use ids or slugs?">
+
+Use stable, unique ids (numbers or UUIDs) as the canonical identifier, because names and titles change. Slugs (`/blog/how-rest-works`) are fine for public, SEO-friendly pages, often in addition to an id.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Best URL for one product with id 9?',
+      options: ['/getProduct?id=9', '/product/9', '/products/9', '/Products/9.json'],
+      answer: 2,
+      why: 'Plural noun plus id, lower case, no extension.',
+    },
+    {
+      q: 'Best URL for the orders of customer 5 that are paid?',
+      options: ['/customers/5/orders?status=paid', '/paidOrdersOfCustomer/5', '/customers/5/orders/paid/list', '/orders-paid-5'],
+      answer: 0,
+      why: 'One level of nesting for ownership, filter in the query string.',
+    },
+    {
+      q: 'Which casing is most common for multi-word paths?',
+      options: ['camelCase', 'kebab-case', 'UPPER_CASE', 'Spaces'],
+      answer: 1,
+      why: 'For example /order-items.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Rule | Good | Avoid |
+| --- | --- | --- |
+| Nouns | `/orders` | `/getOrders` |
+| Plural | `/books/3` | `/book/3` |
+| Case | `/order-items` | `/orderItems` |
+| Nesting | `/users/7/orders` | 3+ levels deep |
+| Filters | `/orders?status=paid` | `/paid-orders` |
+| Format | `Accept: application/json` | `/books/3.json` |
+| Actions | `POST /orders/42/cancel` | `GET /cancelOrder?id=42` |
+| Version | `/v1/books` | `/books-v1` |
+
+</CheatSheet>

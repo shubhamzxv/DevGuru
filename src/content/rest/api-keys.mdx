@@ -1,0 +1,208 @@
+---
+id: rest-api-keys
+title: API keys
+summary: An API key is a long secret string that identifies which application is calling an API, used mainly for server-to-server access, usage tracking and rate limits.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A company gives each delivery partner a gate pass card. The guard does not know which person is driving, but the card says "this van belongs to Swiggy", so it can come in, and the company can count how many times each partner entered.
+
+An **API key** is that gate pass for an **application**: it says which app is calling, not which human user.
+
+</Analogy>
+
+## Simple explanation
+
+An **API key** is a long random string, such as `dg_live_7Kx9...`, that the API provider gives to a developer. The client sends it with every request, usually in a header:
+
+`X-API-Key: dg_live_7Kx9...` or `Authorization: Bearer dg_live_7Kx9...`
+
+The server looks it up, finds the owning **project or account**, checks it is active, and applies that account's **permissions and rate limits**.
+
+Good for:
+
+- **Server-to-server** calls: your backend calling a weather, maps or SMS API
+- **Identifying and metering** apps: usage, billing, rate limits per customer
+- Simple internal tools
+
+Not good for:
+
+- **Identifying end users**: a key says which app, not which person. Use sessions or tokens (JWT, OAuth) for users
+- **Front-end code**: anything shipped in a browser or mobile app can be extracted. Public keys (like a maps browser key) must be restricted by domain or app and have low limits
+
+Handling keys safely:
+
+- **Generate** with a cryptographically secure random generator (`secrets.token_urlsafe(32)`)
+- **Store only a hash** of the key on the server (like a password); show the full key to the user once
+- Add a recognisable **prefix** (`dg_live_`, `dg_test_`) so leaked keys can be detected by secret scanners
+- Support **several keys per account** so you can **rotate**: create new, switch, revoke old
+- Give keys **scopes** (read-only, write) and **expiry** where possible
+- Send only over **HTTPS**, in a header, never in the URL
+- Keep them in environment variables or a secrets manager, never in git
+
+## Code example
+
+Creating and checking keys in FastAPI:
+
+```python
+import hashlib
+import secrets
+from fastapi import Depends, FastAPI, Header, HTTPException
+
+app = FastAPI()
+KEYS: dict[str, dict] = {}                  # hash -> owner info (a database table in real life)
+
+def hash_key(key: str) -> str:
+    return hashlib.sha256(key.encode()).hexdigest()
+
+def create_key(owner: str) -> str:
+    key = "dg_live_" + secrets.token_urlsafe(24)
+    KEYS[hash_key(key)] = {"owner": owner, "scopes": ["books:read"]}
+    return key                              # shown to the user ONCE, never stored in plain text
+
+def api_client(x_api_key: str = Header(None)) -> dict:
+    client = KEYS.get(hash_key(x_api_key or ""))
+    if client is None:
+        raise HTTPException(status_code=401, detail="Missing or invalid API key")
+    return client
+
+@app.get("/books")
+def books(client: dict = Depends(api_client)):
+    return {"caller": client["owner"], "books": ["Malgudi Days"]}
+
+key = create_key("reading-app")
+print(key[:8] + "…")
+```
+
+```python
+from fastapi.testclient import TestClient
+c = TestClient(app)
+print(c.get("/books").status_code)
+print(c.get("/books", headers={"X-API-Key": key}).json())
+```
+
+```output
+dg_live_…
+401
+{'caller': 'reading-app', 'books': ['Malgudi Days']}
+```
+
+<Playground kind="http">
+
+```http
+GET /me
+X-API-Key: dg_live_example
+```
+
+</Playground>
+
+The pretend API uses tokens, not keys, for `/me`, so a key there gives 401. The idea is the same: no valid credential, no access.
+
+<Mistakes>
+
+<Mistake title="Committing the key to git">
+
+<Wrong>
+
+```python
+WEATHER_KEY = "wk_live_8f2c91aa..."        # pushed to GitHub: bots find it in minutes
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import os
+WEATHER_KEY = os.environ["WEATHER_API_KEY"]   # from .env (in .gitignore) or a secrets manager
+```
+
+</Right>
+
+Leaked keys are found by automated scanners almost immediately. If it happens, revoke and rotate at once.
+
+</Mistake>
+
+<Mistake title="Storing keys in plain text">
+
+<Wrong>
+
+```sql
+INSERT INTO api_keys (owner, key) VALUES ('reading-app', 'dg_live_7Kx9...');
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+INSERT INTO api_keys (owner, key_hash, prefix) VALUES ('reading-app', 'e3b0c442...', 'dg_live_7K');
+```
+
+</Right>
+
+If the database leaks, hashed keys cannot be used. Keep a short prefix to help users recognise their keys.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is an API key and when would you use one?">
+
+A secret token that identifies the calling application or project. It is suited to server-to-server integrations, usage metering, billing and rate limiting. It does not identify an end user and is not a full authorization system, so user-facing apps should use sessions, JWTs or OAuth.
+
+</QA>
+
+<QA q="API key vs OAuth token: what is the difference?">
+
+An API key is a long-lived static secret representing an application, usually with fixed permissions. An OAuth access token is short-lived, issued through an authorization flow, represents a user's (or app's) delegated permission with specific scopes, and can be refreshed and revoked without sharing the user's password.
+
+</QA>
+
+<QA q="How should API keys be stored and rotated?">
+
+Store only a hash (and a short prefix for display) in the database; show the full key once at creation. Allow multiple active keys per account so clients can deploy a new key before the old one is revoked, track last-used time, and support expiry and immediate revocation.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'An API key mainly identifies...',
+      options: ['The end user', 'The calling application or project', 'The server', 'The browser'],
+      answer: 1,
+      why: 'Keys represent apps; tokens and sessions represent users.',
+    },
+    {
+      q: 'Where should the key be sent?',
+      options: ['In the URL query', 'In a header over HTTPS', 'In the HTML page', 'In a cookie without Secure'],
+      answer: 1,
+      why: 'URLs are logged and shared; headers are not.',
+    },
+    {
+      q: 'How should the server store keys?',
+      options: ['Plain text', 'A hash of the key', 'In the frontend', 'In a log file'],
+      answer: 1,
+      why: 'Like passwords: a leaked hash cannot be used to call the API.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Do | Avoid |
+| --- | --- |
+| `secrets.token_urlsafe(32)` with a prefix | guessable keys |
+| Send in `X-API-Key` / `Authorization` over HTTPS | `?api_key=` in the URL |
+| Store a SHA-256 hash | plain text in the DB |
+| Env vars / secrets manager | keys in git or frontend code |
+| Scopes, expiry, rotation, revoke | one forever-key for everything |
+| Rate limit per key | unlimited keys |
+
+</CheatSheet>

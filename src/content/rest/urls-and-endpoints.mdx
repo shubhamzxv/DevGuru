@@ -1,0 +1,202 @@
+---
+id: rest-urls-and-endpoints
+title: URLs, endpoints and resources
+summary: A URL is the full address of something on the web, a resource is the thing it names, and an endpoint is a URL plus a method that your API answers.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A postal address has parts: country, city, street, house number, and maybe "c/o Ravi". Each part narrows down where the letter goes.
+
+A **URL** works the same way. `https://api.devguru.dev/books/3?format=short` means: use HTTPS, go to the machine api.devguru.dev, find the **books** collection, item **3**, and give it in the short format.
+
+</Analogy>
+
+## Simple explanation
+
+Parts of a URL:
+
+```text
+https://api.devguru.dev:443/books/3?format=short#reviews
+\___/   \_____________/ \_/\______/\___________/\______/
+scheme       host       port  path     query     fragment
+```
+
+- **Scheme**: `https` or `http`
+- **Host**: the domain name (or IP address)
+- **Port**: optional; 443 is the default for HTTPS, 80 for HTTP
+- **Path**: which resource, for example `/books/3`
+- **Query string**: after `?`, key=value pairs joined with `&`, used to filter, sort or paginate
+- **Fragment**: after `#`, used only by the browser (to jump to a section). It is never sent to the server
+
+A **resource** is a thing your API manages: a book, an order, a user. REST APIs name resources with nouns in the path:
+
+- `/books` is the **collection** of books
+- `/books/3` is **one** book (3 is its id, a **path parameter**)
+- `/users/7/orders` is the orders that belong to user 7
+
+An **endpoint** is one URL pattern plus one method that the API handles, for example `GET /books/{id}` or `POST /books`. The same path with different methods is different endpoints.
+
+Special characters must be **URL-encoded**: a space becomes `%20` (or `+` in query strings), `&` inside a value becomes `%26`. Libraries do this for you.
+
+## Code example
+
+Reading a URL with Python:
+
+```python
+from urllib.parse import urlparse, parse_qs, urlencode
+
+url = "https://api.devguru.dev/books/3?format=short&lang=hi#reviews"
+parts = urlparse(url)
+print(parts.scheme, parts.netloc, parts.path)
+print(parse_qs(parts.query))
+print(parts.fragment)
+print(urlencode({"q": "malgudi days", "page": 2}))   # building a query string safely
+```
+
+```output
+https api.devguru.dev /books/3
+{'format': ['short'], 'lang': ['hi']}
+reviews
+q=malgudi+days&page=2
+```
+
+Endpoints in FastAPI: path parameter and query parameter:
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/books/{book_id}")             # endpoint: GET /books/{book_id}
+def get_book(book_id: int, format: str = "full"):   # book_id from the path, format from ?format=
+    return {"id": book_id, "format": format}
+```
+
+```output
+GET /books/3?format=short  ->  {"id": 3, "format": "short"}
+```
+
+<Playground kind="http">
+
+```http
+GET /books?author=narayan
+```
+
+</Playground>
+
+Try `/books/2`, `/books?page=2&limit=2`, and a path that does not exist, such as `/bookz`.
+
+<Mistakes>
+
+<Mistake title="Verbs in the path">
+
+<Wrong>
+
+```text
+GET  /getBooks
+POST /createBook
+POST /deleteBook?id=3
+```
+
+</Wrong>
+
+<Right>
+
+```text
+GET    /books
+POST   /books
+DELETE /books/3
+```
+
+</Right>
+
+The HTTP method is the verb; the path names the resource with a noun.
+
+</Mistake>
+
+<Mistake title="Building query strings by hand">
+
+<Wrong>
+
+```python
+url = "https://api.devguru.dev/books?q=" + "tom & jerry"   # & breaks the query
+```
+
+</Wrong>
+
+<Right>
+
+```python
+requests.get("https://api.devguru.dev/books", params={"q": "tom & jerry"})   # encoded as q=tom+%26+jerry
+```
+
+</Right>
+
+Let the library encode values so special characters are sent safely.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a URL, a URI and an endpoint?">
+
+A URI identifies a resource; a URL is a URI that also says how to locate it (scheme, host, path). In practice people use URL for both. An endpoint is a specific operation your API exposes: a URL pattern together with an HTTP method, such as `GET /books/{id}`.
+
+</QA>
+
+<QA q="What is the difference between a path parameter and a query parameter?">
+
+A path parameter identifies a specific resource and is part of the path, as in `/books/3`. A query parameter, after `?`, modifies the request: filtering, sorting, pagination or format, as in `/books?author=roy&page=2`. Use path parameters for identity and query parameters for options.
+
+</QA>
+
+<QA q="Is the URL fragment sent to the server?">
+
+No. The part after `#` is handled only by the browser, for example to scroll to a section or by single-page-app routers. The server never sees it.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In /users/7/orders?status=paid, what is 7?',
+      options: ['A query parameter', 'A path parameter', 'A header', 'A fragment'],
+      answer: 1,
+      why: 'It is part of the path and identifies the user.',
+    },
+    {
+      q: 'Which part of a URL never reaches the server?',
+      options: ['The path', 'The query string', 'The fragment (#...)', 'The host'],
+      answer: 2,
+      why: 'The fragment is used only by the browser.',
+    },
+    {
+      q: 'Which is a good REST endpoint for deleting book 3?',
+      options: ['POST /deleteBook?id=3', 'GET /books/3/delete', 'DELETE /books/3', 'DELETE /deleteBooks'],
+      answer: 2,
+      why: 'Method as the verb, path as the noun.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Part | Example | Note |
+| --- | --- | --- |
+| Scheme | `https` | always HTTPS in production |
+| Host | `api.devguru.dev` | found through DNS |
+| Port | `:443` | default for HTTPS, usually hidden |
+| Path | `/books/3` | the resource |
+| Query | `?page=2&limit=10` | options: filter, sort, paginate |
+| Fragment | `#reviews` | browser only |
+| Collection | `/books` | many items |
+| Item | `/books/3` | one item |
+| Endpoint | `GET /books/{id}` | method + path pattern |
+
+</CheatSheet>

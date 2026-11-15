@@ -1,0 +1,210 @@
+---
+id: rest-rest-principles
+title: REST principles
+summary: REST is a style for designing web APIs around resources identified by URLs, handled with standard HTTP methods, with stateless requests and cacheable responses.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a well-run government office with numbered counters: counter 3 always handles passports, every visitor fills the same standard form, and every visitor brings their own documents each time (the clerk does not remember yesterday's visit).
+
+**REST** asks APIs to work like that office: clear **things** (resources) at fixed **addresses**, the same small set of **actions** everywhere, and every request **complete on its own**.
+
+</Analogy>
+
+## Simple explanation
+
+**REST** (Representational State Transfer) is an architectural **style**, not a protocol or a library. Roy Fielding described it in 2000. An API that follows it is called **RESTful**.
+
+The six constraints, in plain words:
+
+1. **Client-server**: the UI and the data are separate, so each can change on its own
+2. **Stateless**: each request carries everything the server needs (such as the token). The server keeps no client session between requests. This makes it easy to add more servers
+3. **Cacheable**: responses say whether they can be cached (`Cache-Control`, `ETag`), so clients and CDNs can reuse them
+4. **Uniform interface**: the most important one
+   - every **resource** has a URL (`/books/3`)
+   - you work with **representations** of it (usually JSON)
+   - standard **methods** have standard meanings (GET reads, DELETE removes)
+   - responses are **self-descriptive** (status code, Content-Type)
+   - ideally responses include **links** to related actions (**HATEOAS**); most real APIs skip this
+5. **Layered system**: the client cannot tell if it talks to the server directly or through a load balancer, CDN or gateway
+6. **Code on demand** (optional): the server may send code to run, such as JavaScript
+
+In everyday practice, "RESTful" means: **nouns in URLs, HTTP methods as verbs, correct status codes, JSON bodies, stateless auth with tokens, and sensible caching**.
+
+REST is not the only choice. GraphQL suits clients that need flexible queries; gRPC suits fast internal calls. A later topic compares them.
+
+## Code example
+
+A small RESTful resource in FastAPI:
+
+```python
+from fastapi import FastAPI, HTTPException, Response
+from pydantic import BaseModel
+
+app = FastAPI()
+BOOKS: dict[int, dict] = {1: {"id": 1, "title": "Malgudi Days"}}
+
+class BookIn(BaseModel):
+    title: str
+
+@app.get("/books")                                        # the collection
+def list_books():
+    return list(BOOKS.values())
+
+@app.get("/books/{book_id}")                              # one resource
+def get_book(book_id: int, response: Response):
+    book = BOOKS.get(book_id) or _missing()
+    response.headers["Cache-Control"] = "max-age=60"       # cacheable
+    return book
+
+@app.post("/books", status_code=201)                      # create
+def create_book(book: BookIn, response: Response):
+    new_id = max(BOOKS) + 1
+    BOOKS[new_id] = {"id": new_id, **book.model_dump()}
+    response.headers["Location"] = f"/books/{new_id}"     # self-descriptive
+    return BOOKS[new_id]
+
+@app.delete("/books/{book_id}", status_code=204)          # remove
+def delete_book(book_id: int):
+    BOOKS.pop(book_id, None) or _missing()
+
+def _missing():
+    raise HTTPException(status_code=404, detail="Book not found")
+```
+
+```output
+GET    /books      -> 200 [{"id": 1, "title": "Malgudi Days"}]
+POST   /books      -> 201 Location: /books/2
+GET    /books/2    -> 200 Cache-Control: max-age=60
+DELETE /books/2    -> 204
+GET    /books/2    -> 404 {"detail": "Book not found"}
+```
+
+<Playground kind="http">
+
+```http
+GET /books
+```
+
+</Playground>
+
+This pretend API follows the principles: collections and items, standard methods, real status codes, caching headers. Explore it: `GET /books/3`, `DELETE /books/3`, then `GET /books/3` again.
+
+<Mistakes>
+
+<Mistake title="RPC-style URLs called REST">
+
+<Wrong>
+
+```text
+POST /api/getAllBooks
+POST /api/updateBookTitle
+POST /api/removeBook
+```
+
+</Wrong>
+
+<Right>
+
+```text
+GET    /api/books
+PATCH  /api/books/3
+DELETE /api/books/3
+```
+
+</Right>
+
+Using POST for everything with verbs in the URL is remote procedure call style. It loses caching, idempotency and the meaning of status codes.
+
+</Mistake>
+
+<Mistake title="Server-side state between requests">
+
+<Wrong>
+
+```text
+POST /search/step1  (server remembers your filters in memory)
+GET  /search/step2  (fails if the load balancer sends you to another server)
+```
+
+</Wrong>
+
+<Right>
+
+```text
+GET /books?author=roy&year=1997   (each request is complete)
+```
+
+</Right>
+
+Stateless requests can go to any server, which is what lets REST APIs scale horizontally.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is REST?">
+
+An architectural style for distributed systems, typically web APIs, built on constraints: client-server, statelessness, cacheability, a uniform interface (resources identified by URIs, manipulated through representations with standard methods, self-descriptive messages, hypermedia), a layered system and optional code on demand.
+
+</QA>
+
+<QA q="What does stateless mean in REST, and why is it useful?">
+
+The server does not store client context between requests; each request includes all information needed, such as the auth token and parameters. Any server instance can handle any request, so load balancing, scaling and recovery from failures are simple.
+
+</QA>
+
+<QA q="What is HATEOAS?">
+
+Hypermedia As The Engine Of Application State: responses include links to related resources and available actions, for example an order containing a link to cancel it, so clients discover the API by following links rather than hard-coding URLs. It is part of strict REST but rarely fully implemented.
+
+</QA>
+
+<QA q="What is the difference between REST and SOAP?">
+
+REST is an architectural style using standard HTTP methods, URLs and usually JSON; it is lightweight and cacheable. SOAP is a protocol with a strict XML envelope, a formal contract (WSDL) and built-in standards for security and transactions; it is heavier and mostly found in older enterprise systems.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'REST is a...',
+      options: ['Protocol', 'Library', 'Architectural style', 'Database'],
+      answer: 2,
+      why: 'It is a set of constraints for designing APIs, usually over HTTP.',
+    },
+    {
+      q: 'Which constraint lets any server handle any request?',
+      options: ['Cacheable', 'Stateless', 'Code on demand', 'Layered system'],
+      answer: 1,
+      why: 'No session is kept on one server, so requests can go anywhere.',
+    },
+    {
+      q: 'In REST, what plays the role of the verb?',
+      options: ['The URL path', 'The HTTP method', 'The body', 'The Host header'],
+      answer: 1,
+      why: 'The path names a resource; GET, POST, PUT, PATCH, DELETE are the actions.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Constraint | In practice |
+| --- | --- |
+| Client-server | separate frontend and API |
+| Stateless | token on every request, no server session |
+| Cacheable | `Cache-Control`, `ETag` |
+| Uniform interface | nouns in URLs, HTTP methods, status codes, JSON |
+| Layered system | load balancers, CDNs, gateways in between |
+| Code on demand | optional (JavaScript) |
+
+</CheatSheet>

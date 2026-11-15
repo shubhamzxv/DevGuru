@@ -1,0 +1,184 @@
+---
+id: rest-client-server
+title: Client and server
+summary: A client asks for something over the network and a server answers; every website, app and API works this way.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a restaurant. You (the **client**) look at the menu and ask the waiter for a dosa. The kitchen (the **server**) prepares it and sends it back. You never go into the kitchen, and the kitchen serves many tables at the same time.
+
+On the web, your browser or phone app is the client. A computer somewhere else, waiting for requests, is the server.
+
+</Analogy>
+
+## Simple explanation
+
+The **client-server model** has two roles:
+
+- **Client**: starts the conversation by sending a **request**. Examples: a browser, a mobile app, a Python script using `requests`, `curl`, or even another server
+- **Server**: a program that **listens** on a network address and port, waits for requests and sends back **responses**. Examples: a Django or FastAPI app, nginx, a database server
+
+Key points:
+
+- The client always **asks first**; a normal server never calls the client on its own
+- One server handles **many clients** at the same time
+- They talk using an agreed set of rules, a **protocol**. For the web this is **HTTP**
+- Each side can be changed separately: the same API can serve a React website, an Android app and a partner's script
+
+To reach a server, the client needs its address. A domain name such as `api.devguru.dev` is turned into an IP address by **DNS**, then the client connects to that IP on a **port** (443 for HTTPS, 80 for HTTP).
+
+A "server" can mean the **program** (FastAPI) or the **machine** it runs on (an EC2 instance). One machine can run many server programs on different ports.
+
+## Code example
+
+A tiny server and a client talking to it:
+
+```python
+# server.py  (run: python server.py)
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Hello(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Hello from the server!")
+
+HTTPServer(("localhost", 8000), Hello).serve_forever()   # listen on port 8000
+```
+
+```python
+# client.py  (run in another terminal)
+import requests
+
+response = requests.get("http://localhost:8000/")        # the client asks
+print(response.status_code, response.text)
+```
+
+```output
+200 Hello from the server!
+```
+
+<Playground kind="http">
+
+```http
+GET /
+Accept: application/json
+```
+
+</Playground>
+
+Press Send: your browser is the client, and a pretend server answers. Then try `GET /books`.
+
+<Mistakes>
+
+<Mistake title="Thinking the server can push to the client any time">
+
+<Wrong>
+
+```text
+"When a new order arrives, the server will send it to the browser."
+(with plain HTTP, the server cannot start a message to the client)
+```
+
+</Wrong>
+
+<Right>
+
+```text
+The client asks again (polling), or keeps a connection open with
+WebSockets / Server-Sent Events, or the server calls a webhook URL of another server.
+```
+
+</Right>
+
+In HTTP the client starts every exchange. Real-time updates need an extra technique.
+
+</Mistake>
+
+<Mistake title="Calling localhost from another machine">
+
+<Wrong>
+
+```text
+A phone app calls http://localhost:8000 to reach the API on your laptop.
+(localhost on the phone means the phone itself)
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Use the laptop's network IP (http://192.168.1.20:8000) on the same Wi-Fi,
+and run the server on 0.0.0.0 so it listens on all network interfaces.
+```
+
+</Right>
+
+`localhost` always means "this same machine".
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain the client-server architecture.">
+
+Clients send requests over the network and servers process them and return responses. The server exposes a service at an address and port and handles many clients concurrently. Clients and servers are separated by a protocol (HTTP for the web), so each can be developed, deployed and scaled independently.
+
+</QA>
+
+<QA q="What happens when you type a URL in the browser and press Enter?">
+
+The browser parses the URL, resolves the domain to an IP through DNS (using caches first), opens a TCP connection to the server's port and performs the TLS handshake for HTTPS, then sends an HTTP request. The server (often behind a load balancer) processes it and returns a response; the browser renders the HTML and requests the CSS, JavaScript and images it references.
+
+</QA>
+
+<QA q="Can a server also be a client?">
+
+Yes. A backend calling a payment API, a database or another microservice is acting as a client of that service. Client and server are roles in a conversation, not types of machine.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Who starts an HTTP exchange?',
+      options: ['The server', 'The client', 'DNS', 'Either, randomly'],
+      answer: 1,
+      why: 'The client sends a request; the server only responds.',
+    },
+    {
+      q: 'What turns api.devguru.dev into an IP address?',
+      options: ['HTTP', 'DNS', 'JSON', 'The browser cache only'],
+      answer: 1,
+      why: 'DNS maps names to IP addresses.',
+    },
+    {
+      q: 'Your FastAPI app calls a payment API. In that call, your app is:',
+      options: ['The server', 'The client', 'Both', 'Neither'],
+      answer: 1,
+      why: 'Whoever sends the request is the client for that exchange.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Meaning |
+| --- | --- |
+| Client | sends requests (browser, app, script, another server) |
+| Server | listens on a port and answers |
+| Protocol | the rules both follow (HTTP) |
+| DNS | name → IP address |
+| Port | door number on a machine: 80 HTTP, 443 HTTPS, 8000 for local dev |
+| localhost | this same machine (127.0.0.1) |
+| 0.0.0.0 | listen on all network interfaces |
+
+</CheatSheet>

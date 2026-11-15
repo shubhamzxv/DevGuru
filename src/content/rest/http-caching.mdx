@@ -1,0 +1,201 @@
+---
+id: rest-http-caching
+title: HTTP caching (ETag, Cache-Control)
+summary: HTTP caching lets browsers, CDNs and proxies reuse earlier responses, controlled by Cache-Control for how long and by ETag or Last-Modified for checking whether a copy is still current.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+You keep a printed railway timetable at home. For a month you just read your copy; no need to go to the station. After a month, you phone the enquiry office: "Is the October timetable still current?" If they say "yes, same", you keep your copy; if not, they send the new one.
+
+**Cache-Control** is "use your copy for a month". The **ETag** check is the phone call: a quick "has it changed?" instead of fetching everything again.
+
+</Analogy>
+
+## Simple explanation
+
+Caches sit everywhere: the **browser**, a **CDN** (CloudFront, Cloudflare), a **reverse proxy** (NGINX, Varnish). Caching makes responses instant and saves server work and bandwidth.
+
+**1. Cache-Control: how long a copy is fresh**
+
+| Directive | Meaning |
+| --- | --- |
+| `max-age=3600` | fresh for 1 hour; use it without asking the server |
+| `s-maxage=600` | like max-age, but only for shared caches (CDN) |
+| `no-cache` | you may store it, but **check with the server** before every use |
+| `no-store` | never store it (bank statements, personal data) |
+| `private` | only the user's browser may store it, not CDNs |
+| `public` | any cache may store it |
+| `immutable` | will never change (files with a hash in the name, like `app.3f9a1c.js`) |
+| `stale-while-revalidate=60` | serve the old copy while fetching a new one in the background |
+
+**2. Validators: is my copy still current?**
+
+- **ETag**: a version id for the content, such as `"v7-42"`. The client asks again with `If-None-Match: "v7-42"`
+- **Last-Modified**: a date. The client asks with `If-Modified-Since: <date>`
+- If nothing changed, the server answers **304 Not Modified** with **no body**. Only the headers travel
+
+Typical choices:
+
+- Static assets with a content hash in the name: `Cache-Control: public, max-age=31536000, immutable`
+- `index.html` and API lists that change: `no-cache` plus an `ETag`
+- Personal API responses: `private, no-cache`, or `no-store` for sensitive data
+- Public API data that can be a little old: `public, max-age=60`
+
+When the same URL returns different content per header (language, encoding), add `Vary: Accept-Language`, so caches keep separate copies.
+
+## Code example
+
+ETag support in FastAPI:
+
+```python
+import hashlib, json
+from fastapi import FastAPI, Request, Response
+
+app = FastAPI()
+BOOK = {"id": 1, "title": "Malgudi Days", "year": 1943}
+
+@app.get("/books/1")
+def get_book(request: Request):
+    body = json.dumps(BOOK)
+    etag = '"' + hashlib.md5(body.encode()).hexdigest()[:10] + '"'     # changes when content changes
+    headers = {"ETag": etag, "Cache-Control": "no-cache"}               # store, but revalidate
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)              # no body sent
+    return Response(content=body, media_type="application/json", headers=headers)
+```
+
+```python
+from fastapi.testclient import TestClient
+c = TestClient(app)
+first = c.get("/books/1")
+print(first.status_code, len(first.content), "bytes")
+again = c.get("/books/1", headers={"If-None-Match": first.headers["etag"]})
+print(again.status_code, len(again.content), "bytes")
+```
+
+```output
+200 48 bytes
+304 0 bytes
+```
+
+<Playground kind="http">
+
+```http
+GET /books/1
+```
+
+</Playground>
+
+Copy the `ETag` value from the response headers, add the header line `If-None-Match:` with it, and send again: 304 with no body. Then PATCH the book with a new title and try again: you get 200, because the version changed.
+
+<Mistakes>
+
+<Mistake title="Caching personal data on a CDN">
+
+<Wrong>
+
+```text
+GET /me  ->  Cache-Control: public, max-age=300
+(the CDN may serve Asha's profile to the next user)
+```
+
+</Wrong>
+
+<Right>
+
+```text
+GET /me  ->  Cache-Control: private, no-cache     (or no-store for sensitive data)
+```
+
+</Right>
+
+`public` responses can be shared between users by CDNs and proxies. User-specific data must be `private` or `no-store`.
+
+</Mistake>
+
+<Mistake title="Long max-age on a file whose name never changes">
+
+<Wrong>
+
+```text
+/app.js        Cache-Control: max-age=31536000
+(after a deploy, users keep the old app for a year)
+```
+
+</Wrong>
+
+<Right>
+
+```text
+/assets/app.3f9a1c.js   Cache-Control: public, max-age=31536000, immutable
+/index.html             Cache-Control: no-cache
+```
+
+</Right>
+
+Long caching is safe only when the file name changes with the content. Build tools such as Vite add the hash for you.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between no-cache and no-store?">
+
+`no-cache` allows storing the response but requires revalidating with the server (using ETag or Last-Modified) before each use, so a 304 can be served cheaply. `no-store` forbids storing the response anywhere, for sensitive data.
+
+</QA>
+
+<QA q="How do ETags work?">
+
+The server sends a version identifier of the representation in the ETag header. The client stores it and sends it back in If-None-Match on the next request. If the current ETag matches, the server replies 304 Not Modified without a body; otherwise 200 with the new content and a new ETag. With If-Match, ETags also support optimistic locking on updates (412 if changed).
+
+</QA>
+
+<QA q="How would you cache API responses?">
+
+Set Cache-Control according to the data: public with max-age or s-maxage for shared, rarely changing data (served by a CDN), private or no-cache with ETags for user-specific data, and no-store for sensitive data. On the server side, add an application cache such as Redis for expensive queries, with TTLs and invalidation on writes.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which status code means "your cached copy is still good"?',
+      options: ['200', '204', '304', '412'],
+      answer: 2,
+      why: '304 Not Modified, sent without a body.',
+    },
+    {
+      q: 'A bank statement page should use:',
+      options: ['public, max-age=3600', 'no-store', 'immutable', 's-maxage=600'],
+      answer: 1,
+      why: 'Sensitive data must not be stored by any cache.',
+    },
+    {
+      q: 'Which request header sends the ETag back?',
+      options: ['If-Match', 'If-None-Match', 'ETag', 'Cache-Control'],
+      answer: 1,
+      why: 'If-None-Match: "<etag>" asks for 304 if it is unchanged.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Content | Cache-Control |
+| --- | --- |
+| Hashed static files | `public, max-age=31536000, immutable` |
+| index.html | `no-cache` |
+| Public API data | `public, max-age=60` (+ `s-maxage` for CDN) |
+| Per-user data | `private, no-cache` + ETag |
+| Sensitive data | `no-store` |
+
+Revalidate: `ETag` ↔ `If-None-Match`, `Last-Modified` ↔ `If-Modified-Since` → 304. Different content per header: `Vary`.
+
+</CheatSheet>

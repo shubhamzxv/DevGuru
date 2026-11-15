@@ -1,0 +1,211 @@
+---
+id: rest-rate-limiting
+title: Rate limiting
+summary: Rate limiting caps how many requests a client may make in a time window and answers 429 Too Many Requests beyond it, protecting the API from abuse and overload.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+An ATM lets you withdraw at most a fixed amount per day. It is not that you are a criminal; the limit protects you, the bank and everyone else in the queue.
+
+A **rate limit** does the same for an API: each client gets, say, 100 requests per minute, so one buggy script or attacker cannot slow the service down for everyone.
+
+</Analogy>
+
+## Simple explanation
+
+Why rate limit:
+
+- **Protect** the servers and database from overload (accidental loops, traffic spikes)
+- **Stop abuse**: password guessing, scraping, spam
+- **Fairness and billing**: free plan 1,000 calls per day, paid plan more
+
+Limit **by what?** By API key or user id for authenticated calls; by IP address for anonymous ones (login, sign-up); sometimes per endpoint (stricter for `/login`, `/otp`).
+
+Common algorithms:
+
+| Algorithm | Idea | Note |
+| --- | --- | --- |
+| **Fixed window** | count per minute; reset at :00 | simplest; allows a burst at the window edge (100 at 0:59 + 100 at 1:00) |
+| **Sliding window** | count requests in the last 60 seconds | smoother, a little more work |
+| **Token bucket** | a bucket refills N tokens per second up to a max; each request takes one | allows short bursts, controls the average; very common |
+| **Leaky bucket** | requests drain out at a fixed rate | smooths traffic into a steady flow |
+
+When over the limit, respond **429 Too Many Requests** with headers that tell the client what to do:
+
+- `Retry-After: 30` seconds to wait
+- `X-RateLimit-Limit: 100`, `X-RateLimit-Remaining: 0`, `X-RateLimit-Reset: 1731648000` (common, not standardised; the newer `RateLimit` header is being standardised)
+
+Where to implement: at the **edge** (API Gateway, NGINX, Cloudflare, AWS WAF) for cheap protection, and in the **app** for business rules per user or plan. With several app servers, keep the counters in a shared store such as **Redis**, not in each server's memory.
+
+Clients should respect 429: wait for `Retry-After`, then retry with **exponential backoff and jitter**.
+
+## Code example
+
+A fixed-window limiter in Redis (shared by all app servers):
+
+```python
+import time
+import redis
+
+r = redis.Redis()
+
+def allow(client_id: str, limit: int = 100, window: int = 60) -> tuple[bool, int]:
+    window_start = int(time.time() // window)
+    key = f"rate:{client_id}:{window_start}"
+    count = r.incr(key)                       # atomic +1
+    if count == 1:
+        r.expire(key, window)                 # the key cleans itself up
+    return count <= limit, max(0, limit - count)
+```
+
+A token bucket, in memory, to see the idea:
+
+```python
+class TokenBucket:
+    def __init__(self, rate: float, capacity: int):
+        self.rate, self.capacity = rate, capacity        # tokens per second, max burst
+        self.tokens, self.updated = float(capacity), 0.0
+
+    def allow(self, now: float) -> bool:
+        self.tokens = min(self.capacity, self.tokens + (now - self.updated) * self.rate)
+        self.updated = now
+        if self.tokens >= 1:
+            self.tokens -= 1
+            return True
+        return False
+
+bucket = TokenBucket(rate=1, capacity=3)                 # 1 per second, bursts of 3
+print([bucket.allow(now=0.0) for _ in range(4)])         # burst at time 0
+print(bucket.allow(now=1.0), bucket.allow(now=1.0))      # one token refilled after 1 second
+```
+
+```output
+[True, True, True, False]
+True False
+```
+
+<Playground kind="http">
+
+```http
+GET /limited
+```
+
+</Playground>
+
+Send it four times. Watch `X-RateLimit-Remaining` fall, then the 429 response with `Retry-After`.
+
+<Mistakes>
+
+<Mistake title="Counting in each server's memory">
+
+<Wrong>
+
+```python
+counts = {}            # 4 servers behind a load balancer = 4 separate counters: the real limit is 4x
+```
+
+</Wrong>
+
+<Right>
+
+```python
+count = r.incr(f"rate:{client_id}:{window_start}")   # one shared counter in Redis
+```
+
+</Right>
+
+With horizontal scaling, rate-limit state must be shared, or enforced at the gateway.
+
+</Mistake>
+
+<Mistake title="Retrying 429 immediately">
+
+<Wrong>
+
+```python
+while True:
+    resp = requests.get(url)
+    if resp.status_code != 429:
+        break                  # hammers the API and stays blocked
+```
+
+</Wrong>
+
+<Right>
+
+```python
+for attempt in range(5):
+    resp = requests.get(url, timeout=5)
+    if resp.status_code != 429:
+        break
+    time.sleep(int(resp.headers.get("Retry-After", 2 ** attempt)))
+```
+
+</Right>
+
+Respect `Retry-After`, and back off exponentially when it is missing.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How would you implement rate limiting for an API?">
+
+Identify the client (API key, user id, or IP for anonymous calls), choose an algorithm (token bucket or sliding window), and store counters in a shared, fast store such as Redis with atomic operations (INCR with EXPIRE, or a Lua script). Return 429 with Retry-After and rate-limit headers. Add coarse limits at the gateway or WAF and stricter limits on sensitive endpoints such as login.
+
+</QA>
+
+<QA q="Explain the token bucket algorithm.">
+
+Each client has a bucket with a maximum capacity of tokens that refills at a fixed rate. Every request removes one token; if the bucket is empty, the request is rejected or delayed. Capacity controls the allowed burst size and the refill rate controls the long-term average.
+
+</QA>
+
+<QA q="What status code and headers do you return when a client is rate limited?">
+
+429 Too Many Requests with Retry-After (seconds or a date), and usually limit, remaining and reset headers so clients can pace themselves.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Status code for "too many requests"?',
+      options: ['403', '429', '503', '409'],
+      answer: 1,
+      why: '429 Too Many Requests.',
+    },
+    {
+      q: 'Which algorithm allows short bursts but keeps a steady average?',
+      options: ['Fixed window', 'Token bucket', 'No limit', 'Round robin'],
+      answer: 1,
+      why: 'Capacity sets the burst, refill rate sets the average.',
+    },
+    {
+      q: 'With 5 app servers, where should counters live?',
+      options: ['In each server\'s memory', 'In a shared store like Redis (or the gateway)', 'In the browser', 'In log files'],
+      answer: 1,
+      why: 'Otherwise each server allows the full limit separately.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Choice |
+| --- | --- |
+| Key | API key / user id, IP for anonymous |
+| Algorithms | fixed window, sliding window, token bucket, leaky bucket |
+| Store | Redis `INCR` + `EXPIRE` (atomic, shared) |
+| Edge | API Gateway, NGINX `limit_req`, Cloudflare, AWS WAF |
+| Response | 429 + `Retry-After` + `X-RateLimit-*` |
+| Client | respect Retry-After, exponential backoff + jitter |
+| Strict limits | login, OTP, password reset, sign-up |
+
+</CheatSheet>

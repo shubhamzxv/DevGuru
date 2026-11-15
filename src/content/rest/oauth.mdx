@@ -1,0 +1,242 @@
+---
+id: rest-oauth
+title: OAuth 2.0 basics
+summary: OAuth 2.0 lets a user give an app limited access to their data on another service without sharing their password, using short-lived access tokens issued by an authorization server.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A hotel gives a valet a **valet key**: it starts the car and drives it a short distance, but cannot open the boot or the glovebox. You never hand over your house keys, and you can take the valet key back any time.
+
+**OAuth** gives apps a valet key to your account: "this photo printing app may **read** my Google Photos for one hour", without ever seeing your Google password.
+
+</Analogy>
+
+## Simple explanation
+
+OAuth 2.0 is a standard for **delegated authorization**. The roles:
+
+- **Resource owner**: you, the user
+- **Client**: the app that wants access (a photo printing app)
+- **Authorization server**: issues tokens after you log in and agree (Google's login page)
+- **Resource server**: the API holding your data (Google Photos API)
+
+The **Authorization Code flow** (used by websites and, with PKCE, by mobile and single-page apps):
+
+1. The app sends you to the authorization server: `https://accounts.google.com/o/oauth2/auth?client_id=...&redirect_uri=...&scope=photos.read&state=xyz&code_challenge=...`
+2. You log in **on Google's page** (the app never sees your password) and approve the **scopes** it asked for
+3. Google redirects back to the app's `redirect_uri` with a short-lived **authorization code**
+4. The app's backend exchanges the code (plus its client secret, or the PKCE verifier) for an **access token**, and often a **refresh token**
+5. The app calls the API with `Authorization: Bearer <access token>`
+
+Other parts to know:
+
+- **Scopes** limit what the token may do (`photos.read`, not `photos.delete`)
+- **state** is a random value checked on return, to stop CSRF attacks on the login flow
+- **PKCE** (Proof Key for Code Exchange) protects apps that cannot keep a secret (mobile, SPA): the app proves it is the same one that started the flow
+- **Client Credentials flow**: machine-to-machine, no user; the service gets a token with its own id and secret
+- **OpenID Connect (OIDC)** is a layer on top of OAuth for **login**: it adds an **ID token** (a JWT) saying who the user is. "Sign in with Google" is OIDC
+- The old **Implicit** and **Password** flows are deprecated; do not use them in new apps
+
+Remember: OAuth is about **authorization** (what an app may do); OIDC adds **authentication** (who the user is).
+
+## Code example
+
+Step 4, exchanging the code for tokens on your backend (server-to-server):
+
+```python
+import requests
+
+def exchange_code(code: str, verifier: str) -> dict:
+    resp = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,                                  # from the redirect, valid ~1 minute
+            "redirect_uri": "https://devguru.dev/auth/callback",
+            "client_id": "1234.apps.googleusercontent.com",
+            "client_secret": "from-env-not-from-code",
+            "code_verifier": verifier,                     # PKCE
+        },
+        timeout=5,
+    )
+    resp.raise_for_status()
+    return resp.json()
+```
+
+```output
+{"access_token": "ya29.a0Af...", "expires_in": 3599, "refresh_token": "1//0g...",
+ "scope": "openid email https://www.googleapis.com/auth/photoslibrary.readonly",
+ "token_type": "Bearer", "id_token": "eyJhbGciOiJSUzI1NiIs..."}
+```
+
+Client Credentials, for one service calling another:
+
+```python
+token = requests.post(
+    "https://auth.example.com/oauth2/token",
+    data={"grant_type": "client_credentials", "scope": "orders:read"},
+    auth=("billing-service", "client-secret-from-env"),    # the service's own credentials
+    timeout=5,
+).json()["access_token"]
+
+orders = requests.get("https://api.example.com/orders", headers={"Authorization": f"Bearer {token}"}, timeout=5)
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "user", "label": "You (browser)", "icon": "👤", "col": 0, "row": 1, "info": "The resource owner: the person whose data it is.", "example": "You want to print photos from Google Photos." },
+    { "id": "app", "label": "Printing app", "icon": "🖨️", "col": 1, "row": 0, "info": "The client. It never sees your Google password, only a token with the scopes you approved.", "example": "A website at printshop.example." },
+    { "id": "auth", "label": "Authorization server", "icon": "🔐", "col": 1, "row": 2, "info": "Shows the login and consent screen, then issues codes and tokens.", "example": "accounts.google.com" },
+    { "id": "api", "label": "Resource server (API)", "icon": "🖼️", "col": 2, "row": 1, "info": "Holds your data. It accepts requests only with a valid access token that has the right scope.", "example": "Google Photos API" }
+  ],
+  "edges": [
+    ["user", "app"],
+    ["user", "auth", "login + consent"],
+    ["app", "auth", "code -> token"],
+    ["app", "api", "Bearer token"]
+  ],
+  "flows": [
+    {
+      "name": "Authorization code flow",
+      "steps": [
+        ["user", "Clicks 'Import from Google Photos' in the printing app."],
+        ["app", "Redirects you to Google with client_id, redirect_uri, scope=photos.read, state and a PKCE challenge."],
+        ["auth", "You log in on Google's own page and approve 'read your photos'."],
+        ["user", "Google redirects your browser back to the app with ?code=...&state=..."],
+        ["app", "Checks state, then its backend sends the code and PKCE verifier to Google's token endpoint."],
+        ["auth", "Returns an access token (1 hour) and a refresh token."],
+        ["api", "The app calls the Photos API with Authorization: Bearer <token>. Only reading is allowed."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Asking users for their password on another site">
+
+<Wrong>
+
+```text
+"Enter your Gmail password here so we can import your contacts."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Redirect to Google with scope=contacts.readonly; receive a token; never see the password.
+```
+
+</Right>
+
+Collecting other services' passwords is exactly what OAuth exists to prevent, and the user cannot limit or revoke access.
+
+</Mistake>
+
+<Mistake title="Not checking the state parameter">
+
+<Wrong>
+
+```python
+@app.get("/auth/callback")
+def callback(code: str):
+    return exchange_code(code, verifier)       # accepts any code, even one an attacker sent
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.get("/auth/callback")
+def callback(code: str, state: str, request: Request):
+    if state != request.session.pop("oauth_state", None):
+        raise HTTPException(400, "Invalid state")
+    return exchange_code(code, request.session.pop("pkce_verifier"))
+```
+
+</Right>
+
+`state` ties the callback to the login you started, preventing login CSRF.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is OAuth 2.0?">
+
+An authorization framework that lets a user grant a third-party application limited, revocable access to their resources on another service without sharing credentials. An authorization server issues access tokens with specific scopes, which the client presents to the resource server.
+
+</QA>
+
+<QA q="Explain the authorization code flow with PKCE.">
+
+The client creates a random code verifier and sends its hash (the code challenge) when redirecting the user to the authorization server. The user authenticates and consents; the server redirects back with an authorization code. The client exchanges the code plus the original verifier at the token endpoint; the server checks the verifier matches the challenge and returns access (and refresh) tokens. PKCE stops intercepted codes from being used.
+
+</QA>
+
+<QA q="What is the difference between OAuth 2.0 and OpenID Connect?">
+
+OAuth 2.0 handles authorization: granting access to resources through access tokens. OpenID Connect adds authentication on top: an ID token (a JWT) with the user's identity, a userinfo endpoint and standard scopes such as openid, profile and email. "Sign in with Google" uses OIDC.
+
+</QA>
+
+<QA q="Which OAuth flow do services use to call each other?">
+
+The Client Credentials grant: a service authenticates with its own client id and secret (or a certificate) at the token endpoint and receives an access token for its own permissions. There is no user involved.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Who sees your password in OAuth?',
+      options: ['The client app', 'Only the authorization server', 'The resource server', 'Everyone'],
+      answer: 1,
+      why: 'You log in on the authorization server\'s own page.',
+    },
+    {
+      q: 'What limits what an access token may do?',
+      options: ['state', 'Scopes', 'redirect_uri', 'client_id'],
+      answer: 1,
+      why: 'Scopes such as photos.read define the permissions.',
+    },
+    {
+      q: '"Sign in with Google" mainly uses:',
+      options: ['API keys', 'OpenID Connect on top of OAuth 2.0', 'Basic auth', 'SAML only'],
+      answer: 1,
+      why: 'OIDC adds an ID token that says who the user is.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Meaning |
+| --- | --- |
+| Resource owner | the user |
+| Client | the app asking for access |
+| Authorization server | issues codes and tokens |
+| Resource server | the API with the data |
+| Scope | what the token may do |
+| Authorization code + PKCE | flow for web, mobile, SPA |
+| Client credentials | service-to-service, no user |
+| Refresh token | gets new access tokens |
+| state | anti-CSRF check on the callback |
+| OIDC / ID token | login: who the user is |
+
+</CheatSheet>

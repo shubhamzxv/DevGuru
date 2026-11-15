@@ -1,0 +1,191 @@
+---
+id: rest-http-vs-https
+title: HTTP vs HTTPS
+summary: HTTPS is HTTP sent through an encrypted TLS connection, so nobody in between can read or change the data, and the browser can check it is talking to the real site.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Sending a request over plain **HTTP** is like sending a postcard: the postman, the sorting office and anyone who picks it up can read it, and could even change what it says.
+
+**HTTPS** is like a locked steel box that only the receiver can open, delivered with a stamp from a trusted office proving the receiver is really who they claim to be.
+
+</Analogy>
+
+## Simple explanation
+
+**HTTP** sends everything as readable text. On public Wi-Fi, an attacker in the middle can read passwords and tokens, or inject content into the page.
+
+**HTTPS** = HTTP inside **TLS** (Transport Layer Security; the old name is SSL). TLS gives three guarantees:
+
+1. **Encryption**: nobody in between can read the data
+2. **Integrity**: nobody can change the data without it being detected
+3. **Authentication**: a **certificate** proves the server really owns the domain
+
+How a connection starts (the **TLS handshake**), simplified:
+
+1. The client says hello and lists the encryption methods it supports
+2. The server sends its **certificate**: its public key, signed by a **Certificate Authority (CA)** such as Let's Encrypt or Amazon
+3. The client checks the signature against CAs it already trusts, and that the certificate matches the domain and has not expired
+4. Both sides agree on a shared secret key using **asymmetric** cryptography
+5. All further data is encrypted with fast **symmetric** encryption using that key
+
+Then normal HTTP messages flow through the encrypted tunnel. The domain name is still visible to the network, but the path, query string, headers and body are all encrypted.
+
+Today HTTPS is the rule for everything: browsers mark HTTP sites as "Not secure", many features (geolocation, service workers, HTTP/2 in browsers) need it, and certificates are free (Let's Encrypt, AWS Certificate Manager).
+
+A common setup: TLS **terminates** at the load balancer or CDN (which holds the certificate), and traffic inside the private network goes to the app servers.
+
+## Code example
+
+Python checks certificates by default:
+
+```python
+import requests
+
+print(requests.get("https://api.github.com").status_code)
+
+try:
+    requests.get("https://expired.badssl.com/")      # a test site with an expired certificate
+except requests.exceptions.SSLError as error:
+    print("Refused:", type(error).__name__)
+```
+
+```output
+200
+Refused: SSLError
+```
+
+Seeing a certificate from the terminal:
+
+```bash
+openssl s_client -connect api.github.com:443 -servername api.github.com < /dev/null 2>/dev/null \
+  | openssl x509 -noout -subject -issuer -dates
+```
+
+```output
+subject=CN = api.github.com
+issuer=C = GB, O = Sectigo Limited, CN = Sectigo ECC Domain Validation Secure Server CA
+notBefore=Feb  5 00:00:00 2026 GMT
+notAfter=Feb  5 23:59:59 2027 GMT
+```
+
+<Playground kind="http">
+
+```http
+GET /me
+Authorization: Bearer abc
+```
+
+</Playground>
+
+The pretend API uses https://, so this token would travel encrypted. Over plain http://, anyone on the same Wi-Fi could copy it.
+
+<Mistakes>
+
+<Mistake title="Turning off certificate checks">
+
+<Wrong>
+
+```python
+requests.get("https://internal-api.example.com", verify=False)   # accepts ANY certificate, even an attacker's
+```
+
+</Wrong>
+
+<Right>
+
+```python
+requests.get("https://internal-api.example.com", verify="/etc/ssl/company-ca.pem")   # trust your own CA
+```
+
+</Right>
+
+`verify=False` removes the authentication part of TLS. Fix the certificate or point to the right CA file instead.
+
+</Mistake>
+
+<Mistake title="Mixed content">
+
+<Wrong>
+
+```html
+<!-- page served over https -->
+<script src="http://cdn.example.com/app.js"></script>
+```
+
+</Wrong>
+
+<Right>
+
+```html
+<script src="https://cdn.example.com/app.js"></script>
+```
+
+</Right>
+
+Browsers block HTTP resources on an HTTPS page, because the insecure file could be changed by an attacker.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between HTTP and HTTPS?">
+
+HTTPS is HTTP over TLS. HTTP sends data in plain text on port 80; HTTPS encrypts it, protects its integrity and authenticates the server with a certificate, by default on port 443. HTTPS protects passwords, tokens and personal data from eavesdropping and tampering.
+
+</QA>
+
+<QA q="Explain the TLS handshake briefly.">
+
+The client sends supported versions and ciphers; the server replies with its choice and its certificate. The client verifies the certificate chain up to a trusted CA and checks the domain and expiry. Both sides then perform a key exchange (such as ECDHE) to derive a shared session key, and switch to symmetric encryption for the rest of the connection. TLS 1.3 does this in one round trip.
+
+</QA>
+
+<QA q="Why use both asymmetric and symmetric encryption?">
+
+Asymmetric (public/private key) cryptography lets two parties agree on a secret and verify identity without sharing a secret in advance, but it is slow. Symmetric encryption is fast but needs a shared key. TLS uses asymmetric crypto during the handshake to establish the key, then symmetric encryption for the data.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What proves the server really owns the domain?',
+      options: ['The IP address', 'Its TLS certificate signed by a trusted CA', 'The port number', 'The Content-Type header'],
+      answer: 1,
+      why: 'The browser checks the certificate chain and the domain name.',
+    },
+    {
+      q: 'Over HTTPS, which can a network observer still see?',
+      options: ['The password in the body', 'The full path and query', 'The domain name being contacted', 'The Authorization header'],
+      answer: 2,
+      why: 'The host name is visible (DNS and SNI); everything inside the HTTP message is encrypted.',
+    },
+    {
+      q: 'Default port for HTTPS?',
+      options: ['80', '443', '8080', '22'],
+      answer: 1,
+      why: '443 for HTTPS, 80 for HTTP.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| | HTTP | HTTPS |
+| --- | --- | --- |
+| Port | 80 | 443 |
+| Data | plain text | encrypted (TLS) |
+| Tampering | possible | detected |
+| Server identity | not checked | certificate checked |
+| Certificates | none | Let's Encrypt, AWS ACM (free) |
+
+Never use `verify=False`. Terminate TLS at the load balancer or CDN; redirect HTTP to HTTPS.
+
+</CheatSheet>

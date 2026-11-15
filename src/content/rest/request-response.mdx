@@ -1,0 +1,199 @@
+---
+id: rest-request-response
+title: HTTP request and response
+summary: An HTTP request has a method, a path, headers and an optional body; the response has a status code, headers and a body.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a courier parcel. The **label** on the outside says where it goes and how to handle it ("Fragile", "To: Room 12"). The **contents** are inside.
+
+An HTTP message is the same: the first line and the **headers** are the label, and the **body** is the contents. A request is the parcel you send; the response is the parcel that comes back.
+
+</Analogy>
+
+## Simple explanation
+
+HTTP messages are plain text with a fixed shape.
+
+**A request** has:
+
+1. **Request line**: method, path, HTTP version, for example `POST /books HTTP/1.1`
+2. **Headers**: `Name: value` lines with extra information, such as `Host`, `Content-Type`, `Authorization`
+3. A **blank line**
+4. An optional **body**: the data you send, usually JSON (for POST, PUT, PATCH)
+
+**A response** has:
+
+1. **Status line**: version, status code, reason, for example `HTTP/1.1 201 Created`
+2. **Headers**: such as `Content-Type`, `Content-Length`, `Location`, `Cache-Control`
+3. A **blank line**
+4. The **body**: the HTML, JSON, image or file
+
+HTTP is **stateless**: every request must carry everything the server needs (for example the login token). The server does not remember the previous request by itself; cookies and tokens are how apps carry "who you are" from one request to the next.
+
+HTTP/2 and HTTP/3 send the same information in a faster binary form, but the ideas (method, path, headers, body, status) are exactly the same.
+
+## Code example
+
+A complete request and response, as they travel:
+
+```http
+POST /books HTTP/1.1
+Host: api.devguru.dev
+Content-Type: application/json
+Content-Length: 44
+
+{"title": "Gitanjali", "author": "Tagore"}
+```
+
+```text
+HTTP/1.1 201 Created
+Content-Type: application/json; charset=utf-8
+Location: /books/6
+Content-Length: 52
+
+{"id": 6, "title": "Gitanjali", "author": "Tagore"}
+```
+
+The same with Python `requests`:
+
+```python
+import requests
+
+resp = requests.post(
+    "https://api.devguru.dev/books",
+    json={"title": "Gitanjali", "author": "Tagore"},   # sets the body AND Content-Type
+)
+print(resp.status_code)                 # status line
+print(resp.headers["Location"])         # one header
+print(resp.json())                      # body parsed as JSON
+```
+
+```output
+201
+/books/6
+{'id': 6, 'title': 'Gitanjali', 'author': 'Tagore'}
+```
+
+<Playground kind="http">
+
+```http
+POST /books
+Content-Type: application/json
+
+{"title": "Gitanjali", "author": "Tagore"}
+```
+
+</Playground>
+
+Send it, then open "Response headers" to see `Location`. Change the method to GET and the path to the Location value.
+
+<Mistakes>
+
+<Mistake title="Sending JSON without the Content-Type header">
+
+<Wrong>
+
+```python
+requests.post(url, data='{"title": "Gitanjali"}')   # sent as text/plain; many APIs reply 415 or 422
+```
+
+</Wrong>
+
+<Right>
+
+```python
+requests.post(url, json={"title": "Gitanjali"})     # adds Content-Type: application/json
+```
+
+</Right>
+
+The server reads `Content-Type` to know how to parse the body.
+
+</Mistake>
+
+<Mistake title="Putting a body on a GET request">
+
+<Wrong>
+
+```http
+GET /books
+Content-Type: application/json
+
+{"author": "Narayan"}
+```
+
+</Wrong>
+
+<Right>
+
+```http
+GET /books?author=Narayan
+```
+
+</Right>
+
+GET bodies have no defined meaning; many servers, proxies and caches ignore them. Use query parameters for GET.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the parts of an HTTP request and response?">
+
+A request has a request line (method, path, version), headers, a blank line and an optional body. A response has a status line (version, status code, reason phrase), headers, a blank line and an optional body.
+
+</QA>
+
+<QA q="What does it mean that HTTP is stateless?">
+
+Each request is independent; the server keeps no memory of earlier requests at the protocol level. State such as the logged-in user is carried in every request through cookies or tokens, or stored on the server and looked up by a session id. Statelessness makes servers easy to scale horizontally.
+
+</QA>
+
+<QA q="What is the difference between HTTP/1.1, HTTP/2 and HTTP/3?">
+
+HTTP/1.1 is text-based and handles one request at a time per connection. HTTP/2 is binary, multiplexes many requests on one TCP connection and compresses headers. HTTP/3 runs over QUIC (on UDP), removing TCP head-of-line blocking and making connection setup faster. The meaning of methods, headers and status codes stays the same.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What separates the headers from the body?',
+      options: ['A comma', 'A blank line', 'A semicolon', 'The word BODY'],
+      answer: 1,
+      why: 'An empty line ends the headers; everything after it is the body.',
+    },
+    {
+      q: 'Where is the status code?',
+      options: ['In the request line', 'In the response status line', 'In the body', 'In the URL'],
+      answer: 1,
+      why: 'For example HTTP/1.1 404 Not Found.',
+    },
+    {
+      q: 'HTTP is stateless. So how does the server know you are logged in?',
+      options: ['It remembers your IP', 'You send a cookie or token with each request', 'It cannot know', 'Through DNS'],
+      answer: 1,
+      why: 'Each request carries its own proof of identity.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Part | Request | Response |
+| --- | --- | --- |
+| First line | `POST /books HTTP/1.1` | `HTTP/1.1 201 Created` |
+| Headers | Host, Content-Type, Authorization, Accept | Content-Type, Location, Cache-Control, Set-Cookie |
+| Body | JSON for POST, PUT, PATCH | HTML, JSON, file |
+
+`requests`: `resp.status_code`, `resp.headers`, `resp.json()`, `resp.text`. Send JSON with `json=...`.
+
+</CheatSheet>

@@ -1,0 +1,228 @@
+---
+id: rest-sessions-vs-tokens
+title: Sessions vs tokens
+summary: With sessions the server stores who is logged in and the browser keeps only an id in a cookie, while with tokens the client keeps a signed token that the server can check without storing anything.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+**Session**: at a cloakroom you get a numbered tag. The tag itself means nothing; the attendant looks up number 47 in the register to find your coat. Lose the register and the tag is useless.
+
+**Token**: at a concert you get a wristband with a hologram. The guard checks the hologram and the colour and lets you in without looking anything up. But if the wristband is valid until midnight, it cannot easily be cancelled at 9 pm.
+
+</Analogy>
+
+## Simple explanation
+
+HTTP is stateless, so after login every request must prove who you are.
+
+**Server-side sessions** (Django's default):
+
+1. You log in; the server creates a **session record** (user id, expiry) in a database or Redis
+2. It sends back a cookie with only a random **session id**: `Set-Cookie: sessionid=abc123; HttpOnly; Secure; SameSite=Lax`
+3. The browser sends the cookie automatically; the server **looks up** the session on every request
+
+**Tokens** (often JWT, common for APIs and mobile apps):
+
+1. You log in; the server creates a **signed token** containing the user id and an expiry
+2. The client stores it and sends `Authorization: Bearer <token>` on each request
+3. The server **verifies the signature**; no lookup is needed
+
+| | Sessions | Tokens (JWT) |
+| --- | --- | --- |
+| Where is the state? | server (DB / Redis) | inside the token |
+| Sent as | cookie (automatic in browsers) | `Authorization` header |
+| Log out / revoke now | delete the session: instant | hard: valid until it expires (needs a blocklist or short expiry) |
+| Scaling | all servers need the shared session store | any server can verify |
+| Mobile apps, other services | awkward | natural |
+| Main web risk | CSRF (cookies are sent automatically) | XSS stealing a token kept in JavaScript storage |
+
+Common sensible choices:
+
+- A **traditional website** (Django templates): sessions with secure cookies and CSRF protection
+- **Mobile apps, public APIs, microservices**: short-lived **access tokens** (5 to 15 minutes) plus a longer-lived **refresh token** that can be revoked
+- **SPAs** (React): either a session or token in an **HttpOnly cookie**, or a token in memory; avoid `localStorage` for long-lived tokens
+
+## Code example
+
+Session style: the server keeps the state:
+
+```python
+import secrets
+
+SESSIONS: dict[str, dict] = {}                # Redis or a DB table in real life
+
+def login(user_id: int) -> str:
+    session_id = secrets.token_urlsafe(16)
+    SESSIONS[session_id] = {"user_id": user_id}
+    return session_id                          # goes into an HttpOnly cookie
+
+def current_user(session_id: str):
+    return SESSIONS.get(session_id)            # a lookup on every request
+
+def logout(session_id: str):
+    SESSIONS.pop(session_id, None)             # instant: the id is now worthless
+
+sid = login(7)
+print(current_user(sid))
+logout(sid)
+print(current_user(sid))
+```
+
+```output
+{'user_id': 7}
+None
+```
+
+Token style: the token carries the state, signed so it cannot be changed:
+
+```python
+import base64, hashlib, hmac, json, time
+
+SECRET = b"change-me"
+
+def make_token(user_id: int, ttl: int = 900) -> str:
+    payload = base64.urlsafe_b64encode(json.dumps({"sub": user_id, "exp": int(time.time()) + ttl}).encode())
+    signature = hmac.new(SECRET, payload, hashlib.sha256).hexdigest()
+    return f"{payload.decode()}.{signature}"
+
+def check_token(token: str):
+    payload, signature = token.rsplit(".", 1)
+    good = hmac.new(SECRET, payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, good):
+        return None                            # tampered
+    data = json.loads(base64.urlsafe_b64decode(payload))
+    return data if data["exp"] > time.time() else None   # expired
+
+token = make_token(7)
+print(check_token(token)["sub"])
+print(check_token(token.replace(token[5], "x" if token[5] != "x" else "y", 1)))
+```
+
+```output
+7
+None
+```
+
+Real projects use a library (PyJWT) for this; the next topic covers JWT.
+
+<Playground kind="http">
+
+```http
+POST /login
+Content-Type: application/json
+
+{"username": "guru", "password": "secret"}
+```
+
+</Playground>
+
+The pretend API is token-based. Copy the `access_token` and call `GET /me` with `Authorization: Bearer <token>`. No server-side session is created.
+
+<Mistakes>
+
+<Mistake title="Long-lived tokens in localStorage">
+
+<Wrong>
+
+```javascript
+localStorage.setItem("token", accessTokenValidFor30Days);   // any XSS bug can read and steal it
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Short-lived access token (15 minutes) kept in memory,
+refresh token in an HttpOnly, Secure, SameSite cookie, revocable on the server.
+```
+
+</Right>
+
+JavaScript can read `localStorage`, so one injected script steals the token. HttpOnly cookies cannot be read by scripts.
+
+</Mistake>
+
+<Mistake title="Session cookie without safety flags">
+
+<Wrong>
+
+```text
+Set-Cookie: sessionid=abc123
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Set-Cookie: sessionid=abc123; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=1209600
+```
+
+</Right>
+
+HttpOnly blocks JavaScript access, Secure sends it only over HTTPS, and SameSite limits cross-site sending (protects against CSRF).
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between session-based and token-based authentication?">
+
+With sessions, the server stores session data and gives the client an opaque session id, usually in a cookie; each request requires a lookup, and logout is instant. With tokens, the server issues a signed, self-contained token (such as a JWT) that the client sends in a header; the server verifies it without storage, which scales easily, but revocation before expiry needs extra work.
+
+</QA>
+
+<QA q="How do you log out a user with JWTs?">
+
+Keep access tokens short-lived and revoke the refresh token on the server, so no new access tokens can be issued. For immediate revocation, keep a blocklist of token ids (jti) in Redis until they expire, or store a token version per user and reject older versions.
+
+</QA>
+
+<QA q="Which is safer against XSS and CSRF?">
+
+Cookies with HttpOnly are safe from being read by XSS but are sent automatically, so they need CSRF protection (SameSite cookies, CSRF tokens). Tokens sent in the Authorization header are immune to CSRF, but if stored in JavaScript-accessible storage they can be stolen by XSS. Either way, preventing XSS is essential.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which approach makes instant logout easy?',
+      options: ['Server-side sessions', 'Long-lived JWTs', 'Both equally', 'Neither'],
+      answer: 0,
+      why: 'Deleting the session record makes the id worthless at once.',
+    },
+    {
+      q: 'What does HttpOnly on a cookie do?',
+      options: ['Sends it only over HTTP', 'Stops JavaScript from reading it', 'Makes it expire', 'Encrypts it'],
+      answer: 1,
+      why: 'Scripts cannot access it, so XSS cannot steal it directly.',
+    },
+    {
+      q: 'Why are tokens popular for microservices?',
+      options: ['They are shorter', 'Any service can verify the signature without a shared session store', 'They never expire', 'They need no HTTPS'],
+      answer: 1,
+      why: 'Verification is local, so no central lookup is needed.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| | Session | Token |
+| --- | --- | --- |
+| Client holds | random id in a cookie | signed token |
+| Server holds | session data | only the signing key |
+| Check | lookup | verify signature + expiry |
+| Revoke | delete session | short expiry + refresh-token revoke / blocklist |
+| Best for | server-rendered websites | APIs, mobile, microservices |
+| Protect against | CSRF (SameSite, CSRF token) | XSS (avoid localStorage), leaks |
+
+</CheatSheet>

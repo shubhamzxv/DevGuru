@@ -1,0 +1,205 @@
+---
+id: rest-jwt
+title: JWT
+summary: A JWT (JSON Web Token) is a signed token in three parts, header, payload and signature, that carries claims such as the user id and expiry, so a server can trust it without a database lookup.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a printed train ticket with a QR code. Anyone can read the printed details: name, train, date. But only the railway can make a valid QR code, and the TTE's scanner checks it. Change the date with a pen and the QR code no longer matches.
+
+A **JWT** is that ticket: the details are readable by anyone, and the **signature** proves they were not changed.
+
+</Analogy>
+
+## Simple explanation
+
+A JWT looks like three Base64URL strings joined by dots:
+
+```text
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI3Iiwicm9sZSI6InVzZXIiLCJleHAiOjE3OTUwMDAwMDB9.3XQ9...
+          header                                        payload                                signature
+```
+
+1. **Header**: the algorithm, for example `{"alg": "HS256", "typ": "JWT"}`
+2. **Payload**: the **claims**, the data:
+   - `sub` subject (the user id), `exp` expiry time, `iat` issued at, `iss` issuer, `aud` audience, `jti` unique token id
+   - your own claims, such as `role`
+3. **Signature**: computed from header + payload with a secret key. If anyone changes one character of the payload, the signature check fails
+
+**The payload is encoded, not encrypted.** Anyone can decode it (try jwt.io). Never put passwords, card numbers or other secrets in it.
+
+Two kinds of signing:
+
+- **HS256** (HMAC): one shared secret signs and verifies. Simple, good for a single backend
+- **RS256 / ES256** (public-key): a private key signs, a public key verifies. Good when many services verify tokens issued by one auth server, which publishes its public keys (JWKS)
+
+Verifying a JWT means checking: the signature with the expected algorithm, `exp` (not expired), and `iss` / `aud` if you use them. Libraries such as **PyJWT** do this when you call `decode` with the key and the allowed algorithms.
+
+Typical flow: `POST /login` returns a short-lived **access token** (15 minutes) and a **refresh token**; the client sends `Authorization: Bearer <access token>`; when it expires, the client calls `POST /token/refresh`.
+
+## Code example
+
+```python
+from datetime import datetime, timedelta, timezone
+import jwt                                   # pip install pyjwt
+
+SECRET = "use-a-long-random-secret-from-env"
+
+def create_access_token(user_id: int, role: str) -> str:
+    now = datetime.now(timezone.utc)
+    claims = {"sub": str(user_id), "role": role, "iat": now, "exp": now + timedelta(minutes=15)}
+    return jwt.encode(claims, SECRET, algorithm="HS256")
+
+def read_token(token: str) -> dict:
+    return jwt.decode(token, SECRET, algorithms=["HS256"])   # checks signature AND exp
+
+token = create_access_token(7, "user")
+print(token.count("."), "dots")
+print(read_token(token)["sub"], read_token(token)["role"])
+
+header, payload, signature = token.split(".")
+forged = jwt.encode({"sub": "7", "role": "admin", "exp": 9999999999}, "attacker-guess-that-is-not-our-secret-key", algorithm="HS256")
+try:
+    read_token(forged)
+except jwt.InvalidSignatureError:
+    print("forged token rejected")
+
+expired = jwt.encode({"sub": "7", "exp": datetime.now(timezone.utc) - timedelta(seconds=1)}, SECRET, algorithm="HS256")
+try:
+    read_token(expired)
+except jwt.ExpiredSignatureError:
+    print("expired token rejected")
+```
+
+```output
+2 dots
+7 user
+forged token rejected
+expired token rejected
+```
+
+<Playground kind="http">
+
+```http
+POST /login
+Content-Type: application/json
+
+{"username": "guru", "password": "secret"}
+```
+
+</Playground>
+
+The token returned is shaped like a JWT (three parts). Use it on `GET /me`, then change one letter in it and send again: 401.
+
+<Mistakes>
+
+<Mistake title="Not restricting the algorithm">
+
+<Wrong>
+
+```python
+jwt.decode(token, SECRET, options={"verify_signature": False})   # trusts anything
+```
+
+</Wrong>
+
+<Right>
+
+```python
+jwt.decode(token, SECRET, algorithms=["HS256"], audience="devguru-api")
+```
+
+</Right>
+
+Always verify the signature and pass the exact allowed algorithms, so an attacker cannot switch the algorithm (for example to "none").
+
+</Mistake>
+
+<Mistake title="Secrets in the payload">
+
+<Wrong>
+
+```python
+jwt.encode({"sub": "7", "password": "secret123", "pan": "ABCDE1234F"}, SECRET, algorithm="HS256")
+```
+
+</Wrong>
+
+<Right>
+
+```python
+jwt.encode({"sub": "7", "role": "user", "exp": expiry}, SECRET, algorithm="HS256")
+```
+
+</Right>
+
+Anyone holding the token can decode the payload. Keep it to ids and permissions.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a JWT and what are its parts?">
+
+A compact, URL-safe token with three Base64URL parts separated by dots: a header (algorithm and type), a payload of claims (such as sub, exp, iat, iss, aud and custom roles) and a signature over the first two parts. The signature lets the receiver verify integrity and authenticity without a database lookup.
+
+</QA>
+
+<QA q="Is a JWT encrypted?">
+
+A normal JWT (JWS) is signed, not encrypted: anyone can decode and read the payload, but cannot change it without invalidating the signature. Encrypted tokens (JWE) exist but are less common. Sensitive data should not be placed in a JWT.
+
+</QA>
+
+<QA q="HS256 vs RS256?">
+
+HS256 uses one shared secret for both signing and verifying, so every verifier could also create tokens. RS256 (or ES256) signs with a private key and verifies with a public key, so many services can verify tokens while only the auth server can issue them; public keys are usually published as a JWKS endpoint.
+
+</QA>
+
+<QA q="What are access and refresh tokens?">
+
+The access token is short-lived and sent with every API request. The refresh token is longer-lived, sent only to the token endpoint to obtain new access tokens, stored more securely, and can be revoked server-side (often rotated on each use). This limits the damage if an access token leaks.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'How many dot-separated parts does a JWT have?',
+      options: ['2', '3', '4', '5'],
+      answer: 1,
+      why: 'Header, payload and signature.',
+    },
+    {
+      q: 'Which claim holds the expiry time?',
+      options: ['sub', 'exp', 'iss', 'aud'],
+      answer: 1,
+      why: 'exp is a Unix timestamp after which the token is invalid.',
+    },
+    {
+      q: 'Can anyone read a JWT payload?',
+      options: ['No, it is encrypted', 'Yes, it is only Base64URL-encoded', 'Only the server', 'Only with the private key'],
+      answer: 1,
+      why: 'It is signed, not encrypted.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Part | Contains |
+| --- | --- |
+| Header | `{"alg": "HS256", "typ": "JWT"}` |
+| Payload | `sub`, `exp`, `iat`, `iss`, `aud`, `jti`, custom claims |
+| Signature | HMAC or RSA/EC signature of header.payload |
+
+PyJWT: `jwt.encode(claims, key, algorithm="HS256")`, `jwt.decode(token, key, algorithms=["HS256"])`. Send as `Authorization: Bearer <token>`. Short access token + revocable refresh token. No secrets in the payload.
+
+</CheatSheet>

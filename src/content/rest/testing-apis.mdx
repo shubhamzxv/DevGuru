@@ -1,0 +1,224 @@
+---
+id: rest-testing-apis
+title: Testing APIs (curl, Postman)
+summary: You test APIs by hand with curl or Postman to explore them, and automatically with pytest and a test client so every change is checked before release.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A new car is tested twice: a person takes it for a drive to feel how it handles, and machines on the production line run the same checks on every car, every time.
+
+**curl and Postman** are the test drive: quick, by hand. **Automated tests** (pytest) are the production-line checks that run on every code change.
+
+</Analogy>
+
+## Simple explanation
+
+**By hand, for exploring and debugging:**
+
+- **curl** in the terminal: available everywhere, easy to copy into bug reports
+- **Postman** or **Insomnia**: a GUI with saved collections, environments (dev, staging) and variables such as `{{base_url}}` and `{{token}}`
+- **Swagger UI** at `/docs` in FastAPI: try every endpoint from the browser
+- **HTTPie** (`http GET ...`): friendlier curl
+
+**Automated, for every change:**
+
+- **Unit tests** for business logic, no HTTP involved
+- **API (integration) tests**: call the endpoints with a test client and check status code, body and headers. In FastAPI use `TestClient`; in Django `APIClient` from DRF
+- Test the **unhappy paths** too: 401 without a token, 403 for another user's data, 404, 422 for bad input, duplicates, limits
+- Use a **separate test database**, reset per test, and override external services (payments, email) with fakes using `dependency_overrides` or mocks
+- **Contract tests** check the API still matches its OpenAPI spec or what clients expect
+- **Load tests** (Locust, k6) check speed under many users
+
+Run the tests in **CI** (GitHub Actions) on every pull request so nothing broken reaches production.
+
+## Code example
+
+curl, the options you use most:
+
+```bash
+curl -i https://api.devguru.dev/books/1                  # -i shows status line and headers
+
+curl -s -X POST https://api.devguru.dev/books \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Godaan", "author": "Premchand"}'          # -s hides the progress bar
+
+curl -H "Authorization: Bearer $TOKEN" https://api.devguru.dev/me
+curl -L https://api.devguru.dev/old-books                 # -L follows redirects
+curl -w "\n%{http_code} in %{time_total}s\n" -o /dev/null -s https://api.devguru.dev/books
+```
+
+Automated API tests with pytest and FastAPI's TestClient:
+
+```python
+# test_books.py   (run: pytest -q)
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+from pydantic import BaseModel
+
+app = FastAPI()
+BOOKS = {1: {"id": 1, "title": "Malgudi Days"}}
+
+class BookIn(BaseModel):
+    title: str
+
+@app.get("/books/{book_id}")
+def get_book(book_id: int):
+    if book_id not in BOOKS:
+        raise HTTPException(404, "Book not found")
+    return BOOKS[book_id]
+
+@app.post("/books", status_code=201)
+def create_book(book: BookIn):
+    BOOKS[2] = {"id": 2, **book.model_dump()}
+    return BOOKS[2]
+
+client = TestClient(app)
+
+def test_get_existing_book():
+    resp = client.get("/books/1")
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "Malgudi Days"
+
+def test_missing_book_is_404():
+    assert client.get("/books/99").status_code == 404
+
+def test_create_validates_body():
+    assert client.post("/books", json={}).status_code == 422
+    resp = client.post("/books", json={"title": "Godaan"})
+    assert resp.status_code == 201
+    assert resp.json() == {"id": 2, "title": "Godaan"}
+```
+
+```output
+...                                                                      [100%]
+3 passed in 0.21s
+```
+
+<Playground kind="http">
+
+```http
+GET /books/1
+```
+
+</Playground>
+
+This playground is a mini Postman. Open "The same request with curl" under it to get the command for your terminal.
+
+<Mistakes>
+
+<Mistake title="Testing only the happy path">
+
+<Wrong>
+
+```python
+def test_create_order():
+    assert client.post("/orders", json=valid_order, headers=auth).status_code == 201
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def test_create_order_rules():
+    assert client.post("/orders", json=valid_order).status_code == 401          # no token
+    assert client.post("/orders", json={}, headers=auth).status_code == 422     # bad body
+    assert client.get("/orders/999", headers=other_user).status_code in (403, 404)
+    assert client.post("/orders", json=valid_order, headers=auth).status_code == 201
+```
+
+</Right>
+
+Most real bugs and security holes are in the error paths: missing auth, other users' data, bad input.
+
+</Mistake>
+
+<Mistake title="Tests that hit real external services">
+
+<Wrong>
+
+```python
+def test_checkout():
+    client.post("/checkout", json=cart)    # really charges a card and sends an email
+```
+
+</Wrong>
+
+<Right>
+
+```python
+app.dependency_overrides[get_payment_gateway] = lambda: FakeGateway(always="success")
+def test_checkout():
+    assert client.post("/checkout", json=cart).status_code == 201
+```
+
+</Right>
+
+Fake external services in tests: they are faster, free, and do not fail when the network is slow.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you test a REST API?">
+
+Manually with curl, Postman or Swagger UI while developing. Automatically with integration tests that call endpoints through a test client (FastAPI TestClient, DRF APIClient) against a test database, checking status codes, bodies and headers for both success and error cases, with external services faked. Add contract tests against the OpenAPI spec and load tests for performance, and run everything in CI.
+
+</QA>
+
+<QA q="How do you test an endpoint that needs authentication?">
+
+Either log in through the API in a fixture and reuse the token, or override the authentication dependency to return a test user (`app.dependency_overrides` in FastAPI, `force_authenticate` in DRF). Also test that requests without credentials get 401 and other users get 403 or 404.
+
+</QA>
+
+<QA q="What curl options do you use most?">
+
+`-i` to show response headers, `-X` to set the method, `-H` for headers, `-d` or `--json` for a body, `-s` silent, `-L` follow redirects, `-o` output file, `-w` to print timing or the status code, and `-v` for full debugging including TLS.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which curl option shows the response headers?',
+      options: ['-d', '-i', '-L', '-s'],
+      answer: 1,
+      why: '-i includes the status line and headers in the output.',
+    },
+    {
+      q: 'In FastAPI tests, how do you replace the real payment service?',
+      options: ['Edit production code', 'app.dependency_overrides', 'Restart the server', 'Use curl'],
+      answer: 1,
+      why: 'Override the dependency with a fake for the test.',
+    },
+    {
+      q: 'Why run API tests in CI?',
+      options: ['To make builds slower', 'So every change is checked automatically before release', 'CI requires it', 'To replace code review'],
+      answer: 1,
+      why: 'Broken changes are caught on the pull request, not in production.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Tool / command |
+| --- | --- |
+| Show headers | `curl -i URL` |
+| POST JSON | `curl -X POST URL -H "Content-Type: application/json" -d '{...}'` |
+| Token | `-H "Authorization: Bearer $TOKEN"` |
+| Follow redirect | `curl -L` |
+| Timing | `curl -w "%{http_code} %{time_total}\n" -o /dev/null -s URL` |
+| GUI | Postman / Insomnia, FastAPI `/docs` |
+| Automated | pytest + `TestClient` (FastAPI) / `APIClient` (DRF) |
+| Fakes | `app.dependency_overrides`, `unittest.mock` |
+| Load | Locust, k6 |
+
+</CheatSheet>

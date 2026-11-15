@@ -1,0 +1,214 @@
+---
+id: rest-headers
+title: Headers
+summary: Headers are Name-value lines sent with every request and response that carry extra information, such as the data format, login token or caching rules.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+On a courier parcel, besides the address there are stickers: "Fragile", "Keep upright", "Cash on delivery", "Weight 2 kg". They do not change what is inside the box, but they tell everyone how to handle it.
+
+HTTP **headers** are those stickers. They describe the message: what format the body is in, who is sending it, how long it may be cached.
+
+</Analogy>
+
+## Simple explanation
+
+A header is one line: `Name: value`. Header names are **case-insensitive** (`content-type` equals `Content-Type`).
+
+Common **request** headers:
+
+| Header | Purpose | Example |
+| --- | --- | --- |
+| `Host` | which site on the server | `api.devguru.dev` |
+| `Content-Type` | format of the body I send | `application/json` |
+| `Accept` | formats I can read back | `application/json` |
+| `Authorization` | who I am | `Bearer eyJhbGci...` |
+| `User-Agent` | which client program | `python-requests/2.32` |
+| `Cookie` | cookies the browser stored | `sessionid=abc123` |
+| `If-None-Match` | "I have this version already" | `"v1-42"` |
+| `Idempotency-Key` | make a retried POST safe | `order-1042` |
+
+Common **response** headers:
+
+| Header | Purpose | Example |
+| --- | --- | --- |
+| `Content-Type` | format of the body | `application/json; charset=utf-8` |
+| `Content-Length` | size in bytes | `52` |
+| `Location` | URL of a new or moved resource | `/books/6` |
+| `Cache-Control` | how long it may be cached | `max-age=60` |
+| `ETag` | version stamp of the resource | `"v1-42"` |
+| `Set-Cookie` | store a cookie in the browser | `sessionid=abc; HttpOnly; Secure` |
+| `Retry-After` | wait before retrying (429, 503) | `60` |
+| `Access-Control-Allow-Origin` | CORS permission | `https://devguru.dev` |
+
+Custom headers usually start with the app's name, such as `X-Request-ID` (a unique id to trace one request through all services in the logs) or `X-RateLimit-Remaining`. The `X-` prefix is just a convention today.
+
+Never put secrets in the **URL**: URLs end up in logs and browser history. Tokens belong in the `Authorization` header.
+
+## Code example
+
+Sending and reading headers with `requests`:
+
+```python
+import requests
+
+resp = requests.get(
+    "https://api.devguru.dev/books/1",
+    headers={"Accept": "application/json", "X-Request-ID": "req-7f3a"},
+)
+print(resp.headers["Content-Type"])
+print(resp.headers["etag"])            # case does not matter
+print(resp.headers.get("Cache-Control"))
+```
+
+```output
+application/json; charset=utf-8
+"v1-385"
+max-age=60
+```
+
+Reading a header in FastAPI (underscores become dashes):
+
+```python
+from fastapi import FastAPI, Header
+
+app = FastAPI()
+
+@app.get("/whoami")
+def whoami(user_agent: str = Header(None), x_request_id: str = Header(None)):
+    return {"client": user_agent, "request_id": x_request_id}
+```
+
+```output
+{"client": "curl/8.5.0", "request_id": "req-7f3a"}
+```
+
+<Playground kind="http">
+
+```http
+GET /books/1
+Accept: application/json
+X-Request-ID: req-7f3a
+```
+
+</Playground>
+
+Open "Response headers" and find `ETag`. Copy it, add the line `If-None-Match:` with that value, and send again to get 304.
+
+<Mistakes>
+
+<Mistake title="Token in the URL">
+
+<Wrong>
+
+```text
+GET /me?token=eyJhbGciOiJIUzI1NiJ9...
+(saved in server logs, proxy logs and browser history)
+```
+
+</Wrong>
+
+<Right>
+
+```http
+GET /me
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...
+```
+
+</Right>
+
+Headers are not written to access logs by default, and they are not shared when someone copies a link.
+
+</Mistake>
+
+<Mistake title="Wrong Content-Type for the body">
+
+<Wrong>
+
+```http
+POST /books
+Content-Type: text/plain
+
+{"title": "Gitanjali", "author": "Tagore"}
+```
+
+</Wrong>
+
+<Right>
+
+```http
+POST /books
+Content-Type: application/json
+
+{"title": "Gitanjali", "author": "Tagore"}
+```
+
+</Right>
+
+The server decides how to parse the body from `Content-Type`. A wrong value gives 415 Unsupported Media Type or a validation error.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between Content-Type and Accept?">
+
+`Content-Type` describes the format of the body in the message it is sent with (the request body, or the response body). `Accept` is a request header saying which formats the client wants back. The server uses `Accept` for content negotiation and answers with a matching `Content-Type`, or 406 if it cannot.
+
+</QA>
+
+<QA q="Name some security-related HTTP headers.">
+
+`Authorization` for credentials; `Set-Cookie` with HttpOnly, Secure and SameSite flags; `Strict-Transport-Security` to force HTTPS; `Content-Security-Policy` to limit which scripts can run; `X-Content-Type-Options: nosniff`; and the CORS headers such as `Access-Control-Allow-Origin`.
+
+</QA>
+
+<QA q="What is a request ID header used for?">
+
+A unique id (such as `X-Request-ID` or a trace id) generated at the edge and passed to every service the request touches, and written in every log line. It lets you find all logs for one user request across microservices.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which header carries a login token?',
+      options: ['Accept', 'Authorization', 'Host', 'Location'],
+      answer: 1,
+      why: 'Authorization: Bearer <token>.',
+    },
+    {
+      q: 'Which response header gives the URL of a newly created resource?',
+      options: ['Content-Type', 'Location', 'ETag', 'Retry-After'],
+      answer: 1,
+      why: 'A 201 response usually includes Location: /books/6.',
+    },
+    {
+      q: 'Are header names case-sensitive?',
+      options: ['Yes', 'No', 'Only in HTTP/2', 'Only for custom headers'],
+      answer: 1,
+      why: 'Content-Type and content-type are the same header.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Header |
+| --- | --- |
+| Say the body is JSON | `Content-Type: application/json` |
+| Ask for JSON back | `Accept: application/json` |
+| Send a token | `Authorization: Bearer <token>` |
+| New resource URL | `Location: /books/6` |
+| Caching | `Cache-Control: max-age=60`, `ETag`, `If-None-Match` |
+| Slow down | `Retry-After: 60` |
+| Trace a request | `X-Request-ID: <uuid>` |
+| Safe retries | `Idempotency-Key: <unique>` |
+
+</CheatSheet>

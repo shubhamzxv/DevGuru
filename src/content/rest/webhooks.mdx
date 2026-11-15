@@ -1,0 +1,230 @@
+---
+id: rest-webhooks
+title: Webhooks
+summary: A webhook is an HTTP request that another service sends to your URL when something happens, so you are told about events instead of asking again and again.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Waiting for a parcel, you could phone the courier every 10 minutes: "Has it arrived?" That is **polling**, tiring for both of you.
+
+Or you give them your number and they **message you** when it is delivered. That is a **webhook**: you give a service your URL, and it calls you when the event happens.
+
+</Analogy>
+
+## Simple explanation
+
+A **webhook** is a reverse API call:
+
+1. You register a URL with a provider, such as `https://api.myshop.in/webhooks/razorpay`, and choose events (`payment.captured`, `refund.created`)
+2. When the event happens, the provider sends an **HTTP POST** with a JSON body describing it
+3. Your endpoint checks it, records it, and replies **2xx quickly**
+
+Common examples: payment gateways (Razorpay, Stripe) confirming payments, GitHub calling CI on every push, Twilio delivering SMS status, Shopify order events.
+
+Webhooks are delivered over the internet by someone else's system, so build the receiver defensively:
+
+- **Verify the signature**: the provider signs the raw body with a shared secret (HMAC-SHA256) and sends it in a header such as `X-Razorpay-Signature`. Recompute it and compare with `hmac.compare_digest`. Without this, anyone could POST a fake "payment captured"
+- **Respond fast** (within a few seconds): save the event and return 200, then do the real work in a background job or queue. Slow responses are treated as failures
+- **Expect retries and duplicates**: providers retry when you fail or time out, and may deliver an event more than once. Store the **event id** and ignore repeats (idempotency)
+- **Do not rely on order**: `payment.captured` may arrive before `order.created`. Check current state, or fetch the latest object from the provider's API
+- **Use HTTPS**, and optionally a timestamp in the signature to reject old replayed requests
+- Keep a way to **replay** missed events (most providers have a dashboard or an events API)
+
+## Code example
+
+A webhook receiver that verifies the signature and ignores duplicates:
+
+```python
+import hashlib, hmac, json
+from fastapi import FastAPI, Header, HTTPException, Request
+
+app = FastAPI()
+WEBHOOK_SECRET = b"whsec_from_the_provider_dashboard"
+seen_events: set[str] = set()            # a DB table with a UNIQUE column in real life
+jobs: list[dict] = []                    # stand-in for a queue
+
+@app.post("/webhooks/payments")
+async def payment_webhook(request: Request, x_signature: str = Header(...)):
+    raw = await request.body()                                    # sign the RAW bytes
+    expected = hmac.new(WEBHOOK_SECRET, raw, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, x_signature):
+        raise HTTPException(status_code=401, detail="Bad signature")
+    event = json.loads(raw)
+    if event["id"] in seen_events:
+        return {"status": "duplicate ignored"}
+    seen_events.add(event["id"])
+    jobs.append(event)                                            # process later, reply now
+    return {"status": "accepted"}
+```
+
+```python
+from fastapi.testclient import TestClient
+c = TestClient(app)
+body = json.dumps({"id": "evt_1", "type": "payment.captured", "amount": 49900}).encode()
+sig = hmac.new(WEBHOOK_SECRET, body, hashlib.sha256).hexdigest()
+print(c.post("/webhooks/payments", content=body, headers={"X-Signature": sig}).json())
+print(c.post("/webhooks/payments", content=body, headers={"X-Signature": sig}).json())
+print(c.post("/webhooks/payments", content=body, headers={"X-Signature": "fake"}).status_code)
+```
+
+```output
+{'status': 'accepted'}
+{'status': 'duplicate ignored'}
+401
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "customer", "label": "Customer", "icon": "👤", "col": 0, "row": 1, "info": "Pays on the checkout page.", "example": "Pays ₹499 by UPI." },
+    { "id": "provider", "label": "Payment provider", "icon": "💳", "col": 1, "row": 0, "info": "Processes the payment, then calls your webhook URL with the result. Retries if you do not answer 2xx.", "example": "Razorpay or Stripe." },
+    { "id": "webhook", "label": "Your webhook endpoint", "icon": "🪝", "col": 2, "row": 0, "info": "Verifies the signature, ignores duplicate event ids, saves the event, answers 200 within a second.", "example": "POST /webhooks/payments" },
+    { "id": "queue", "label": "Queue + worker", "icon": "📬", "col": 2, "row": 2, "info": "Does the slow work later: mark the order paid, send the receipt, update stock.", "example": "Celery, RQ or SQS." },
+    { "id": "db", "label": "Orders DB", "icon": "🗄️", "col": 3, "row": 1, "info": "The order moves from PENDING to PAID.", "example": "PostgreSQL" }
+  ],
+  "edges": [
+    ["customer", "provider", "pays"],
+    ["provider", "webhook", "POST event"],
+    ["webhook", "queue", "enqueue"],
+    ["queue", "db", "update"]
+  ],
+  "flows": [
+    {
+      "name": "Payment confirmed",
+      "steps": [
+        ["customer", "Completes the payment on the provider's page."],
+        ["provider", "Sends POST /webhooks/payments with {id: evt_1, type: payment.captured} and a signature header."],
+        ["webhook", "Signature is valid and evt_1 is new: save it and answer 200 at once."],
+        ["queue", "A worker picks up the job a moment later."],
+        ["db", "Order 1042 is marked PAID; the receipt email is sent."],
+        ["provider", "Its retry timer fired anyway and sends evt_1 again."],
+        ["webhook", "evt_1 was already seen: answer 200 and do nothing. No double processing."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Trusting the webhook body without a signature check">
+
+<Wrong>
+
+```python
+@app.post("/webhooks/payments")
+def hook(event: dict):
+    mark_order_paid(event["order_id"])        # anyone can POST this and get free goods
+```
+
+</Wrong>
+
+<Right>
+
+```python
+expected = hmac.new(SECRET, raw_body, hashlib.sha256).hexdigest()
+if not hmac.compare_digest(expected, request.headers["X-Signature"]):
+    raise HTTPException(401)
+```
+
+</Right>
+
+Webhook URLs are public. Only the signature proves the provider sent it.
+
+</Mistake>
+
+<Mistake title="Doing slow work before answering">
+
+<Wrong>
+
+```python
+@app.post("/webhooks/payments")
+def hook(event: dict):
+    generate_invoice_pdf(event)               # 20 seconds
+    send_email(event)
+    return {"ok": True}                       # provider timed out and will retry: duplicates
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.post("/webhooks/payments")
+def hook(event: dict):
+    queue.enqueue("process_payment", event)   # milliseconds
+    return {"ok": True}
+```
+
+</Right>
+
+Answer within the provider's timeout and move the heavy work to a background worker.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a webhook, and how is it different from polling?">
+
+A webhook is an HTTP callback: a provider sends a POST request to a URL you registered when an event occurs. With polling, the client repeatedly asks the provider whether something changed, wasting requests and adding delay. Webhooks deliver events in near real time with far fewer calls.
+
+</QA>
+
+<QA q="How do you secure and make a webhook endpoint reliable?">
+
+Verify an HMAC signature over the raw body with a shared secret (and a timestamp to stop replays), serve it only over HTTPS, respond 2xx quickly and process asynchronously, store event ids to ignore duplicates, tolerate out-of-order delivery, log every event, and support replaying missed events.
+
+</QA>
+
+<QA q="What happens if your webhook endpoint is down?">
+
+Providers retry with backoff for a period (hours to days, depending on the provider) and may disable the endpoint after repeated failures. Missed events can usually be replayed from the provider's dashboard or fetched through its events API; idempotent handling makes the replays safe.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Who sends the HTTP request in a webhook?',
+      options: ['Your frontend', 'The provider (for example the payment gateway)', 'The user\'s browser', 'DNS'],
+      answer: 1,
+      why: 'The provider calls your registered URL when the event happens.',
+    },
+    {
+      q: 'How do you know a webhook really came from the provider?',
+      options: ['Check the IP only', 'Verify the HMAC signature header', 'Check the User-Agent', 'You cannot'],
+      answer: 1,
+      why: 'Only someone with the shared secret can produce a valid signature.',
+    },
+    {
+      q: 'Why store the event id?',
+      options: ['For SEO', 'Providers may deliver the same event more than once', 'It is required by HTTP', 'To sort events'],
+      answer: 1,
+      why: 'Skipping seen ids keeps processing idempotent.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Rule | How |
+| --- | --- |
+| Authenticate | HMAC-SHA256 of the raw body, `hmac.compare_digest` |
+| Stop replays | signed timestamp, reject old ones |
+| Be fast | save + enqueue, answer 2xx in under a few seconds |
+| Duplicates | unique event id table |
+| Order | do not assume it; re-fetch state if needed |
+| Transport | HTTPS only |
+| Recovery | provider retries + replay from dashboard / events API |
+
+</CheatSheet>

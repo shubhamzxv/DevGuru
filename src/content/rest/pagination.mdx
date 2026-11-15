@@ -1,0 +1,203 @@
+---
+id: rest-pagination
+title: Pagination
+summary: Pagination returns a big list in small pages, using page numbers, offsets or a cursor, so responses stay fast and small.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A search engine shows 10 results per page, with "Next" at the bottom. Nobody wants a million results on one screen, and the server does not want to send them.
+
+**Pagination** does the same for APIs: the client asks for one page at a time.
+
+</Analogy>
+
+## Simple explanation
+
+Never return an unbounded list: as data grows, the response gets slow, uses lots of memory and can time out. Return a page, with a **default and a maximum page size** (for example default 20, maximum 100).
+
+Three common styles:
+
+**1. Page number**: `GET /orders?page=3&size=20`
+
+- Easy to understand and to show "page 3 of 50"
+- Internally `OFFSET (page - 1) * size LIMIT size`
+
+**2. Offset and limit**: `GET /orders?offset=40&limit=20`
+
+- Same idea, more flexible
+- Both styles get **slow on deep pages**: the database still reads and throws away all skipped rows
+- Items can be **skipped or repeated** if rows are added or deleted while the user pages
+
+**3. Cursor (keyset)**: `GET /orders?limit=20&after=eyJpZCI6MTA0Mn0`
+
+- The response gives an opaque `next_cursor`, usually the encoded last id (or last timestamp and id)
+- The server queries `WHERE id > :last_id ORDER BY id LIMIT 20`, which uses an index and stays fast on any page
+- Stable when new rows arrive. No "jump to page 50", only next (and previous)
+- The best choice for feeds, logs, infinite scroll and big tables
+
+What to send back besides the items: the total (if cheap to count) or `has_more`, and links or cursors for the next page. Either in the body:
+
+```json
+{"items": [...], "next_cursor": "eyJpZCI6MTA2MX0", "has_more": true}
+```
+
+or in headers, such as `X-Total-Count` and the standard `Link: <...>; rel="next"` header.
+
+## Code example
+
+Cursor pagination with SQLite:
+
+```python
+import base64, json, sqlite3
+
+db = sqlite3.connect(":memory:")
+db.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER)")
+db.executemany("INSERT INTO orders (total) VALUES (?)", [(i * 10,) for i in range(1, 8)])
+
+def encode(last_id): return base64.urlsafe_b64encode(json.dumps({"id": last_id}).encode()).decode()
+def decode(cursor): return json.loads(base64.urlsafe_b64decode(cursor))["id"]
+
+def list_orders(limit=3, after=None):
+    last_id = decode(after) if after else 0
+    rows = db.execute(
+        "SELECT id, total FROM orders WHERE id > ? ORDER BY id LIMIT ?", (last_id, limit + 1)
+    ).fetchall()                                   # fetch one extra row to know if more exist
+    items, more = rows[:limit], len(rows) > limit
+    return {"items": items, "has_more": more, "next_cursor": encode(items[-1][0]) if more else None}
+
+page = list_orders()
+print(page["items"], page["has_more"])
+page = list_orders(after=page["next_cursor"])
+print(page["items"], page["has_more"])
+page = list_orders(after=page["next_cursor"])
+print(page["items"], page["has_more"], page["next_cursor"])
+```
+
+```output
+[(1, 10), (2, 20), (3, 30)] True
+[(4, 40), (5, 50), (6, 60)] True
+[(7, 70)] False None
+```
+
+<Playground kind="http">
+
+```http
+GET /books?page=1&limit=2
+```
+
+</Playground>
+
+The pretend API uses page numbers. Look at `X-Total-Count`, then ask for page 2 and page 3.
+
+<Mistakes>
+
+<Mistake title="No maximum page size">
+
+<Wrong>
+
+```python
+@app.get("/orders")
+def list_orders(limit: int = 20):          # a client can ask for limit=10000000
+    ...
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from fastapi import Query
+
+@app.get("/orders")
+def list_orders(limit: int = Query(20, ge=1, le=100)):   # 422 if above 100
+    ...
+```
+
+</Right>
+
+Without a cap, one request can load the whole table into memory.
+
+</Mistake>
+
+<Mistake title="Paging without a stable ORDER BY">
+
+<Wrong>
+
+```sql
+SELECT * FROM orders LIMIT 20 OFFSET 40;   -- row order is not guaranteed
+```
+
+</Wrong>
+
+<Right>
+
+```sql
+SELECT * FROM orders ORDER BY created_at DESC, id DESC LIMIT 20 OFFSET 40;
+```
+
+</Right>
+
+Without a deterministic order (with a unique tie-breaker such as id), the same row can appear on two pages, or on none.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What pagination methods do you know and when would you use each?">
+
+Page number and offset/limit are simple and allow jumping to any page, good for admin tables with moderate data. Cursor (keyset) pagination uses the last seen key with `WHERE id > :last ORDER BY id LIMIT n`; it is fast at any depth and stable under inserts, so it suits large or changing data, feeds and infinite scroll.
+
+</QA>
+
+<QA q="Why is OFFSET pagination slow for deep pages?">
+
+The database must scan and discard all rows before the offset, so `OFFSET 100000` reads 100,000 rows just to skip them. Keyset pagination seeks directly to the start position using an index.
+
+</QA>
+
+<QA q="What should a paginated response contain?">
+
+The items, plus navigation information: a next cursor or next link and has_more, optionally the total count (only if it is cheap to compute), and the page size used. Links can be in the body or in a `Link` header.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which pagination stays fast on page 10,000?',
+      options: ['OFFSET / LIMIT', 'Page numbers', 'Cursor (keyset)', 'No pagination'],
+      answer: 2,
+      why: 'It seeks with WHERE id > last_id using an index instead of skipping rows.',
+    },
+    {
+      q: 'Why fetch limit + 1 rows?',
+      options: ['To be safe', 'To know if another page exists without a COUNT', 'It is required by SQL', 'For caching'],
+      answer: 1,
+      why: 'If the extra row exists, has_more is true.',
+    },
+    {
+      q: 'What must every paginated query have?',
+      options: ['A JOIN', 'A deterministic ORDER BY', 'A GROUP BY', 'DISTINCT'],
+      answer: 1,
+      why: 'Otherwise rows can repeat or go missing between pages.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Style | Request | SQL | Good for |
+| --- | --- | --- | --- |
+| Page | `?page=3&size=20` | `LIMIT 20 OFFSET 40` | admin tables |
+| Offset | `?offset=40&limit=20` | `LIMIT 20 OFFSET 40` | simple lists |
+| Cursor | `?after=<cursor>&limit=20` | `WHERE id > :last ORDER BY id LIMIT 20` | feeds, big data |
+
+Always: default and max page size, stable `ORDER BY`, return `next_cursor` / `has_more` (or `Link` header).
+
+</CheatSheet>

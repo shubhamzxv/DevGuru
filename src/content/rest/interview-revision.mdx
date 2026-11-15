@@ -1,0 +1,253 @@
+---
+id: rest-interview-revision
+title: REST and HTTP interview revision
+summary: A one-page revision of the REST and HTTP questions asked most in backend interviews, with short answers to say out loud.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Before a driving test you do not read the whole RTO manual again. You revise the signs and rules that are always asked.
+
+This page is that last-minute revision for REST and HTTP. Each line links to a full topic in this track.
+
+</Analogy>
+
+## Simple explanation
+
+**The 20 answers to know cold**
+
+| Question | Short answer |
+| --- | --- |
+| What is REST? | an architectural style: resources at URLs, HTTP methods as verbs, stateless, cacheable, uniform interface |
+| Stateless means? | every request carries everything needed (token); no server session between requests |
+| GET vs POST | GET reads, safe, idempotent, cacheable, no body; POST creates or acts, not idempotent |
+| PUT vs PATCH | PUT replaces the whole resource (idempotent); PATCH changes some fields |
+| Idempotent methods | GET, HEAD, OPTIONS, PUT, DELETE (not POST) |
+| Safe methods | GET, HEAD, OPTIONS |
+| 200 / 201 / 204 | OK / Created (+ Location) / No Content |
+| 301 vs 302 vs 304 | moved for good / moved for now / your cached copy is fine |
+| 400 vs 422 | cannot read the request / readable but invalid data |
+| 401 vs 403 | who are you? / I know you, and no |
+| 404 / 405 / 409 / 429 | not found / method not allowed / conflict / too many requests |
+| 500 vs 502 vs 503 vs 504 | server bug / bad upstream / overloaded / upstream timeout |
+| Query vs path vs body | path = which resource, query = filter/sort/page, body = the data |
+| Pagination | page/offset (simple) or cursor (fast at any depth); always cap the page size |
+| Versioning | `/v1/` in the path for breaking changes; deprecate with Sunset |
+| Sessions vs tokens | server stores session + cookie id / client carries a signed token (JWT) |
+| JWT | header.payload.signature; signed, not encrypted; short expiry + refresh token |
+| OAuth 2.0 | delegated access with scoped tokens; auth code + PKCE; OIDC adds login |
+| CORS | browser rule; server allows other origins with Access-Control-Allow-*; preflight is OPTIONS |
+| Caching | Cache-Control (max-age, no-cache, no-store, private) + ETag / If-None-Match → 304 |
+
+**Design questions: say the steps**
+
+"Design a REST API for X" (orders, bookings, a library):
+
+1. **Resources and URLs**: `/users`, `/books`, `/books/{id}`, `/users/{id}/loans`
+2. **Methods and status codes** for each: GET 200, POST 201, PATCH 200, DELETE 204, errors 400/401/403/404/409/422
+3. **Request and response shapes** with validation (Pydantic), consistent error format
+4. **Auth**: JWT access + refresh tokens, or sessions; permissions per role
+5. **Lists**: pagination, filtering, sorting
+6. **Reliability**: idempotency keys for payments, rate limits, timeouts
+7. **Performance**: indexes, caching (ETag, Redis), async jobs for slow work
+8. **Versioning, docs** (OpenAPI), **tests** and monitoring
+
+"What happens when you type a URL and press Enter?": DNS lookup → TCP connection → TLS handshake → HTTP request → load balancer → server → response → browser parses HTML and fetches CSS/JS/images → renders.
+
+## Code example
+
+A complete, small, interview-ready endpoint set in FastAPI, covering most of the rules above:
+
+```python
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
+from pydantic import BaseModel, Field
+
+app = FastAPI(title="Library API", version="1.0.0")
+BOOKS: dict[int, dict] = {}
+
+class BookIn(BaseModel):
+    title: str = Field(min_length=1)
+    author: str
+
+class BookPatch(BaseModel):
+    title: str | None = None
+    author: str | None = None
+
+def current_user(authorization: str = Header(None)) -> str:
+    if authorization != "Bearer demo-token":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+    return "guru"
+
+@app.get("/v1/books")
+def list_books(author: str | None = None, page: int = Query(1, ge=1), size: int = Query(10, le=100)):
+    items = [b for b in BOOKS.values() if not author or author.lower() in b["author"].lower()]
+    return {"items": items[(page - 1) * size : page * size], "total": len(items)}
+
+@app.post("/v1/books", status_code=201)
+def create_book(book: BookIn, response: Response, user: str = Depends(current_user)):
+    book_id = len(BOOKS) + 1
+    BOOKS[book_id] = {"id": book_id, **book.model_dump()}
+    response.headers["Location"] = f"/v1/books/{book_id}"
+    return BOOKS[book_id]
+
+@app.patch("/v1/books/{book_id}")
+def update_book(book_id: int, changes: BookPatch, user: str = Depends(current_user)):
+    if book_id not in BOOKS:
+        raise HTTPException(404, "Book not found")
+    BOOKS[book_id].update(changes.model_dump(exclude_unset=True))
+    return BOOKS[book_id]
+
+@app.delete("/v1/books/{book_id}", status_code=204)
+def delete_book(book_id: int, user: str = Depends(current_user)):
+    BOOKS.pop(book_id, None)
+```
+
+```python
+from fastapi.testclient import TestClient
+c = TestClient(app)
+auth = {"Authorization": "Bearer demo-token"}
+print(c.post("/v1/books", json={"title": "Godaan", "author": "Premchand"}).status_code)
+r = c.post("/v1/books", json={"title": "Godaan", "author": "Premchand"}, headers=auth)
+print(r.status_code, r.headers["location"])
+print(c.post("/v1/books", json={"title": ""}, headers=auth).status_code)
+print(c.patch("/v1/books/1", json={"title": "Godan"}, headers=auth).json())
+print(c.get("/v1/books?author=prem").json())
+print(c.delete("/v1/books/1", headers=auth).status_code)
+```
+
+```output
+401
+201 /v1/books/1
+422
+{'id': 1, 'title': 'Godan', 'author': 'Premchand'}
+{'items': [{'id': 1, 'title': 'Godan', 'author': 'Premchand'}], 'total': 1}
+204
+```
+
+<Playground kind="http">
+
+```http
+GET /
+```
+
+</Playground>
+
+Practice round: using only this playground, get a token, read your profile, try the admin page, create a book with a missing field and then correctly, page through the books, and trigger a 429. Say each status code out loud with its meaning.
+
+<Mistakes>
+
+<Mistake title="Answering with a definition only">
+
+<Wrong>
+
+```text
+Q: "PUT vs PATCH?"   A: "PUT is for update and PATCH is also for update."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+A: "PUT replaces the whole resource, so missing fields are removed, and it is idempotent.
+    PATCH changes only the fields sent. For example, to change just a phone number I use PATCH."
+```
+
+</Right>
+
+Interviewers want the difference, the consequence, and one concrete example.
+
+</Mistake>
+
+<Mistake title="Mixing up 401 and 403 (still the most common slip)">
+
+<Wrong>
+
+```text
+"Logged-in user without admin rights -> 401."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"No or invalid token -> 401. Valid token but not allowed -> 403."
+```
+
+</Right>
+
+401 = authentication problem, 403 = authorization problem.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Design the endpoints for a simple library system.">
+
+Resources: users, books and loans. `GET /books` (filter by author, paginated), `GET /books/{id}`, `POST /books` (admin, 201 with Location), `PATCH /books/{id}`, `DELETE /books/{id}` (204). Loans: `POST /loans` with book_id (409 if already borrowed), `GET /users/{id}/loans`, `POST /loans/{id}/return`. JWT auth, admin role for book management, consistent error bodies, versioned under `/v1`.
+
+</QA>
+
+<QA q="How do you make an API secure?">
+
+HTTPS everywhere; strong authentication (short-lived JWTs or sessions, OAuth for third parties); authorization checks on every resource (never trust ids from the client); input validation; rate limiting; no secrets in URLs or logs; safe error messages; CORS limited to known origins; security headers; dependency updates and monitoring.
+
+</QA>
+
+<QA q="How do you make an API fast?">
+
+Database indexes and efficient queries (avoid N+1), pagination, caching at several levels (HTTP caching with ETag and Cache-Control, CDN, Redis), compression, async I/O for network-bound work, background jobs for slow tasks, connection pooling, and measuring with profiling and APM before optimizing.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Valid JSON, but the email field is missing. Status?',
+      options: ['400', '401', '422', '500'],
+      answer: 2,
+      why: 'Readable but invalid data: 422 (FastAPI default).',
+    },
+    {
+      q: 'Which pair is both idempotent?',
+      options: ['POST and PUT', 'PUT and DELETE', 'POST and PATCH', 'PATCH and POST'],
+      answer: 1,
+      why: 'Repeating PUT or DELETE leaves the same state.',
+    },
+    {
+      q: 'Which header returns a cached copy check?',
+      options: ['If-None-Match', 'Location', 'Retry-After', 'Origin'],
+      answer: 0,
+      why: 'If-None-Match with the ETag; the server answers 304 if unchanged.',
+    },
+    {
+      q: 'Who enforces CORS?',
+      options: ['The API server', 'The browser', 'The database', 'The load balancer'],
+      answer: 1,
+      why: 'Only browsers block reading cross-origin responses.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Topic | One line |
+| --- | --- |
+| Methods | GET read, POST create, PUT replace, PATCH part, DELETE remove |
+| Idempotent | GET, PUT, DELETE (+ HEAD, OPTIONS) |
+| 2xx | 200 OK, 201 Created, 204 No Content |
+| 4xx | 400 bad, 401 who?, 403 no, 404 none, 409 clash, 422 invalid, 429 slow down |
+| 5xx | 500 bug, 502 bad upstream, 503 busy, 504 upstream timeout |
+| URLs | plural nouns, ids, query for filters, `/v1/` |
+| Auth | JWT (signed, short) + refresh, or sessions; OAuth + OIDC for third parties |
+| Lists | cursor pagination, capped size, whitelisted sort |
+| Caching | Cache-Control + ETag → 304 |
+| Safety | HTTPS, validation, rate limits, idempotency keys, safe errors |
+
+</CheatSheet>

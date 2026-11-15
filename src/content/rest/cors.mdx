@@ -1,0 +1,200 @@
+---
+id: rest-cors
+title: CORS
+summary: CORS is the browser rule that lets a web page call an API on another origin only if that API's response headers allow it.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A school guard lets students of the same school walk between buildings freely. A visitor from another school must show a letter from the principal of the building they want to enter: "visitors from school X are allowed".
+
+The browser is that guard. A page from one **origin** can call an API on another origin only if the API's reply carries the permission letter: the **CORS headers**.
+
+</Analogy>
+
+## Simple explanation
+
+An **origin** is scheme + host + port: `https://devguru.dev` and `https://api.devguru.dev` are **different** origins, and so are `http://localhost:5173` and `http://localhost:8000`.
+
+Browsers follow the **same-origin policy**: JavaScript on one origin cannot read responses from another origin, unless the server opts in with **CORS** (Cross-Origin Resource Sharing).
+
+How it works:
+
+- **Simple requests** (GET or POST with simple headers): the browser sends the request with an `Origin` header. If the response has `Access-Control-Allow-Origin` matching that origin (or `*`), JavaScript may read it; otherwise the browser blocks it
+- **Preflight**: for anything else (PUT, DELETE, `Content-Type: application/json`, an `Authorization` header), the browser first sends an **OPTIONS** request asking permission. The server must answer with:
+  - `Access-Control-Allow-Origin: https://devguru.dev`
+  - `Access-Control-Allow-Methods: GET, POST, PUT, DELETE`
+  - `Access-Control-Allow-Headers: Content-Type, Authorization`
+  - optionally `Access-Control-Max-Age: 600` (cache the preflight for 10 minutes)
+- **Cookies** across origins need `Access-Control-Allow-Credentials: true` on the server, `credentials: "include"` in fetch, and then the origin must be **exact**, never `*`
+
+Key facts interviewers check:
+
+- CORS is enforced **only by browsers**. curl, Postman, Python and other servers ignore it
+- CORS **is not security for your API**: it protects users' browsers from pages that try to read other sites' data with the user's cookies. Your API still needs authentication
+- The fix for a CORS error is **on the server** (or a proxy), never in the frontend code
+
+## Code example
+
+FastAPI with the CORS middleware:
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://devguru.dev", "http://localhost:5173"],   # exact origins
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
+    allow_credentials=True,
+    max_age=600,
+)
+
+@app.get("/books")
+def books():
+    return ["Malgudi Days"]
+```
+
+```python
+from fastapi.testclient import TestClient
+c = TestClient(app)
+pre = c.options("/books", headers={"Origin": "http://localhost:5173",
+                                   "Access-Control-Request-Method": "GET",
+                                   "Access-Control-Request-Headers": "authorization"})
+print(pre.status_code, pre.headers["access-control-allow-origin"])
+bad = c.get("/books", headers={"Origin": "https://evil.example"})
+print(bad.status_code, bad.headers.get("access-control-allow-origin"))
+```
+
+```output
+200 http://localhost:5173
+200 None
+```
+
+The second request still returns 200 to curl or Python, but a browser on evil.example would block the page from reading it, because the permission header is missing.
+
+<Playground kind="http">
+
+```http
+OPTIONS /books
+Origin: https://devguru.dev
+Access-Control-Request-Method: POST
+```
+
+</Playground>
+
+Open "Response headers" to see the `Access-Control-Allow-*` permission headers of the preflight.
+
+<Mistakes>
+
+<Mistake title="Allowing every origin with credentials">
+
+<Wrong>
+
+```python
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True)
+# browsers refuse "*" with credentials; reflecting any Origin instead lets ANY site act as the user
+```
+
+</Wrong>
+
+<Right>
+
+```python
+app.add_middleware(CORSMiddleware, allow_origins=["https://devguru.dev"], allow_credentials=True)
+```
+
+</Right>
+
+With cookies, list the exact frontend origins. `*` is acceptable only for truly public, cookie-free APIs.
+
+</Mistake>
+
+<Mistake title="Trying to fix CORS in the frontend">
+
+<Wrong>
+
+```javascript
+fetch("https://api.devguru.dev/books", { mode: "no-cors" })   // the response becomes unreadable
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Add the frontend's origin to the API's CORS settings,
+or call the API through a proxy on the same origin (Vite dev proxy, CloudFront path).
+```
+
+</Right>
+
+Only the server can grant permission. `no-cors` just hides the response from your code.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is CORS and why does it exist?">
+
+Cross-Origin Resource Sharing is a browser mechanism that relaxes the same-origin policy in a controlled way: servers declare, with Access-Control-Allow-* headers, which other origins may read their responses. It prevents a malicious page from silently reading data from another site using the visitor's cookies.
+
+</QA>
+
+<QA q="What is a preflight request?">
+
+An automatic OPTIONS request the browser sends before a "non-simple" cross-origin request (methods other than GET/HEAD/POST, custom headers like Authorization, or JSON content type). It asks whether the method and headers are allowed; the server answers with the Allow-Methods, Allow-Headers and Allow-Origin headers, and the browser only sends the real request if permitted.
+
+</QA>
+
+<QA q="Does CORS protect my API from unauthorized access?">
+
+No. CORS is enforced only by browsers and only controls whether a page's JavaScript can read the response. Any non-browser client can still call the API. Authentication, authorization and rate limiting must protect the API.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Are https://devguru.dev and https://api.devguru.dev the same origin?',
+      options: ['Yes', 'No, the host is different', 'Only for GET', 'Only with cookies'],
+      answer: 1,
+      why: 'Origin = scheme + host + port; the host differs.',
+    },
+    {
+      q: 'Who enforces CORS?',
+      options: ['The server', 'The browser', 'curl', 'The database'],
+      answer: 1,
+      why: 'Browsers block reading the response; other clients ignore CORS.',
+    },
+    {
+      q: 'Which method does a preflight use?',
+      options: ['GET', 'HEAD', 'OPTIONS', 'TRACE'],
+      answer: 2,
+      why: 'OPTIONS asks which methods and headers are allowed.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Header | Sent by | Meaning |
+| --- | --- | --- |
+| `Origin` | browser | where the page came from |
+| `Access-Control-Request-Method` | browser (preflight) | method it wants to use |
+| `Access-Control-Allow-Origin` | server | which origin may read |
+| `Access-Control-Allow-Methods` | server | allowed methods |
+| `Access-Control-Allow-Headers` | server | allowed request headers |
+| `Access-Control-Allow-Credentials` | server | cookies allowed (needs exact origin) |
+| `Access-Control-Max-Age` | server | cache the preflight |
+
+Fix CORS on the server. It is not API security.
+
+</CheatSheet>

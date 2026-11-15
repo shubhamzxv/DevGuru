@@ -1,0 +1,215 @@
+---
+id: rest-json
+title: JSON
+summary: JSON is a simple text format for data made of objects, arrays, strings, numbers, true, false and null, and it is the standard body format of REST APIs.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a form with labelled boxes: "Name: Asha", "Age: 27", "Languages: Hindi, English". Anyone can read it, and a computer can read it too, because every value sits next to its label in a fixed layout.
+
+**JSON** is that form written as text: `{"name": "Asha", "age": 27, "languages": ["Hindi", "English"]}`.
+
+</Analogy>
+
+## Simple explanation
+
+**JSON** (JavaScript Object Notation) has only six kinds of values:
+
+| JSON | Example | Python equivalent |
+| --- | --- | --- |
+| object | `{"id": 1}` | `dict` |
+| array | `[1, 2, 3]` | `list` |
+| string | `"Asha"` | `str` |
+| number | `27`, `4.5` | `int`, `float` |
+| boolean | `true`, `false` | `True`, `False` |
+| null | `null` | `None` |
+
+Strict rules (the most common source of 400 errors):
+
+- Keys and strings use **double quotes** only: `"name"`, never `'name'`
+- **No trailing comma** after the last item
+- **No comments**
+- `true`, `false`, `null` are lower case
+
+What JSON does **not** have, so APIs agree on conventions:
+
+- **Dates**: send them as ISO 8601 strings, such as `"2026-11-15T09:30:00Z"`
+- **Money**: send exact decimal amounts as strings (`"499.00"`) or as integers in paise (`49900`), because floats are not exact
+- **Large ids**: some languages lose precision on very large numbers; many APIs send ids as strings
+
+In Python: `json.dumps(obj)` turns Python into JSON text, and `json.loads(text)` turns JSON text into Python. In APIs, `requests` and FastAPI do this for you.
+
+Naming style: pick one and keep it everywhere. Python APIs often use `snake_case` (`created_at`); JavaScript APIs often use `camelCase` (`createdAt`).
+
+## Code example
+
+```python
+import json
+from datetime import datetime, timezone
+
+book = {
+    "id": 6,
+    "title": "Gitanjali",
+    "in_stock": True,
+    "price": "199.00",                                 # money as a string
+    "tags": ["poetry", "classic"],
+    "published": datetime(1910, 8, 1, tzinfo=timezone.utc).isoformat(),
+    "series": None,
+}
+text = json.dumps(book, indent=2)
+print(text)
+back = json.loads(text)
+print(back["in_stock"], back["series"])
+```
+
+```output
+{
+  "id": 6,
+  "title": "Gitanjali",
+  "in_stock": true,
+  "price": "199.00",
+  "tags": [
+    "poetry",
+    "classic"
+  ],
+  "published": "1910-08-01T00:00:00+00:00",
+  "series": null
+}
+True None
+```
+
+Invalid JSON raises an error you should turn into a 400 response:
+
+```python
+try:
+    json.loads("{'title': 'Gitanjali',}")
+except json.JSONDecodeError as error:
+    print("Bad JSON:", error.msg)
+```
+
+```output
+Bad JSON: Expecting property name enclosed in double quotes
+```
+
+<Playground kind="http">
+
+```http
+POST /books
+Content-Type: application/json
+
+{"title": 'Gitanjali', "author": "Tagore",}
+```
+
+</Playground>
+
+This body has two mistakes (single quotes, a trailing comma), so you get 400. Fix them and send again for 201.
+
+<Mistakes>
+
+<Mistake title="Python dict text is not JSON">
+
+<Wrong>
+
+```python
+body = str({"title": "Gitanjali", "in_stock": True})   # "{'title': 'Gitanjali', 'in_stock': True}"
+```
+
+</Wrong>
+
+<Right>
+
+```python
+body = json.dumps({"title": "Gitanjali", "in_stock": True})   # '{"title": "Gitanjali", "in_stock": true}'
+```
+
+</Right>
+
+`str()` gives single quotes and `True`, which are not valid JSON.
+
+</Mistake>
+
+<Mistake title="Dates and decimals cannot be dumped directly">
+
+<Wrong>
+
+```python
+json.dumps({"at": datetime.now()})   # TypeError: Object of type datetime is not JSON serializable
+```
+
+</Wrong>
+
+<Right>
+
+```python
+json.dumps({"at": datetime.now().isoformat()})
+```
+
+</Right>
+
+Convert to ISO strings yourself, or let FastAPI and Pydantic do it in response models.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What data types does JSON support?">
+
+Objects, arrays, strings, numbers, booleans and null. There is no date, decimal, binary or comment type; dates are usually sent as ISO 8601 strings and binary data as base64 strings.
+
+</QA>
+
+<QA q="What is the difference between json.dumps and json.loads?">
+
+`json.dumps` serializes a Python object to a JSON string; `json.loads` parses a JSON string into Python objects. `json.dump` and `json.load` do the same with files.
+
+</QA>
+
+<QA q="Why is JSON preferred over XML for REST APIs?">
+
+It is shorter, easier to read, maps directly to objects, arrays and dictionaries in most languages, and is native to JavaScript in browsers. XML is more verbose, though it supports schemas, namespaces and attributes, and is still used in some enterprise and SOAP systems.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which is valid JSON?',
+      options: ["{'a': 1}", '{"a": 1,}', '{"a": true}', '{a: 1}'],
+      answer: 2,
+      why: 'Keys need double quotes, no trailing comma, and booleans are lower case.',
+    },
+    {
+      q: 'JSON null becomes what in Python?',
+      options: ['0', '"null"', 'None', 'False'],
+      answer: 2,
+      why: 'json.loads maps null to None.',
+    },
+    {
+      q: 'Best way to send a date in JSON?',
+      options: ['A Python datetime object', 'An ISO 8601 string', 'A list of numbers', 'Dates are not allowed'],
+      answer: 1,
+      why: 'For example "2026-11-15T09:30:00Z".',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Python | JSON |
+| --- | --- |
+| `dict` | object `{}` |
+| `list`, `tuple` | array `[]` |
+| `str` | string `""` |
+| `int`, `float` | number |
+| `True` / `False` | `true` / `false` |
+| `None` | `null` |
+
+`json.dumps(obj, indent=2)` → text. `json.loads(text)` → Python. Rules: double quotes, no trailing comma, no comments. Dates as ISO strings, money as strings or integer paise.
+
+</CheatSheet>

@@ -1,0 +1,205 @@
+---
+id: rest-filtering-and-sorting
+title: Filtering and sorting
+summary: Filtering and sorting let clients ask for only the items they need, in the order they want, using query parameters on the collection URL.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+On a shopping site you tick "Size M", "Under ₹1000", "In stock", and choose "Price: low to high". The website does not show you a new page type for every choice; it just changes the options in the URL.
+
+APIs do the same: one collection URL, with **query parameters** for filters and order.
+
+</Analogy>
+
+## Simple explanation
+
+**Filtering**: return only matching items.
+
+- Exact match: `GET /orders?status=paid`
+- Several values: `?status=paid,shipped` or `?status=paid&status=shipped`
+- Ranges: `?min_total=500&max_total=2000`, or `?created_after=2026-11-01`
+- Search text: `?q=malgudi` (searches title, author...)
+
+**Sorting**: one parameter, with a `-` prefix for descending:
+
+- `?sort=created_at` oldest first
+- `?sort=-created_at` newest first
+- `?sort=-total,id` by total descending, then id
+
+**Field selection** (optional): `?fields=id,title` returns only those fields, smaller responses for mobile.
+
+Rules for a safe, fast implementation:
+
+- **Whitelist** the fields that can be filtered and sorted. Never put a client value straight into SQL: that is SQL injection
+- Use **bound parameters** (`?` or `:name`) for every value
+- Add **indexes** for the common filters and sort columns, or the queries get slow as data grows
+- Combine with **pagination** and return the filters you applied, so the client knows what it got
+- Ignore or reject unknown parameters consistently (many APIs return 400 for an unknown sort field)
+
+For complex search across many fields (fuzzy match, relevance), use a search engine such as OpenSearch / Elasticsearch, or PostgreSQL full-text search.
+
+## Code example
+
+A safe filter-and-sort endpoint in FastAPI with SQLite:
+
+```python
+import sqlite3
+from fastapi import FastAPI, HTTPException, Query
+
+app = FastAPI()
+db = sqlite3.connect(":memory:", check_same_thread=False)
+db.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, status TEXT, total INTEGER)")
+db.executemany("INSERT INTO orders (status, total) VALUES (?, ?)",
+               [("paid", 1200), ("shipped", 450), ("paid", 300), ("cancelled", 999), ("paid", 2500)])
+
+SORTABLE = {"id", "total"}                                 # whitelist
+
+@app.get("/orders")
+def list_orders(status: str | None = None, min_total: int = 0,
+                sort: str = "id", limit: int = Query(20, le=100)):
+    column = sort.lstrip("-")
+    if column not in SORTABLE:
+        raise HTTPException(400, f"Cannot sort by {column}. Use one of {sorted(SORTABLE)}")
+    direction = "DESC" if sort.startswith("-") else "ASC"
+    sql = "SELECT id, status, total FROM orders WHERE total >= ?"
+    params: list = [min_total]
+    if status:
+        sql += " AND status = ?"                           # value is bound, never pasted
+        params.append(status)
+    sql += f" ORDER BY {column} {direction} LIMIT ?"       # column came from the whitelist
+    params.append(limit)
+    return db.execute(sql, params).fetchall()
+```
+
+```output
+GET /orders?status=paid&sort=-total      -> [[5, "paid", 2500], [1, "paid", 1200], [3, "paid", 300]]
+GET /orders?min_total=1000&sort=total    -> [[1, "paid", 1200], [5, "paid", 2500]]
+GET /orders?sort=password                -> 400 {"detail": "Cannot sort by password. Use one of ['id', 'total']"}
+```
+
+<Playground kind="http">
+
+```http
+GET /books?author=roy
+```
+
+</Playground>
+
+Try `author=narayan`, and combine it with `&page=1&limit=1`.
+
+<Mistakes>
+
+<Mistake title="Pasting the sort parameter into SQL">
+
+<Wrong>
+
+```python
+sql = f"SELECT * FROM orders ORDER BY {sort}"   # sort = "id; DROP TABLE orders" -> SQL injection
+```
+
+</Wrong>
+
+<Right>
+
+```python
+column = sort.lstrip("-")
+if column not in {"id", "total", "created_at"}:
+    raise HTTPException(400, "Invalid sort field")
+sql = f"SELECT * FROM orders ORDER BY {column} {'DESC' if sort.startswith('-') else 'ASC'}"
+```
+
+</Right>
+
+Column names cannot be bound parameters, so they must come from a whitelist.
+
+</Mistake>
+
+<Mistake title="A new endpoint for every filter">
+
+<Wrong>
+
+```text
+GET /paid-orders
+GET /orders-sorted-by-total
+GET /paid-orders-sorted-by-total
+```
+
+</Wrong>
+
+<Right>
+
+```text
+GET /orders?status=paid&sort=-total
+```
+
+</Right>
+
+One collection with combinable query parameters covers every combination.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you design filtering and sorting in a REST API?">
+
+Use query parameters on the collection: one parameter per filterable field (`?status=paid`), range parameters (`min_total`, `created_after`), a search parameter `q`, and `sort` with a minus sign for descending and commas for multiple fields. Whitelist fields, bind values, index common filters, and combine with pagination.
+
+</QA>
+
+<QA q="How do you prevent SQL injection with dynamic filters?">
+
+Bind every value as a query parameter, never concatenate user input into SQL. Column names and sort directions cannot be bound, so map them through a whitelist of allowed fields. Using an ORM or query builder also helps.
+
+</QA>
+
+<QA q="When would you use a search engine instead of SQL filters?">
+
+When you need full-text search with relevance ranking, typo tolerance, stemming, facets or very fast search over large text data. OpenSearch/Elasticsearch, or PostgreSQL full-text search for moderate needs, handle this better than LIKE queries.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Common way to ask for newest first?',
+      options: ['?sort=created_at', '?sort=-created_at', '?order=new', '/orders/newest'],
+      answer: 1,
+      why: 'A minus prefix means descending.',
+    },
+    {
+      q: 'Why whitelist sort fields?',
+      options: ['Speed', 'Column names cannot be bound parameters, so input must be checked to prevent injection', 'JSON rules', 'For caching'],
+      answer: 1,
+      why: 'Only known column names may reach the SQL text.',
+    },
+    {
+      q: 'Where do filters go?',
+      options: ['In the path', 'In query parameters', 'In the body of a GET', 'In cookies'],
+      answer: 1,
+      why: 'GET /orders?status=paid.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Query |
+| --- | --- |
+| Exact filter | `?status=paid` |
+| Several values | `?status=paid,shipped` |
+| Range | `?min_total=500&max_total=2000` |
+| Dates | `?created_after=2026-11-01` |
+| Search | `?q=malgudi` |
+| Sort asc / desc | `?sort=total` / `?sort=-total` |
+| Multi sort | `?sort=-total,id` |
+| Fewer fields | `?fields=id,title` |
+
+Whitelist fields, bind values, add indexes, always paginate.
+
+</CheatSheet>

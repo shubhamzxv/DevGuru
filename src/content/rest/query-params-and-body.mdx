@@ -1,0 +1,207 @@
+---
+id: rest-query-params-and-body
+title: Query params vs request body
+summary: Query parameters are short options in the URL for filtering and paging reads, while the request body carries the data you create or change.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+At a shop you might say "show me shirts, size M, blue, cheapest first". Those are **options** for what you want to see: short, and anyone could write them on a slip. That is a **query string**.
+
+When you fill in a long form to open a bank account (name, address, documents), you hand over a filled **packet**. That is a **request body**.
+
+</Analogy>
+
+## Simple explanation
+
+**Query parameters** come after `?` in the URL: `/books?author=roy&page=2&limit=10`.
+
+- Small key=value text options
+- Mainly for **GET**: filter, search, sort, paginate, choose a format
+- Visible in the URL: saved in browser history, logs, bookmarks and shareable links
+- Length is limited in practice (a few thousand characters)
+- Everything is a string; the server converts types
+
+The **request body** comes after the headers.
+
+- Any size and any structure (nested objects, arrays), usually JSON
+- For **POST, PUT, PATCH**: the resource data to create or change
+- Not shown in the URL, so better for personal data (it is still encrypted only by HTTPS)
+
+There is a third place: **path parameters** (`/books/3`) identify **which** resource.
+
+| Put it in... | When | Example |
+| --- | --- | --- |
+| Path | identity of the resource | `/users/7/orders/42` |
+| Query | options for reading | `?status=paid&sort=-created_at` |
+| Body | the data itself | `{"title": "...", "author": "..."}` |
+| Header | metadata, credentials | `Authorization`, `Accept` |
+
+Rule of thumb: if it changes **what** you get back, query; if it **is** the thing you send, body.
+
+Exception: very complex searches with long criteria are sometimes sent as `POST /books/search` with a JSON body, because the query string would be too long or messy.
+
+## Code example
+
+```python
+import requests
+
+# Query parameters: requests builds and encodes the URL for you
+r = requests.get("https://api.devguru.dev/books", params={"author": "narayan", "limit": 1})
+print(r.url)
+print(r.json())
+
+# Body: the new resource as JSON
+r = requests.post("https://api.devguru.dev/books", json={"title": "Godaan", "author": "Premchand"})
+print(r.status_code, r.json())
+```
+
+```output
+https://api.devguru.dev/books?author=narayan&limit=1
+[{'id': 1, 'title': 'Malgudi Days', 'author': 'R. K. Narayan', 'year': 1943}]
+201 {'id': 6, 'title': 'Godaan', 'author': 'Premchand'}
+```
+
+FastAPI decides by type: simple types become query parameters, Pydantic models become the body:
+
+```python
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI()
+
+class BookIn(BaseModel):
+    title: str
+    author: str
+
+@app.get("/books")
+def list_books(author: str | None = None, page: int = 1, limit: int = 10):   # query
+    return {"author": author, "page": page, "limit": limit}
+
+@app.post("/books", status_code=201)
+def create_book(book: BookIn):                                               # body
+    return book
+```
+
+<Playground kind="http">
+
+```http
+GET /books?author=narayan&page=1&limit=1
+```
+
+</Playground>
+
+Look at the X-Total-Count header, then change `page=1` to `page=2`.
+
+<Mistakes>
+
+<Mistake title="Sending a password in the query string">
+
+<Wrong>
+
+```text
+POST /login?username=guru&password=secret
+```
+
+</Wrong>
+
+<Right>
+
+```http
+POST /login
+Content-Type: application/json
+
+{"username": "guru", "password": "secret"}
+```
+
+</Right>
+
+URLs are logged by servers, proxies and browsers. Credentials and personal data go in the body (or headers).
+
+</Mistake>
+
+<Mistake title="Filters in a GET body">
+
+<Wrong>
+
+```http
+GET /books
+Content-Type: application/json
+
+{"author": "roy"}
+```
+
+</Wrong>
+
+<Right>
+
+```http
+GET /books?author=roy
+```
+
+</Right>
+
+Many servers, proxies and caches drop GET bodies, and a GET with a body cannot be bookmarked or cached by URL.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="When do you use query parameters versus the request body?">
+
+Query parameters for optional modifiers of a read: filtering, searching, sorting, pagination, field selection. The body for the representation of a resource being created or updated, or any large or structured payload. Path parameters identify the resource, and headers carry metadata such as authentication.
+
+</QA>
+
+<QA q="How does FastAPI know whether a parameter is a query parameter or the body?">
+
+Parameters that appear in the path template are path parameters; simple types (int, str, bool) not in the path are query parameters; Pydantic models are read from the JSON body. `Query()`, `Path()`, `Body()` and `Header()` can make it explicit.
+
+</QA>
+
+<QA q="Is data in the body more secure than in the query string?">
+
+Both are encrypted equally over HTTPS. The difference is exposure after delivery: URLs are stored in access logs, browser history, analytics and Referer headers, so sensitive values in the query string leak more easily.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where does page=2 belong for a list of orders?',
+      options: ['The body', 'The query string', 'The path', 'A cookie'],
+      answer: 1,
+      why: 'It is an option for reading: /orders?page=2.',
+    },
+    {
+      q: 'Where does the data of a new user belong?',
+      options: ['The query string', 'The request body', 'The URL fragment', 'User-Agent'],
+      answer: 1,
+      why: 'POST /users with the user as JSON in the body.',
+    },
+    {
+      q: 'In FastAPI, a parameter typed as a Pydantic model is read from:',
+      options: ['The query string', 'The JSON body', 'A header', 'The path'],
+      answer: 1,
+      why: 'Models are parsed from the request body.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Where | Use for | Example |
+| --- | --- | --- |
+| Path | which resource | `/books/3` |
+| Query | filter, sort, page, search | `?author=roy&sort=-year&page=2` |
+| Body | data to create or change | `{"title": "Godaan"}` |
+| Header | token, format, metadata | `Authorization`, `Accept` |
+
+`requests.get(url, params={...})` builds the query. `requests.post(url, json={...})` sends the body.
+
+</CheatSheet>
