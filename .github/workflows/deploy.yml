@@ -1,0 +1,49 @@
+# Deploys to AWS Amplify Hosting (the same app as `npm run deploy`) after CI passes on main,
+# or by hand from the Actions tab ("Run workflow").
+#
+# One-time setup (see docs/deploy.md):
+#   1. Create the GitHub OIDC role, e.g. with the CDK stack in infra/ (DevGuruGithubDeploy).
+#   2. In GitHub → Settings → Secrets and variables → Actions → Variables, add
+#      AWS_DEPLOY_ROLE_ARN = the role's ARN.
+# Until the variable exists, this workflow skips itself, so it never fails on a fork.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # lets the job ask AWS for short-lived credentials (no stored keys)
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      vars.AWS_DEPLOY_ROLE_ARN != '' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # After CI: deploy exactly the commit that passed.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+      # Builds, uploads dist/ to the Amplify app in deploy.config.json, waits, prints the URL.
+      - run: npm run deploy

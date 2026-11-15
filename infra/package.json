@@ -1,0 +1,24 @@
+{
+  "name": "devguru-infra",
+  "private": true,
+  "version": "0.1.0",
+  "type": "commonjs",
+  "scripts": {
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy:github-role": "cdk deploy DevGuruGithubDeploy",
+    "deploy:site": "cdk deploy DevGuruSite",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.200.0",
+    "constructs": "^10.4.2",
+    "yaml": "^2.6.0"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.1000.0",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.6.3",
+    "@types/node": "^22.10.0"
+  }
+}

@@ -1,0 +1,29 @@
+# Build settings for AWS Amplify Hosting when the app is connected to a Git repository
+# (Amplify console → "Host web app" → GitHub). Amplify runs this file on every push.
+# Not used by `npm run deploy` (that builds on your computer and uploads dist/).
+#
+# Also read by Amplify from the repository root:
+#   customHttp.yml   security and cache headers
+# Set once in the console (App settings → Rewrites and redirects → Open text editor):
+#   paste the contents of amplify-rules.json (sends every app route to index.html).
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        # Same Node version as .nvmrc and the GitHub Actions workflow.
+        - nvm install 22 && nvm use 22
+        - node --version
+        - npm ci --cache .npm --prefer-offline
+    build:
+      commands:
+        # Tests first (fail fast), then validate content → typecheck → vite build.
+        - npm test
+        - npm run build
+  artifacts:
+    baseDirectory: dist
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - .npm/**/*

@@ -1,0 +1,12 @@
+{
+  "app": "npx ts-node --prefer-ts-exts bin/app.ts",
+  "context": {
+    "githubRepo": "shubhamzxv/DevGuru",
+    "githubBranch": "main",
+    "amplifyAppId": "d2b6t6o0frsg93",
+    "region": "ap-south-1",
+    "githubOidcProviderArn": "",
+    "domainName": "",
+    "certificateArn": ""
+  }
+}

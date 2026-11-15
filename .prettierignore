@@ -5,3 +5,8 @@ public/wasm
 package-lock.json
 *.mdx
 dist.zip
+vite.config.ts.timestamp-*
+.npm
+infra/cdk.out
+infra/node_modules
+infra/package-lock.json

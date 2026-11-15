@@ -1,15 +1,29 @@
 # HTTP headers for AWS Amplify Hosting. Sent to Amplify by: npm run deploy
 customHeaders:
-  # Security headers on every response.
-  # A Content-Security-Policy is added in Step 9, after it is tested with Pyodide and sql.js.
+  # Security headers on every response (tested in Chrome on every page type, with
+  # Python and SQL running: see docs/deploy.md). If you add a new outside site
+  # (fonts, analytics, another CDN), add it to the matching *-src list below.
+  #   script-src  'wasm-unsafe-eval' : Pyodide and sql.js compile WebAssembly
+  #               cdn.jsdelivr.net   : Pyodide (Python) is loaded from jsDelivr
+  #   connect-src cdn.jsdelivr.net   : Pyodide downloads its files and packages
+  #               s3.ap-south-1...   : logged-in progress (GET/PUT, src/config/cloud.ts)
+  #   style-src   'unsafe-inline'    : the code editor (CodeMirror) adds <style> tags
   - pattern: '**/*'
     headers:
+      - key: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self'; connect-src 'self' https://cdn.jsdelivr.net https://s3.ap-south-1.amazonaws.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
       - key: Strict-Transport-Security
         value: 'max-age=31536000; includeSubDomains'
       - key: X-Content-Type-Options
         value: nosniff
+      - key: X-Frame-Options
+        value: DENY
       - key: Referrer-Policy
         value: strict-origin-when-cross-origin
+      - key: Permissions-Policy
+        value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()'
+      - key: Cross-Origin-Opener-Policy
+        value: same-origin
   # Vite puts a hash in these file names, so they can be cached for a year.
   - pattern: '/assets/*'
     headers:

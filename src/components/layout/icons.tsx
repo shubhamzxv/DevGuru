@@ -113,3 +113,20 @@ export function BookmarkIcon({ filled = false, ...props }: IconProps & { filled?
     </Icon>
   );
 }
+
+export function UserIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" />
+    </Icon>
+  );
+}
+
+export function CloudIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.1 9.2 4.5 4.5 0 0 0 7 18z" />
+    </Icon>
+  );
+}

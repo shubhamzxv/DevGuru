@@ -1,4 +1,6 @@
 import { Link, NavLink } from 'react-router-dom';
+import AccountButton from '../account/AccountButton';
+import { CLOUD_SYNC_ENABLED } from '../../config/cloud';
 import ThemeToggle from './ThemeToggle';
 import { LogoMark, MenuIcon, SearchIcon } from './icons';
 
@@ -63,6 +65,7 @@ export default function Header({ onMenuClick, drawerOpen }: HeaderProps) {
             </kbd>
           </Link>
           <ThemeToggle />
+          {CLOUD_SYNC_ENABLED && <AccountButton />}
         </div>
       </div>
     </header>

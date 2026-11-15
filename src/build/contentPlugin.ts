@@ -96,18 +96,22 @@ export default function contentPlugin(contentRoot: string): Plugin {
     },
     load(id) {
       if (!resolved.has(id)) return undefined;
-      // Rebuild when any content file changes (dev server).
-      this.addWatchFile(contentRoot);
+      // No this.addWatchFile(contentRoot) here: Vite treats watch files as imports
+      // in dev, and a Windows path (D:\...\src\content) cannot be resolved, which
+      // broke Search and Cheat sheets on Windows. handleHotUpdate below does the job.
       const data = buildContentData(contentRoot);
       const value = id === `\0${SEARCH_ID}` ? data.search : data.cheatsheets;
       return `export default ${JSON.stringify(value)};`;
     },
-    handleHotUpdate({ file, server }) {
+    // Dev server: an MDX or index.json file in src/content changed → rebuild both
+    // data modules and reload Search / Cheat sheets.
+    handleHotUpdate({ file, server, modules }) {
       if (!file.replace(/\\/g, '/').includes('/src/content/')) return;
-      for (const id of resolved) {
-        const mod = server.moduleGraph.getModuleById(id);
-        if (mod) server.moduleGraph.invalidateModule(mod);
-      }
+      const affected = [...resolved]
+        .map((id) => server.moduleGraph.getModuleById(id))
+        .filter((mod): mod is NonNullable<typeof mod> => Boolean(mod));
+      for (const mod of affected) server.moduleGraph.invalidateModule(mod);
+      return [...modules, ...affected];
     },
   };
 }

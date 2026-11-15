@@ -5,7 +5,18 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'node_modules', 'public'] },
+  {
+    ignores: [
+      'dist',
+      'node_modules',
+      'public',
+      '.npm',
+      'vite.config.ts.timestamp-*',
+      'infra/cdk.out',
+      'infra/node_modules',
+      'infra/build',
+    ],
+  },
   {
     files: ['**/*.{ts,tsx}'],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import AccountCard from '../components/account/AccountCard';
 import ProgressRing from '../components/layout/ProgressRing';
 import { useProgress } from '../hooks/useProgress';
 import { nextTopicToLearn, resolveTopicKey, topicKey, writtenTopics } from '../registry/topics';
@@ -93,8 +94,9 @@ export default function ProgressPage() {
     <div className="mx-auto max-w-4xl">
       <h1 className="text-2xl font-extrabold tracking-tight sm:text-3xl">My progress</h1>
       <p className="mt-1 text-slate-600 dark:text-slate-300">
-        Saved in this browser only. No account needed.
+        No account needed. Log in only if you want the same progress on other devices.
       </p>
+      <AccountCard />
 
       <section aria-label="Summary" className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat

@@ -1,0 +1,56 @@
+# Checks every push and pull request: content, types, lint, formatting, tests, build.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            infra/package-lock.json
+      - run: npm ci
+      - name: Content check
+        run: npm run validate
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Formatting
+        run: npx prettier --check .
+      - name: Tests
+        run: npm test
+      - name: Build
+        run: npx vite build
+      - name: Infrastructure (CDK) tests and synth
+        working-directory: infra
+        env:
+          CDK_DEFAULT_ACCOUNT: '000000000000'
+          CDK_DEFAULT_REGION: ap-south-1
+        run: |
+          npm ci
+          npm test
+          npx cdk synth --quiet
+      - name: Upload the built site
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 7

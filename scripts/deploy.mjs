@@ -27,14 +27,8 @@ const profileArgs = profile ? ['--profile', profile] : [];
 
 // Every route without a file extension goes to index.html (React Router handles it).
 // Real files (.js, .css, .wasm, .json, images, fonts...) are served as they are.
-const SPA_RULE = [
-  {
-    source:
-      '</^[^.]+$|\\.(?!(css|gif|ico|jpg|jpeg|js|png|txt|svg|woff|woff2|ttf|map|json|wasm|webmanifest|data|zip)$)([^.]+$)/>',
-    target: '/index.html',
-    status: '200',
-  },
-];
+// Kept in amplify-rules.json so the same rule can be pasted into the Amplify console.
+const SPA_RULE = JSON.parse(readFileSync(join(root, 'amplify-rules.json'), 'utf8'));
 
 function step(text) {
   console.log(`\n▶ ${text}`);

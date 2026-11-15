@@ -1,0 +1,11 @@
+{
+  "Rules": [
+    {
+      "ID": "keep-30-days-of-old-versions",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "progress/" },
+      "NoncurrentVersionExpiration": { "NoncurrentDays": 30 },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+    }
+  ]
+}
