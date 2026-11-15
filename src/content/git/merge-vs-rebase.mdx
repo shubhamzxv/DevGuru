@@ -1,0 +1,207 @@
+---
+id: git-merge-vs-rebase
+title: Merge vs rebase
+summary: Both bring changes from one branch into another; merge keeps the true history and adds a merge commit, rebase rewrites your commits on top for a straight line.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Two ways to record a group trip in a diary:
+
+- **Merge**: write exactly what happened: "We split up at the station, met again at the fort at 3 pm." True, but with a fork in the story
+- **Rebase**: rewrite your part as if you had simply followed the group: one neat line. Easier to read, but it is a retelling, not the original
+
+</Analogy>
+
+## Simple explanation
+
+| | Merge | Rebase |
+| --- | --- | --- |
+| History | true, shows branches and merge points | linear, as if work happened in sequence |
+| Merge commit | yes (unless fast-forward) | no |
+| Existing commits | unchanged | rewritten with **new ids** |
+| Safe on shared branches | **yes** | **no** (only on your own branch) |
+| Conflicts | resolved once, in the merge commit | may need resolving per replayed commit |
+| Undo | revert the merge commit | harder (use reflog) |
+| `git log` | can look busy | easy to read, `git bisect` friendly |
+
+A common team workflow uses **both**:
+
+1. While working on your feature branch, **rebase** it on `main` to stay up to date (`git pull --rebase`, `git rebase main`), and tidy your commits with `git rebase -i`
+2. To get the feature into `main`, **merge** it through a pull request (merge commit, squash, or "rebase and merge", by team rule)
+3. Never rebase `main` or any branch others push to
+
+Choose by **team convention**, and be consistent. Some teams want a perfectly linear main (squash or rebase merges); others value seeing exactly when each feature landed (merge commits with `--no-ff`).
+
+## Code example
+
+The same situation, two results. Start: main and feature both have one new commit.
+
+```bash
+# Option A: merge
+git switch main && git merge feature
+git log --oneline --graph
+```
+
+```output
+*   f3a9b21 (HEAD -> main) Merge branch 'feature'
+|\
+| * 51aa7f3 (feature) Add search
+* | 8e6b204 Add footer
+|/
+* 7be41d9 Initial commit
+```
+
+```bash
+# Option B: rebase, then fast-forward merge
+git switch feature && git rebase main
+git switch main && git merge feature
+git log --oneline --graph
+```
+
+```output
+* 2c7d9e0 (HEAD -> main, feature) Add search
+* 8e6b204 Add footer
+* 7be41d9 Initial commit
+```
+
+Same final code. Option A has a merge commit and keeps `51aa7f3`; option B is a straight line and "Add search" got a new id.
+
+<Playground kind="git">
+
+```bash
+git init
+echo "base" > app.txt
+git add .
+git commit -m "Base"
+git switch -c feature
+echo "search" > search.txt
+git add .
+git commit -m "Add search"
+git switch main
+echo "footer" > footer.txt
+git add .
+git commit -m "Add footer"
+git switch -c try-merge
+git merge feature
+git switch feature
+git rebase main
+git log --oneline --all
+```
+
+</Playground>
+
+The graph shows both: `try-merge` ends in a merge commit, while `feature` (rebased) sits in a straight line on top of main.
+
+<Mistakes>
+
+<Mistake title="Rebasing to 'clean up' the shared main branch">
+
+<Wrong>
+
+```bash
+git switch main
+git rebase -i HEAD~10
+git push --force
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Clean up commits on your feature branch BEFORE merging (rebase -i or squash merge).
+Leave main's history as it is.
+```
+
+</Right>
+
+Rewriting shared history breaks everyone else's clones.
+
+</Mistake>
+
+<Mistake title="Merging main into the feature again and again">
+
+<Wrong>
+
+```text
+* Merge branch 'main' into feature
+* Merge branch 'main' into feature
+* Merge branch 'main' into feature    (noise in the PR)
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git fetch origin
+git rebase origin/main      # on your own feature branch
+```
+
+</Right>
+
+Updating a personal branch with rebase keeps the PR focused on your real changes. (Merging main in is still correct when others share your feature branch.)
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between merge and rebase?">
+
+Both integrate changes. Merge combines branches by creating a merge commit (or fast-forwarding), preserving the original commits and the true branching history. Rebase re-applies your commits on top of another branch, creating new commits for a linear history without a merge commit. Merge is safe for shared branches; rebase should only rewrite local or personal commits.
+
+</QA>
+
+<QA q="When would you use rebase instead of merge?">
+
+To update a personal feature branch with the latest main without adding merge commits, to clean up your commits with interactive rebase before opening or merging a pull request, and with `git pull --rebase` to keep local commits on top of fetched ones. Use merge for integrating into shared branches.
+
+</QA>
+
+<QA q="What are squash merge and rebase merge on GitHub?">
+
+Squash and merge combines all PR commits into one commit on the base branch. Rebase and merge replays each PR commit onto the base branch individually, without a merge commit. Create a merge commit keeps all commits plus a merge commit. Teams pick one to match their preferred history style.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which keeps the original commit ids?',
+      options: ['Merge', 'Rebase', 'Both', 'Neither'],
+      answer: 0,
+      why: 'Rebase rewrites commits with new ids.',
+    },
+    {
+      q: 'Which is safe on a branch other people push to?',
+      options: ['Rebase', 'Merge', 'Force push', 'Interactive rebase'],
+      answer: 1,
+      why: 'Merge does not rewrite existing history.',
+    },
+    {
+      q: 'Which gives a straight, linear history?',
+      options: ['Merge with --no-ff', 'Rebase', 'Merge commits', 'Cherry-pick only'],
+      answer: 1,
+      why: 'Your commits are replayed on top, so no fork remains.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Situation | Use |
+| --- | --- |
+| Integrate a feature into main | merge (PR) |
+| Update my own feature branch | rebase on main |
+| Clean up my commits before PR | `git rebase -i` |
+| Shared branch (main, develop) | merge only |
+| Linear main | squash merge or rebase merge |
+| Record when a feature landed | `git merge --no-ff` |
+
+</CheatSheet>

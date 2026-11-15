@@ -1,0 +1,197 @@
+---
+id: docker-registries
+title: Docker Hub and registries
+summary: A registry stores and serves images; you tag an image with the registry and repository name, log in, and docker push it, and servers docker pull it from there.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+GitHub stores your code so any computer can clone it. A **registry** stores your images so any server can pull them.
+
+**Docker Hub** is the public one everybody knows (like GitHub). Companies also use private ones: **Amazon ECR**, GitHub Container Registry, Google Artifact Registry.
+
+</Analogy>
+
+## Simple explanation
+
+An image's full name says **where** it lives:
+
+```text
+[registry host/] [namespace/] repository : tag
+ docker.io/       library/    python     : 3.12-slim     (official image)
+ docker.io/       shubham/    shop-api   : 1.4.0         (your Docker Hub account)
+ 123456789012.dkr.ecr.ap-south-1.amazonaws.com/ shop-api : 1.4.0   (AWS ECR)
+ ghcr.io/         shubham/    shop-api   : 1.4.0         (GitHub)
+```
+
+No host means Docker Hub. No namespace means `library/` (the **official images**: python, nginx, postgres).
+
+The push flow:
+
+1. `docker build -t shop-api:1.4.0 .`
+2. `docker tag shop-api:1.4.0 shubham/shop-api:1.4.0`: add the registry name (no copy, just another label)
+3. `docker login`: authenticate
+4. `docker push shubham/shop-api:1.4.0`: uploads only the layers the registry does not have yet
+5. On the server: `docker pull shubham/shop-api:1.4.0` and run it
+
+**Amazon ECR** (what you use with ECS, EKS, App Runner):
+
+```bash
+aws ecr create-repository --repository-name shop-api
+aws ecr get-login-password --region ap-south-1 \
+  | docker login --username AWS --password-stdin 123456789012.dkr.ecr.ap-south-1.amazonaws.com
+docker tag shop-api:1.4.0 123456789012.dkr.ecr.ap-south-1.amazonaws.com/shop-api:1.4.0
+docker push 123456789012.dkr.ecr.ap-south-1.amazonaws.com/shop-api:1.4.0
+```
+
+ECR extras: private by default, IAM permissions, image **scanning** for vulnerabilities, **lifecycle policies** (for example keep the last 20 images).
+
+Good tagging: an immutable version or **git commit SHA** for every build (`shop-api:7c8d9e0`), plus moving tags like `staging` if you want. The **digest** (`shop-api@sha256:ab12...`) is the exact content and never changes.
+
+Docker Hub notes: free accounts get public repositories plus limited private ones, and anonymous pulls are **rate-limited**, a common CI failure. Use a login or a mirror (ECR pull-through cache) in CI.
+
+## Code example
+
+```bash
+cd ~/app
+docker build -t shop-api:1.0 .
+docker tag shop-api:1.0 shubham/shop-api:1.0
+docker push shubham/shop-api:1.0
+docker login
+docker push shubham/shop-api:1.0
+```
+
+```output
+denied: requested access to the resource is denied
+Login Succeeded
+The push refers to repository [docker.io/shubham/shop-api]
+5f4e3d2c1b0a: Pushed
+1.0: digest: sha256:9c8b7a6f5e4d3c2b... size: 1573
+```
+
+<Playground kind="terminal">
+
+```bash
+cd ~/app
+docker build -t shop-api:1.0 .
+docker tag shop-api:1.0 shubham/shop-api:1.0
+docker images
+docker push shubham/shop-api:1.0
+docker login
+docker push shubham/shop-api:1.0
+docker rmi shop-api:1.0
+docker images
+```
+
+</Playground>
+
+The first push fails on purpose: you must log in first. `tag` only adds a name: both names share the same image ID.
+
+<Mistakes>
+
+<Mistake title="Pushing without the namespace">
+
+<Wrong>
+
+```bash
+docker push shop-api:1.0
+# denied: requested access to the resource is denied  (that would be library/shop-api)
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker tag shop-api:1.0 shubham/shop-api:1.0
+docker push shubham/shop-api:1.0
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Always deploying latest">
+
+<Wrong>
+
+```bash
+docker push shubham/shop-api:latest      # the server cannot tell which build it runs, rollback is guesswork
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker tag shop-api shubham/shop-api:$(git rev-parse --short HEAD)
+docker push shubham/shop-api:7c8d9e0
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a container registry?">
+
+A server that stores and distributes images by repository and tag (or digest), such as Docker Hub, Amazon ECR, GitHub Container Registry or Harbor. CI builds and pushes images to it, and servers or orchestrators pull from it. Private registries add authentication, scanning and retention policies.
+
+</QA>
+
+<QA q="How do you push an image to Amazon ECR?">
+
+Create the repository, authenticate Docker with `aws ecr get-login-password | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com`, tag the image with that registry URI and repository, and `docker push` it. Access is controlled by IAM; in CI this is usually done with an OIDC role.
+
+</QA>
+
+<QA q="What is the difference between a tag and a digest?">
+
+A tag is a human-readable, mutable pointer (it can be moved to another image). A digest is the sha256 hash of the image manifest and identifies the exact content immutably; pulling by digest guarantees the same image every time.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which registry does docker pull nginx use?',
+      options: ['ECR', 'Docker Hub', 'GHCR', 'Local only'],
+      answer: 1,
+      why: 'No host means docker.io.',
+    },
+    {
+      q: 'What does docker tag do?',
+      options: ['Copies the image', 'Adds another name to the same image', 'Uploads it', 'Deletes the old name'],
+      answer: 1,
+      why: 'Same image ID, extra label.',
+    },
+    {
+      q: 'Which name identifies exact content and cannot move?',
+      options: ['latest', 'A version tag', 'The digest sha256', 'The repository'],
+      answer: 2,
+      why: 'Tags can be repointed; digests cannot.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| Name for Docker Hub | `docker tag app:1.0 user/app:1.0` |
+| Log in | `docker login` |
+| Upload | `docker push user/app:1.0` |
+| Download | `docker pull user/app:1.0` |
+| ECR login | `aws ecr get-login-password \| docker login --username AWS --password-stdin <acct>.dkr.ecr.<region>.amazonaws.com` |
+| ECR name | `<acct>.dkr.ecr.<region>.amazonaws.com/app:1.0` |
+| Pin exactly | `app@sha256:...` |
+
+Tag with a version or git SHA; avoid deploying `latest`.
+
+</CheatSheet>

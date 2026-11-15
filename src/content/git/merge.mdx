@@ -1,0 +1,226 @@
+---
+id: git-merge
+title: Merge
+summary: git merge joins another branch's commits into the current branch, either by simply moving the branch forward (fast-forward) or by creating a merge commit with two parents.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Two people write different chapters of a report in separate copies. At the end, one copy takes in the other's chapters so it has everything. If nobody touched the main copy in the meantime, you just **swap in** the newer copy. If both copies changed, you **combine** them and note "combined on Monday".
+
+That is merging: a **fast-forward** when only one side moved, a **merge commit** when both did.
+
+</Analogy>
+
+## Simple explanation
+
+You merge **into the branch you are on**: switch to the target first, then name the branch to bring in.
+
+```bash
+git switch main
+git merge feature
+```
+
+Two possible results:
+
+**1. Fast-forward** (main has no new commits since feature started)
+
+Git simply moves the `main` label forward to feature's last commit. No new commit, history stays a straight line. Output: `Fast-forward`.
+
+**2. Merge commit / three-way merge** (both branches have new commits)
+
+Git finds the **merge base** (the last common commit), compares both sides with it, combines the changes, and creates a **merge commit** with **two parents**. Output: `Merge made by the 'ort' strategy.`
+
+If both sides changed the **same lines** differently, Git stops with a **conflict** (next topic).
+
+Options:
+
+- `git merge --no-ff feature`: always create a merge commit, even if a fast-forward was possible. Keeps a visible record that a feature branch existed
+- `git merge --squash feature`: put all of feature's changes into the staging area as one change; you then commit once. Main gets one tidy commit, but the branch is not recorded as merged
+- `git merge --abort`: cancel a merge that has conflicts
+
+After merging, delete the branch label if you are done: `git branch -d feature` (it refuses if the branch is not merged).
+
+On GitHub, the "Merge pull request" button does the same merge on the server, with a choice of merge commit, squash, or rebase.
+
+## Code example
+
+```bash
+git switch -c feature
+echo "login page" > login.html
+git add . && git commit -m "Add login page"
+git switch main
+git merge feature                 # main had no new commits: fast-forward
+git log --oneline --graph
+```
+
+```output
+Updating 3a1f0c2..7be41d9
+Fast-forward
+* 7be41d9 (HEAD -> main, feature) Add login page
+* 3a1f0c2 Initial commit
+```
+
+Both sides moved, so Git makes a merge commit:
+
+```bash
+git switch -c search
+echo "search box" > search.html && git add . && git commit -m "Add search"
+git switch main
+echo "footer" > footer.html && git add . && git commit -m "Add footer"
+git merge search
+git log --oneline --graph
+```
+
+```output
+Merge made by the 'ort' strategy.
+*   c90d2e1 (HEAD -> main) Merge branch 'search'
+|\
+| * 51aa7f3 (search) Add search
+* | 8e6b204 Add footer
+|/
+* 7be41d9 Add login page
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "home" > index.html
+git add .
+git commit -m "Home page"
+git switch -c about
+echo "about us" > about.html
+git add .
+git commit -m "About page"
+git switch main
+git merge about
+git switch -c contact
+echo "call us" > contact.html
+git add .
+git commit -m "Contact page"
+git switch main
+echo "footer" > footer.html
+git add .
+git commit -m "Footer"
+git merge contact
+git log --oneline
+git branch -d about
+```
+
+</Playground>
+
+Watch the graph: the first merge is a fast-forward (no new circle); the second creates a hollow merge commit with two parents.
+
+<Mistakes>
+
+<Mistake title="Merging in the wrong direction">
+
+<Wrong>
+
+```bash
+# on branch feature
+git merge main        # brings main INTO feature; main itself is unchanged
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git switch main
+git merge feature     # brings feature INTO main
+```
+
+</Right>
+
+`git merge X` always changes the branch you are currently on. (Merging main into your feature branch is fine when you want to update the feature, but it does not finish the feature.)
+
+</Mistake>
+
+<Mistake title="Merging with uncommitted changes">
+
+<Wrong>
+
+```bash
+echo "wip" >> app.py
+git merge feature
+# error: Your local changes would be overwritten by merge.
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git stash            # or commit
+git merge feature
+git stash pop
+```
+
+</Right>
+
+Start a merge with a clean working directory, so the merge result is not mixed with unfinished work.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a fast-forward merge and a three-way merge?">
+
+A fast-forward happens when the current branch has no commits that the other branch lacks; Git just moves the branch pointer forward and no merge commit is created. A three-way merge happens when both branches have new commits; Git combines them using the merge base and creates a merge commit with two parents.
+
+</QA>
+
+<QA q="What does --no-ff do and why use it?">
+
+It forces a merge commit even when a fast-forward is possible. Teams use it to keep a record in history that a set of commits came from one feature branch, which makes it easy to see and revert a whole feature.
+
+</QA>
+
+<QA q="What is a squash merge?">
+
+`git merge --squash` (or GitHub's "Squash and merge") combines all of a branch's changes into a single new commit on the target branch. History on main stays short and clean, but the individual commits of the branch are not kept on main and the branch is not recorded as merged.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'git merge feature changes which branch?',
+      options: ['feature', 'The branch you are on', 'Both', 'main always'],
+      answer: 1,
+      why: 'The current branch receives the commits.',
+    },
+    {
+      q: 'When is a merge a fast-forward?',
+      options: ['When there are conflicts', 'When the current branch has no new commits of its own', 'Always', 'With --no-ff'],
+      answer: 1,
+      why: 'Git can just move the label forward.',
+    },
+    {
+      q: 'How many parents does a merge commit have?',
+      options: ['0', '1', '2', 'Any number'],
+      answer: 2,
+      why: 'One from each branch (octopus merges can have more, but rarely).',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Merge feature into main | `git switch main` then `git merge feature` |
+| Always a merge commit | `git merge --no-ff feature` |
+| One squashed change | `git merge --squash feature` then `git commit` |
+| Cancel a conflicted merge | `git merge --abort` |
+| See it | `git log --oneline --graph` |
+| Clean up | `git branch -d feature` |
+
+</CheatSheet>

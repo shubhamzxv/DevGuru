@@ -1,0 +1,182 @@
+---
+id: docker-ports
+title: Ports
+summary: A container has its own network, so its ports are not reachable from the host until you publish them with -p HOST:CONTAINER; containers on the same network talk to each other on the container port directly.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A hotel: each room (container) has internal room numbers, and inside a room you can call "extension 80". But a caller from outside the hotel can only reach the room if reception (the host) sets up a forwarding: "outside line 8080 → room extension 80".
+
+**`-p 8080:80`** is that forwarding rule.
+
+</Analogy>
+
+## Simple explanation
+
+- The app inside listens on a **container port** (nginx 80, Django/FastAPI 8000, PostgreSQL 5432, Redis 6379)
+- **`-p HOST:CONTAINER`** publishes it: traffic to the host port is forwarded to the container port
+- **`EXPOSE`** in a Dockerfile only documents the port; it publishes nothing
+
+| Flag | Meaning |
+| --- | --- |
+| `-p 8080:80` | host 8080 (all interfaces) → container 80 |
+| `-p 80:80` | same number on both sides |
+| `-p 127.0.0.1:5432:5432` | reachable only from this machine (good for databases) |
+| `-p 8080:80/udp` | UDP instead of TCP |
+| `-P` | publish every EXPOSEd port on random high host ports |
+| `docker port web` | show the mappings |
+
+Rules to remember:
+
+1. **Left = host, right = container.** Many containers can use container port 80; only one can own host port 8080
+2. The app must listen on **0.0.0.0** inside the container, not 127.0.0.1
+3. Container-to-container traffic on a shared network does **not** need `-p`: the API connects to `db:5432` directly. Publish only what users (or you) must reach from outside
+4. On a cloud server, the security group or firewall must also allow the host port
+
+```text
+browser → host:8080 ──(-p 8080:80)──> web container:80
+                                      web ──> db:5432   (same network, no -p needed)
+```
+
+## Code example
+
+```bash
+docker run -d --name web -p 8080:80 nginx
+docker port web
+curl localhost:8080
+docker run -d --name web2 -p 8080:80 nginx
+docker run -d --name web2 -p 8081:80 nginx
+```
+
+```output
+80/tcp -> 0.0.0.0:8080
+<h1>Welcome to nginx!</h1>
+docker: Error response from daemon: Bind for 0.0.0.0:8080 failed: port is already allocated.
+2b3c4d5e6f7a...
+```
+
+<Playground kind="terminal">
+
+```bash
+docker run -d --name web -p 8080:80 nginx
+docker port web
+curl localhost:8080
+docker run -d --name web2 -p 8080:80 nginx
+docker run -d --name web2 -p 8081:80 nginx
+curl localhost:8081
+docker run -d --name quiet nginx
+curl localhost:80
+docker ps
+```
+
+</Playground>
+
+Two failures on purpose: the host port clash, and `quiet`, which has no `-p` so nothing on the host reaches it.
+
+<Mistakes>
+
+<Mistake title="Reversing the numbers">
+
+<Wrong>
+
+```bash
+docker run -d -p 8000:3000 my-fastapi    # app listens on 8000 inside, but this maps to container 3000
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker run -d -p 3000:8000 my-fastapi    # host 3000 → container 8000
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Publishing the database to the internet">
+
+<Wrong>
+
+```bash
+docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16    # on a public server
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker run -d --network shop -e POSTGRES_PASSWORD=... postgres:16        # API reaches it as db:5432
+docker run -d -p 127.0.0.1:5432:5432 ...                                 # or local access only
+```
+
+</Right>
+
+Bots scan the internet for open 5432 and 6379 within minutes.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between EXPOSE and -p?">
+
+EXPOSE is metadata in the image documenting which port the app listens on; it does not open anything. `-p HOST:CONTAINER` (or Compose `ports`) actually publishes the port by forwarding a host port to the container port. `-P` publishes all exposed ports to random host ports.
+
+</QA>
+
+<QA q="My container is running but I cannot reach the app. What do you check?">
+
+That a port is published (`docker ps` / `docker port`), that the mapping is the right way round, that the app listens on 0.0.0.0 and on the container port used, the app logs, that no other process uses the host port, and on a server the security group or firewall rules.
+
+</QA>
+
+<QA q="Do containers need published ports to talk to each other?">
+
+No. Containers on the same user-defined network reach each other by name on the container port, for example `db:5432`. Publishing is only for access from the host or outside.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In -p 9000:8000 the app inside listens on...',
+      options: ['9000', '8000', 'Both', 'Random'],
+      answer: 1,
+      why: 'HOST:CONTAINER.',
+    },
+    {
+      q: 'Does EXPOSE 8000 make the app reachable from your browser?',
+      options: ['Yes', 'No, you still need -p', 'Only on Mac', 'Only with Compose'],
+      answer: 1,
+      why: 'EXPOSE is documentation.',
+    },
+    {
+      q: 'The API container connects to PostgreSQL on the same network using...',
+      options: ['localhost:5432', 'db:5432', 'The host IP only', 'It cannot'],
+      answer: 1,
+      why: 'Inside a container localhost is the container itself.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Use |
+| --- | --- |
+| Open web app | `-p 8080:80` |
+| Local-only database | `-p 127.0.0.1:5432:5432` |
+| See mappings | `docker port name` |
+| Container → container | same network, `service:port`, no `-p` |
+| Inside the app | listen on `0.0.0.0` |
+
+Defaults: nginx 80 · Django/FastAPI 8000 · PostgreSQL 5432 · MySQL 3306 · Redis 6379
+
+</CheatSheet>

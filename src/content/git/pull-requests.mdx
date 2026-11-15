@@ -1,0 +1,216 @@
+---
+id: git-pull-requests
+title: Pull requests
+summary: A pull request asks to merge one branch into another on GitHub, with a page where the team reviews the changes, discusses them and sees automated test results before merging.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Before a newspaper prints an article, the writer submits it to the editor. The editor reads it, marks comments in the margin, asks for changes, and only then approves it for printing.
+
+A **pull request (PR)** is that submission: "please merge my branch into main", with review and checks before anything reaches the main branch.
+
+</Analogy>
+
+## Simple explanation
+
+The flow:
+
+1. Create a branch, commit, push: `git push -u origin feature/login`
+2. Open a PR on GitHub (or `gh pr create`): **base** `main` ← **compare** `feature/login`, with a title and a description: what, why, how to test, screenshots
+3. **Checks run**: GitHub Actions runs tests, lint, build
+4. **Review**: teammates read the diff, leave line comments, and **Approve** or **Request changes**
+5. You push more commits to the same branch; the PR **updates automatically**
+6. **Merge** when approved and green, choosing:
+   - **Create a merge commit**: keeps all commits + a merge commit
+   - **Squash and merge**: one commit on main (popular for clean history)
+   - **Rebase and merge**: commits replayed onto main, no merge commit
+7. Delete the branch
+
+Good PRs:
+
+- **Small and focused**: one change, ideally under a few hundred lines. Big PRs get shallow reviews
+- A clear **description** and a link to the issue: `Closes #42` closes the issue on merge
+- **Draft PR** for early feedback while still working
+- Self-review the diff before asking others
+- Keep it up to date with main (rebase or merge main in) and fix conflicts on your branch
+
+Good reviews: check correctness, tests, security, readability and naming; ask questions rather than demand; separate must-fix from nitpicks; approve when it is good enough, not perfect.
+
+A **CODEOWNERS** file can auto-request reviews from the owners of certain folders, and branch protection can require N approvals and passing checks before merge.
+
+## Code example
+
+```bash
+git switch -c feature/order-cancel
+# ...commit changes...
+git push -u origin feature/order-cancel
+gh pr create --base main --title "Add order cancellation" \
+  --body "Adds POST /orders/{id}/cancel. Refunds paid orders. Closes #42."
+gh pr checks
+gh pr merge --squash --delete-branch
+```
+
+```output
+https://github.com/you/shop/pull/57
+All checks were successful
+✓ tests   2m14s
+✓ lint      21s
+✓ Squashed and merged pull request #57 (Add order cancellation)
+✓ Deleted branch feature/order-cancel
+```
+
+A useful PR description template (`.github/pull_request_template.md`):
+
+```text
+## What
+Adds POST /orders/{id}/cancel.
+
+## Why
+Customers could not cancel before shipping (issue #42).
+
+## How to test
+1. Create an order, pay it
+2. POST /orders/1/cancel -> 202, status "cancelled", refund created
+
+## Checklist
+- [x] Tests added
+- [x] Docs updated
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "orders" > orders.py
+git add .
+git commit -m "Orders"
+git remote add origin https://github.com/you/shop.git
+git push -u origin main
+git switch -c feature/order-cancel
+echo "def cancel(order): ..." > cancel.py
+git add .
+git commit -m "Add order cancellation"
+git push -u origin feature/order-cancel
+git switch main
+git merge --no-ff feature/order-cancel
+git push
+git branch -d feature/order-cancel
+git log --oneline
+```
+
+</Playground>
+
+This is what the GitHub "Merge pull request" button does for you after review: a merge into main on the server.
+
+<Mistakes>
+
+<Mistake title="One giant PR">
+
+<Wrong>
+
+```text
+PR #90: "Refactor + new payments + fix login + formatting"   (4,800 lines, 63 files)
+```
+
+</Wrong>
+
+<Right>
+
+```text
+PR #90: Reformat code (no behaviour change)
+PR #91: Fix login redirect
+PR #92: Add payments service
+```
+
+</Right>
+
+Small PRs are reviewed faster and better, and are easier to revert.
+
+</Mistake>
+
+<Mistake title="Merging with failing checks">
+
+<Wrong>
+
+```text
+✗ tests failing — "I'll fix it after merging"
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Fix the tests on the branch, push, wait for green, then merge.
+Turn on "Require status checks to pass" in branch protection.
+```
+
+</Right>
+
+A red main blocks the whole team and every deploy.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a pull request?">
+
+A request, on a hosting platform such as GitHub, to merge changes from one branch (or fork) into another. It provides a diff view, discussion, line comments, review approvals and automated checks, and records the decision when it is merged.
+
+</QA>
+
+<QA q="What do you look for when reviewing a pull request?">
+
+Whether it does what it claims and handles edge cases, test coverage, security issues (input validation, secrets, permissions), performance, readability and naming, consistency with the codebase, and documentation. Comments should be specific and kind, separating required changes from suggestions.
+
+</QA>
+
+<QA q="Squash merge, rebase merge or merge commit?">
+
+Squash gives one clean commit per PR on main (easy to read and revert, loses individual commits). Rebase merge keeps each commit but linear. A merge commit keeps the full branch history and the merge point. Teams choose one convention and enforce it in repository settings.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'You push new commits to a branch with an open PR. What happens?',
+      options: ['A new PR is needed', 'The PR updates automatically', 'The PR closes', 'Nothing'],
+      answer: 1,
+      why: 'The PR shows the branch\'s latest commits.',
+    },
+    {
+      q: 'What does "Closes #42" in the PR description do?',
+      options: ['Nothing', 'Closes issue 42 when the PR is merged', 'Deletes the branch', 'Locks the repo'],
+      answer: 1,
+      why: 'Linking keywords close issues on merge.',
+    },
+    {
+      q: 'Which merge option puts one commit on main?',
+      options: ['Merge commit', 'Squash and merge', 'Rebase and merge', 'Fast-forward only'],
+      answer: 1,
+      why: 'All PR commits are squashed into one.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | Command / place |
+| --- | --- |
+| Push branch | `git push -u origin feature/x` |
+| Open PR | GitHub button / `gh pr create` |
+| Early feedback | Draft PR / `gh pr create --draft` |
+| See checks | `gh pr checks` |
+| Review | Files changed → comments → Approve / Request changes |
+| Merge | merge commit / squash / rebase (`gh pr merge --squash`) |
+| Link issue | `Closes #42` |
+| Auto reviewers | `CODEOWNERS` file |
+
+</CheatSheet>

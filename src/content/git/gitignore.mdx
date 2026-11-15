@@ -1,0 +1,208 @@
+---
+id: git-gitignore
+title: .gitignore
+summary: A .gitignore file lists patterns of files Git should not track, such as secrets, logs, build output and installed packages.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+When you pack for a trip, you have a list of things that never go in the suitcase: wet towels, the room key of the hotel, half-eaten snacks.
+
+**.gitignore** is that list for your repository: files that should never be packed into a commit.
+
+</Analogy>
+
+## Simple explanation
+
+`.gitignore` is a plain text file, usually at the top of the repo, committed like any other file so the whole team shares it. One pattern per line:
+
+| Pattern | Ignores |
+| --- | --- |
+| `.env` | the file `.env` anywhere |
+| `*.log` | every file ending in .log |
+| `__pycache__/` | every folder with that name (trailing `/` = folder) |
+| `/build` | only `build` at the repo root |
+| `logs/*.log` | .log files directly in logs/ |
+| `**/temp` | `temp` at any depth |
+| `!keep.log` | do NOT ignore this one (exception) |
+| `# comment` | a comment |
+
+What to ignore in a typical Python / JS project:
+
+- **Secrets**: `.env`, `*.pem`, credentials files
+- **Installed dependencies**: `venv/`, `.venv/`, `node_modules/`
+- **Generated files**: `__pycache__/`, `*.pyc`, `dist/`, `build/`, `.pytest_cache/`, coverage reports
+- **Local tool files**: `.idea/`, `.vscode/` (or only parts of it), `.DS_Store`, `Thumbs.db`
+- **Logs and databases**: `*.log`, `*.sqlite3` (for local dev data)
+
+Important: `.gitignore` only affects **untracked** files. If a file is **already committed**, adding it to `.gitignore` does nothing; you must stop tracking it with `git rm --cached file` (the file stays on disk).
+
+Other places for rules: `.git/info/exclude` (only you, not shared) and a global ignore file (`git config --global core.excludesFile ~/.gitignore_global`) for things like editor files. GitHub's `github/gitignore` repository has ready-made templates per language.
+
+Commit a **`.env.example`** with dummy values so others know which settings are needed.
+
+## Code example
+
+```text
+# .gitignore for a FastAPI project
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+dist/
+!.env.example
+```
+
+Checking and fixing:
+
+```bash
+git check-ignore -v .env              # which rule ignores it?
+git rm --cached config/secrets.json   # stop tracking a file that was committed by mistake
+echo "config/secrets.json" >> .gitignore
+git commit -am "Stop tracking secrets.json"
+```
+
+```output
+.gitignore:1:.env	.env
+rm 'config/secrets.json'
+[main 3c5d7e9] Stop tracking secrets.json
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "print('app')" > app.py
+echo "DB_PASSWORD=secret" > .env
+echo "error at 10:00" > debug.log
+git status -s
+echo ".env" > .gitignore
+echo "*.log" >> .gitignore
+git status -s
+git add .
+git status -s
+git add debug.log
+git check-ignore -v .env
+git commit -m "Add app and gitignore"
+```
+
+</Playground>
+
+After the `.gitignore` is written, `.env` and `debug.log` disappear from `git status`, `git add .` skips them, and adding one by name is refused.
+
+<Mistakes>
+
+<Mistake title="Adding an already-committed file to .gitignore">
+
+<Wrong>
+
+```bash
+echo ".env" >> .gitignore
+git status        # .env changes still show up: it is already tracked
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+echo ".env" >> .gitignore
+git rm --cached .env           # untrack it, keep the file
+git commit -m "Stop tracking .env"
+```
+
+</Right>
+
+Ignoring only stops untracked files. Also rotate any secret that was committed: it is still in the history.
+
+</Mistake>
+
+<Mistake title="Ignoring the lock file">
+
+<Wrong>
+
+```text
+# .gitignore
+package-lock.json
+poetry.lock
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Commit lock files (package-lock.json, poetry.lock, uv.lock) so every machine installs the same versions.
+Ignore the installed folders instead: node_modules/, .venv/
+```
+
+</Right>
+
+Lock files make builds reproducible; the dependency folders are what should be ignored.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is .gitignore and how does it work?">
+
+A file of patterns telling Git which untracked files to ignore, so they do not appear in status and are not added by `git add .`. Patterns support wildcards, folder rules with a trailing slash, root-anchored rules with a leading slash, `**` for any depth and `!` exceptions. It has no effect on files that are already tracked.
+
+</QA>
+
+<QA q="A secret file was committed. How do you fix it?">
+
+Rotate the secret immediately, because it is in history. Stop tracking it with `git rm --cached`, add it to `.gitignore` and commit. To remove it from history, rewrite it with `git filter-repo` (or BFG) and force-push, coordinating with everyone who cloned; on GitHub, also contact support to purge cached views if needed.
+
+</QA>
+
+<QA q="How do you check why a file is ignored?">
+
+`git check-ignore -v <file>` prints the file and line of the matching rule.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which pattern ignores every .log file?',
+      options: ['log', '*.log', '/log/', '!*.log'],
+      answer: 1,
+      why: '* matches any name.',
+    },
+    {
+      q: 'config.json is already committed. You add it to .gitignore. Is it now ignored?',
+      options: ['Yes', 'No, run git rm --cached config.json first', 'Only after a push', 'Only on main'],
+      answer: 1,
+      why: '.gitignore affects untracked files only.',
+    },
+    {
+      q: 'What does !keep.log mean?',
+      options: ['Delete keep.log', 'Do not ignore keep.log even if *.log is ignored', 'Ignore only keep.log', 'A comment'],
+      answer: 1,
+      why: '! makes an exception to an earlier rule.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Pattern | Meaning |
+| --- | --- |
+| `.env` | that file anywhere |
+| `*.log` | by extension |
+| `venv/` | a folder (and all inside) |
+| `/build` | only at the root |
+| `**/tmp` | any depth |
+| `!keep.log` | exception |
+
+Untrack a committed file: `git rm --cached <file>`. Why ignored? `git check-ignore -v <file>`. Commit `.env.example` and lock files; ignore `.env`, `.venv/`, `node_modules/`.
+
+</CheatSheet>

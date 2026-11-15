@@ -1,0 +1,196 @@
+---
+id: docker-images-and-containers
+title: Images and containers
+summary: An image is a read-only, layered template identified by name and tag; a container is an instance of it with its own writable layer, and changes in a container disappear when it is removed.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+An **image** is like the master copy of a school exam paper, locked in the office. A **container** is a photocopy handed to one student. Each student writes on their own copy; nobody's answers change the master. When the exam ends the photocopies go in the bin, and the master is still clean for next year.
+
+</Analogy>
+
+## Simple explanation
+
+**Image**
+
+- Read-only, built in **layers** (one per Dockerfile step), shared between images
+- Named `repository:tag`, for example `python:3.12-slim`, `nginx:latest`, `myuser/shop-api:1.4.0`
+- No tag means `:latest` (just a name, **not** "newest"!)
+- Also has an **ID** (a content hash) and settings: start command, exposed port, environment
+
+**Container**
+
+- An image plus a thin **writable layer** on top, a process, a network address
+- States: **created → running → exited** (stopped) → removed
+- Files written inside a container live in its writable layer: they survive `stop`/`start`, but **vanish on `docker rm`**. Keep important data in **volumes** (later topic)
+- Many containers can run from the same image at the same time
+
+```text
+ container A    container B          <- each has its own writable layer
+ [writable]     [writable]
+ ----------------------------
+ [ layer 3: COPY app ]               <- shared, read-only image layers
+ [ layer 2: pip install ]
+ [ layer 1: python:3.12-slim ]
+```
+
+Commands for images:
+
+| Command | Does |
+| --- | --- |
+| `docker pull nginx:1.27` | download an image |
+| `docker images` | list local images |
+| `docker image inspect nginx` | details: layers, command, env |
+| `docker tag shop-api myuser/shop-api:1.0` | add another name |
+| `docker rmi nginx` | delete an image (no container may use it) |
+
+## Code example
+
+```bash
+docker pull nginx
+docker run -d --name web1 -p 8081:80 nginx
+docker run -d --name web2 -p 8082:80 nginx
+docker ps
+docker rmi nginx
+```
+
+```output
+Using default tag: latest
+latest: Pulling from library/nginx
+Status: Downloaded newer image for nginx:latest
+CONTAINER ID   IMAGE          STATUS         PORTS                  NAMES
+8b1e2c3d4f5a   nginx:latest   Up 3 seconds   0.0.0.0:8082->80/tcp   web2
+3f8a1c9e2b7d   nginx:latest   Up 5 seconds   0.0.0.0:8081->80/tcp   web1
+Error response from daemon: conflict: unable to remove repository reference "nginx" (must force) - container 3f8a1c9e2b7d is using its referenced image
+```
+
+One image, two containers. The image cannot be deleted while containers use it.
+
+<Playground kind="terminal">
+
+```bash
+docker pull nginx
+docker images
+docker run -d --name web1 -p 8081:80 nginx
+docker run -d --name web2 -p 8082:80 nginx
+docker ps
+docker exec web1 hostname
+docker exec web2 hostname
+docker inspect nginx
+docker rm -f web1 web2
+docker rmi nginx
+docker images
+```
+
+</Playground>
+
+Each container has its own hostname (its ID). After removing both containers, the image can be deleted.
+
+<Mistakes>
+
+<Mistake title="Trusting :latest in production">
+
+<Wrong>
+
+```bash
+docker run -d myuser/shop-api          # which version is this? It changes on every push
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker run -d myuser/shop-api:1.4.0    # or a git SHA tag: shop-api:7c8d9e0
+```
+
+</Right>
+
+`latest` is only the default tag name. Pin versions so deploys and rollbacks are predictable.
+
+</Mistake>
+
+<Mistake title="Saving data inside the container">
+
+<Wrong>
+
+```bash
+docker run -d --name db -e POSTGRES_PASSWORD=secret postgres:16
+docker rm -f db          # all the database files are gone
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker run -d --name db -e POSTGRES_PASSWORD=secret -v pgdata:/var/lib/postgresql/data postgres:16
+```
+
+</Right>
+
+The writable layer is deleted with the container. Volumes keep data.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between an image and a container?">
+
+An image is an immutable, layered template with a filesystem and metadata such as the default command. A container is a runtime instance of an image: the image layers plus a writable layer, an isolated process, network and state. You can run many containers from one image; removing a container discards its writable layer but leaves the image.
+
+</QA>
+
+<QA q="Does the latest tag mean the newest version?">
+
+No. `latest` is just the default tag used when none is given. It points to whatever was last pushed with that tag, which may not be the newest release. Production deployments should use explicit version or commit tags, or even image digests.
+
+</QA>
+
+<QA q="What happens to data written inside a container?">
+
+It goes into the container's writable layer. It survives stopping and restarting the container, but is deleted when the container is removed. Persistent data belongs in volumes or bind mounts, or in external services such as RDS or S3.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'docker run nginx uses which tag?',
+      options: ['newest', 'latest', 'stable', 'none'],
+      answer: 1,
+      why: 'No tag means :latest.',
+    },
+    {
+      q: 'Can two containers run from one image at the same time?',
+      options: ['No', 'Yes', 'Only on Linux', 'Only with -d'],
+      answer: 1,
+      why: 'Each gets its own writable layer.',
+    },
+    {
+      q: 'What deletes the container\'s writable layer?',
+      options: ['docker stop', 'docker rm', 'docker logs', 'docker ps'],
+      answer: 1,
+      why: 'Stop keeps it; rm removes it.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Image | Container |
+| --- | --- |
+| template, read-only | instance, writable layer |
+| `docker pull`, `images`, `rmi`, `tag` | `docker run`, `ps`, `stop`, `rm` |
+| named `repo:tag` | named by `--name` or random |
+| layers shared | data lost on `rm` (use volumes) |
+
+Pin tags: `python:3.12-slim`, `shop-api:1.4.0`, not `latest`.
+
+</CheatSheet>

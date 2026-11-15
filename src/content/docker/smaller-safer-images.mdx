@@ -1,0 +1,195 @@
+---
+id: docker-smaller-safer-images
+title: Smaller, safer images
+summary: Smaller images pull and start faster and contain fewer vulnerable packages; use slim, alpine or distroless bases, multi-stage builds, no build tools or caches in the final image, and scan what remains.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Moving house: every extra box costs money to carry and is one more thing that can break. Moving only what you will actually use is cheaper, faster and safer.
+
+Every package in an image is **weight** (slower deploys) and **attack surface** (more code that might have a vulnerability).
+
+</Analogy>
+
+## Simple explanation
+
+**Pick the base deliberately**
+
+| Base | Size (approx.) | Notes |
+| --- | --- | --- |
+| `python:3.12` | ~1 GB | full Debian with compilers: good **build** stage |
+| `python:3.12-slim` | ~125 MB | Debian minimal: the usual **runtime** choice for Python |
+| `python:3.12-alpine` | ~50 MB | musl libc: many Python wheels must compile, builds can be slower or break |
+| `gcr.io/distroless/python3` | ~50 MB | no shell, no package manager: very safe, harder to debug |
+| `scratch` | 0 MB | empty: only for static binaries (Go, Rust) |
+
+For Python, **slim** is the safe default. Alpine shines for Go binaries, nginx and simple tools.
+
+**Shrink techniques**
+
+1. **Multi-stage**: compile in a full image, copy only wheels/binaries/`dist` into the runtime
+2. `pip install --no-cache-dir`, `npm ci --omit=dev`, `apt-get install --no-install-recommends`
+3. Clean in the **same** RUN: `&& rm -rf /var/lib/apt/lists/*`
+4. `.dockerignore` so tests, docs, `.git`, datasets do not get copied
+5. Remove build-only packages (`gcc`, `-dev` headers) by not having them in the final stage
+6. Check with `docker images` and inspect layers with `docker history` or the **dive** tool
+
+**Safety techniques**
+
+- Non-root `USER`, read-only filesystem, minimal packages (no curl, no shell where possible)
+- **Scan** in CI and fail on high/critical findings:
+
+```bash
+trivy image --severity HIGH,CRITICAL --exit-code 1 shop-api:1.4.0
+docker scout cves shop-api:1.4.0
+```
+
+- **Rebuild regularly** (weekly or on base image updates) so OS patches are included; pinning a tag does not patch itself
+- Pin by digest for reproducibility, and use **Dependabot/Renovate** to bump base images
+- Generate an **SBOM** (software bill of materials) and sign images (cosign) in mature pipelines
+
+## Code example
+
+```bash
+docker images shop-api
+```
+
+```output
+REPOSITORY   TAG              SIZE
+shop-api     v1-python        1.12GB    # FROM python:3.12, single stage
+shop-api     v2-slim          412MB     # FROM python:3.12-slim
+shop-api     v3-multistage    186MB     # wheels built in python:3.12, runtime slim
+shop-api     v4-cleaned       164MB     # + --no-cache-dir, .dockerignore
+```
+
+The same app went from 1.12 GB to 164 MB: deploys pull about 7 times less data, and the scanner reports far fewer packages.
+
+<Playground kind="terminal">
+
+```bash
+docker pull python:3.12-slim
+docker pull alpine
+docker pull ubuntu
+docker pull node:22-alpine
+docker images
+mkdir ~/tiny
+cd ~/tiny
+echo "FROM alpine:3.20" > Dockerfile
+echo "RUN adduser -D app" >> Dockerfile
+echo "USER app" >> Dockerfile
+echo 'CMD ["echo", "small and non-root"]' >> Dockerfile
+docker build -t tiny .
+docker images
+```
+
+</Playground>
+
+Compare the sizes in `docker images`: the base you choose decides most of the final size.
+
+<Mistakes>
+
+<Mistake title="Alpine for a heavy Python app">
+
+<Wrong>
+
+```dockerfile
+FROM python:3.12-alpine
+RUN pip install pandas numpy psycopg2     # no musl wheels: compiles for 20 minutes, needs gcc, image grows anyway
+```
+
+</Wrong>
+
+<Right>
+
+```dockerfile
+FROM python:3.12-slim
+RUN pip install --no-cache-dir pandas numpy psycopg[binary]
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Pin once, never rebuild">
+
+<Wrong>
+
+```text
+shop-api built in January from python:3.12-slim, still running in November with
+months of unpatched OpenSSL and glibc fixes.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Scheduled CI rebuild (for example weekly) + scan + redeploy; Renovate PRs for base image bumps.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you reduce Docker image size?">
+
+Choose a minimal base (slim, alpine or distroless as appropriate), use multi-stage builds so compilers and build dependencies stay out of the final image, install with no caches and no recommended extras, clean package lists in the same layer, use a .dockerignore, and verify with docker images, docker history or dive.
+
+</QA>
+
+<QA q="Alpine or slim for Python?">
+
+Usually slim. Alpine uses musl libc, so many prebuilt Python wheels do not apply and packages such as numpy or psycopg2 must compile, making builds slower and images not much smaller, with occasional subtle runtime differences. Alpine is great for static binaries and simple tools.
+
+</QA>
+
+<QA q="How do you keep images secure over time?">
+
+Scan them in CI and in the registry (Trivy, Docker Scout, ECR scanning) and fail builds on serious findings, rebuild regularly on updated base images, automate base image bumps, run as non-root with minimal packages, and keep an SBOM and signatures for traceability.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which base has no shell and no package manager?',
+      options: ['ubuntu', 'python:3.12-slim', 'distroless', 'python:3.12'],
+      answer: 2,
+      why: 'Distroless contains only the runtime and your app.',
+    },
+    {
+      q: 'Why can Alpine be slow for Python data packages?',
+      options: ['No internet', 'musl libc means wheels often must compile', 'It is bigger', 'It has no Python'],
+      answer: 1,
+      why: 'Most manylinux wheels target glibc.',
+    },
+    {
+      q: 'Which tool scans images for vulnerabilities?',
+      options: ['Trivy', 'Prettier', 'Celery', 'Gunicorn'],
+      answer: 0,
+      why: 'Trivy, Docker Scout and ECR scanning all do this.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Goal | How |
+| --- | --- |
+| Small Python runtime | `python:3.12-slim` + multi-stage wheels |
+| Smallest binaries | `scratch` / distroless |
+| No caches | `pip --no-cache-dir`, `npm ci --omit=dev`, `rm -rf /var/lib/apt/lists/*` |
+| Fewer files | `.dockerignore` |
+| Inspect | `docker images`, `docker history`, `dive` |
+| Scan | `trivy image --severity HIGH,CRITICAL --exit-code 1 img` |
+| Stay patched | scheduled rebuilds, Renovate/Dependabot |
+
+</CheatSheet>

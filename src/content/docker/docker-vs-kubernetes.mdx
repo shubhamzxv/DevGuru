@@ -1,0 +1,272 @@
+---
+id: docker-docker-vs-kubernetes
+title: Docker vs Kubernetes (overview)
+summary: Docker builds and runs containers on one machine, while Kubernetes is an orchestrator that runs containers across a cluster of machines, keeping the desired number running, scaling them and rolling out updates.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Docker is a **driver** who can drive one bus very well. Kubernetes is the **transport depot manager** for a fleet of buses: decides which bus runs which route, sends a spare when one breaks down, adds buses at rush hour, and replaces old buses with new ones route by route without stopping service.
+
+You need the driver either way. The manager matters when you have a fleet.
+
+</Analogy>
+
+## Simple explanation
+
+They solve different problems, so "Docker **vs** Kubernetes" is a bit of a trick question:
+
+| | Docker (+ Compose) | Kubernetes |
+| --- | --- | --- |
+| Scope | one host | a cluster of many nodes |
+| Job | build images, run containers | **orchestrate**: schedule, heal, scale, update |
+| Config | Dockerfile, compose.yaml | YAML manifests (Deployment, Service, ...) |
+| Self-healing | restart policy only | replaces failed pods, moves them off dead nodes |
+| Scaling | manual | `replicas`, Horizontal Pod Autoscaler |
+| Updates | recreate containers | rolling updates and rollbacks |
+| Learning curve | small | big |
+
+Kubernetes still runs **container images**: you build them with Docker (or another tool) exactly as before. Since v1.24 Kubernetes talks to containerd directly instead of Docker Engine, but images built by Docker work unchanged (they follow the OCI standard).
+
+**Kubernetes words you should know**
+
+| Term | Meaning |
+| --- | --- |
+| Cluster / node | the set of machines / one machine |
+| **Pod** | smallest unit: one or more containers sharing network and storage |
+| **Deployment** | "keep 3 replicas of this pod template running", handles rolling updates |
+| **Service** | stable name and IP that load-balances to the pods |
+| Ingress | HTTP routing from outside to services |
+| ConfigMap / Secret | configuration and secrets for pods |
+| Namespace | a folder-like separation inside a cluster |
+| HPA | autoscaling pods on CPU or custom metrics |
+
+A minimal Deployment:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: shop-api }
+  template:
+    metadata:
+      labels: { app: shop-api }
+    spec:
+      containers:
+        - name: api
+          image: 123456789012.dkr.ecr.ap-south-1.amazonaws.com/shop-api:1.4.0
+          ports:
+            - containerPort: 8000
+```
+
+`kubectl apply -f deployment.yaml`, `kubectl get pods`, `kubectl logs`, `kubectl rollout undo deployment/shop-api`.
+
+**On AWS** the options are:
+
+- **ECS** (with EC2 or **Fargate**): AWS's own, simpler orchestrator: a great default for small and medium teams
+- **EKS**: managed Kubernetes, when you need the Kubernetes ecosystem or portability
+- **App Runner**: give it an image, it runs and scales it: simplest of all
+
+When to choose what: one server or local development → Docker Compose. A few services on AWS → ECS Fargate. Many services, multi-cloud, a platform team → Kubernetes (EKS).
+
+## Code example
+
+The same app in both worlds:
+
+```bash
+# Docker: one host
+docker run -d --name api -p 8000:8000 --restart unless-stopped shop-api:1.4.0
+
+# Kubernetes: a cluster
+kubectl apply -f deployment.yaml -f service.yaml
+kubectl get pods
+kubectl scale deployment shop-api --replicas=5
+kubectl set image deployment/shop-api api=shop-api:1.5.0
+```
+
+```output
+NAME                        READY   STATUS    RESTARTS   AGE
+shop-api-7c9d8f6b5d-2xkqp   1/1     Running   0          40s
+shop-api-7c9d8f6b5d-8mzvr   1/1     Running   0          40s
+shop-api-7c9d8f6b5d-tq4hn   1/1     Running   0          40s
+deployment.apps/shop-api scaled
+deployment.apps/shop-api image updated
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "user", "label": "Users", "icon": "👥", "col": 0, "row": 1, "info": "Send HTTP requests to the shop API.", "example": "GET /products" },
+    { "id": "ingress", "label": "Ingress / Load balancer", "icon": "⚖️", "col": 1, "row": 1, "info": "Entry point into the cluster. Routes api.shop.com to the shop-api Service.", "example": "AWS Load Balancer Controller creates an ALB." },
+    { "id": "svc", "label": "Service shop-api", "icon": "🔀", "col": 2, "row": 1, "info": "A stable name and virtual IP. Spreads requests across all healthy pods with the label app=shop-api.", "example": "Inside the cluster: http://shop-api:8000" },
+    { "id": "pod1", "label": "Pod 1 (node A)", "icon": "📦", "col": 3, "row": 0, "info": "One copy of the container built from your Docker image.", "example": "image shop-api:1.4.0" },
+    { "id": "pod2", "label": "Pod 2 (node B)", "icon": "📦", "col": 3, "row": 1, "info": "Another replica on a different machine, so one node failing does not take the app down.", "example": "image shop-api:1.4.0" },
+    { "id": "pod3", "label": "Pod 3 (node C)", "icon": "📦", "col": 3, "row": 2, "info": "Third replica. The Deployment keeps exactly 3 running.", "example": "replicas: 3" },
+    { "id": "deploy", "label": "Deployment", "icon": "🧭", "col": 2, "row": 2, "info": "Desired state: 3 replicas of this pod template. Kubernetes keeps reality matching it and performs rolling updates.", "example": "kubectl set image deployment/shop-api api=shop-api:1.5.0" },
+    { "id": "ecr", "label": "Registry (ECR)", "icon": "🗃️", "col": 1, "row": 2, "info": "Where the Docker image lives. Nodes pull it when a pod starts.", "example": "123456789012.dkr.ecr.ap-south-1.amazonaws.com/shop-api" }
+  ],
+  "edges": [
+    ["user", "ingress"],
+    ["ingress", "svc"],
+    ["svc", "pod1"],
+    ["svc", "pod2"],
+    ["svc", "pod3"],
+    ["deploy", "pod3", "manages"],
+    ["ecr", "deploy", "image"]
+  ],
+  "flows": [
+    {
+      "name": "A request",
+      "steps": [
+        ["user", "A user calls GET /products."],
+        ["ingress", "The load balancer sends it into the cluster."],
+        ["svc", "The Service picks one healthy pod."],
+        ["pod2", "Pod 2 handles it and replies."]
+      ]
+    },
+    {
+      "name": "A node dies",
+      "steps": [
+        ["pod1", "Node A crashes: pod 1 is gone."],
+        ["deploy", "The Deployment sees 2 running, desired 3."],
+        ["ecr", "A healthy node pulls the image."],
+        ["pod1", "A new pod 1 starts on another node; the Service sends it traffic once it is ready."]
+      ]
+    },
+    {
+      "name": "Rolling update",
+      "steps": [
+        ["ecr", "CI pushed shop-api:1.5.0."],
+        ["deploy", "kubectl set image: the Deployment starts one new pod with 1.5.0."],
+        ["pod3", "When the new pod passes its readiness check, an old pod is removed."],
+        ["svc", "Repeated pod by pod: users never see downtime. kubectl rollout undo goes back."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Answering as if you must choose one">
+
+<Wrong>
+
+```text
+"We use Kubernetes instead of Docker."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"We build images with Docker and run them with Kubernetes (or ECS).
+ Docker packages; the orchestrator runs them across machines."
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Kubernetes for a tiny project">
+
+<Wrong>
+
+```text
+One API, one database, two developers: a self-managed Kubernetes cluster.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Docker Compose on one server, or ECS Fargate / App Runner on AWS. Move to EKS when the scale or ecosystem needs it.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between Docker and Kubernetes?">
+
+Docker is a tool to build container images and run containers on a single host. Kubernetes is a container orchestration platform that runs containers across a cluster: it schedules pods onto nodes, keeps the desired number of replicas running, restarts or reschedules failed ones, provides service discovery and load balancing, autoscaling, configuration and secrets, and rolling updates and rollbacks. They are complementary: Docker-built images run on Kubernetes.
+
+</QA>
+
+<QA q="What is a pod?">
+
+The smallest deployable unit in Kubernetes: one or more tightly coupled containers that share a network namespace (same IP and ports) and can share volumes, scheduled together on one node. Usually one app container per pod, sometimes with sidecars.
+
+</QA>
+
+<QA q="ECS or EKS?">
+
+ECS is AWS-native, simpler to run and integrates tightly with IAM, ALB and CloudWatch; with Fargate there are no servers to manage, which suits most small and medium teams. EKS gives standard Kubernetes with its large ecosystem (Helm, operators, service meshes) and portability across clouds, at the cost of more complexity.
+
+</QA>
+
+<QA q="Did Kubernetes drop Docker?">
+
+Kubernetes removed dockershim in version 1.24 and now uses CRI runtimes such as containerd directly. Images built with Docker are OCI images and keep working; only Docker Engine as the node runtime was dropped.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which keeps 3 replicas running and does rolling updates?',
+      options: ['Dockerfile', 'Kubernetes Deployment', 'docker compose ps', 'A volume'],
+      answer: 1,
+      why: 'Deployments manage desired replica count and updates.',
+    },
+    {
+      q: 'Smallest deployable unit in Kubernetes?',
+      options: ['Node', 'Pod', 'Image', 'Cluster'],
+      answer: 1,
+      why: 'Pods hold one or more containers.',
+    },
+    {
+      q: 'Simplest AWS way to run containers without managing servers or Kubernetes?',
+      options: ['EKS on EC2', 'ECS Fargate or App Runner', 'S3', 'Lambda layers'],
+      answer: 1,
+      why: 'Fargate and App Runner remove server management.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Choose |
+| --- | --- |
+| Build images | Docker |
+| Local dev, one server | Docker Compose |
+| AWS, few services | ECS Fargate / App Runner |
+| Large platform, ecosystem, multi-cloud | Kubernetes (EKS) |
+
+| Kubernetes | Meaning |
+| --- | --- |
+| Pod | container(s) unit |
+| Deployment | replicas + rolling updates |
+| Service | stable name, load balancing |
+| Ingress | outside HTTP routing |
+| ConfigMap / Secret | config / secrets |
+| `kubectl apply / get / logs / rollout undo` | daily commands |
+
+</CheatSheet>

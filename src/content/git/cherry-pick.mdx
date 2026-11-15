@@ -1,0 +1,192 @@
+---
+id: git-cherry-pick
+title: Cherry-pick
+summary: git cherry-pick copies the change of one specific commit from another branch onto the current branch as a new commit.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A friend's notebook has a great recipe on one page. You do not copy the whole notebook; you copy just that **one page** into yours.
+
+**Cherry-pick** copies one commit (or a few) from another branch into yours, without merging everything else on that branch.
+
+</Analogy>
+
+## Simple explanation
+
+```bash
+git switch main
+git cherry-pick a3f9c21
+```
+
+Git takes the change made by commit `a3f9c21` (the difference between it and its parent), applies it on top of the current branch, and creates a **new commit** with the same message but a **new id**.
+
+When it is the right tool:
+
+- A **bug fix** was committed on a feature branch, and production (`main` or a `release/1.4` branch) needs that fix now, without the unfinished feature
+- **Backporting** a fix to older release branches
+- Rescuing one good commit from an abandoned branch
+
+Options:
+
+- `git cherry-pick A B C`: several commits, in order
+- `git cherry-pick A..C`: a range (excluding A); `A^..C` includes A
+- `git cherry-pick -x A`: adds "(cherry picked from commit A)" to the message, helpful for tracking backports
+- `git cherry-pick -n A`: apply the change without committing (stage it only)
+- On conflict: fix, `git add`, `git cherry-pick --continue` (or `--abort`)
+
+Use it **sparingly**: the same change now exists as two different commits. If the original branch is merged later, Git usually notices the change is already there, but heavy cherry-picking makes history confusing. Usually it is cleaner to fix on the oldest branch that needs it and merge forward.
+
+## Code example
+
+```bash
+git switch -c feature
+echo "big unfinished feature" > feature.py && git add . && git commit -m "Start feature"
+echo "fix" > login_fix.py && git add . && git commit -m "Fix login crash"
+git log --oneline -1
+git switch main
+git cherry-pick 9d2e4f1          # only the fix, not the feature
+ls
+```
+
+```output
+9d2e4f1 (HEAD -> feature) Fix login crash
+[main 4c7a1b3] Fix login crash
+ 1 file changed
+app.py  login_fix.py
+```
+
+`feature.py` is not on main: only the chosen commit came across.
+
+<Playground kind="git">
+
+```bash
+git init
+echo "app" > app.py
+git add .
+git commit -m "App"
+git switch -c feature
+echo "unfinished" > feature.py
+git add .
+git commit -m "Start feature"
+echo "fix" > login_fix.py
+git add .
+git commit -m "Fix login crash"
+git switch main
+git cherry-pick feature
+ls
+git log --oneline
+```
+
+</Playground>
+
+`git cherry-pick feature` picks the commit the `feature` branch points to (the fix). Only `login_fix.py` arrives on main.
+
+<Mistakes>
+
+<Mistake title="Cherry-picking instead of merging a whole branch">
+
+<Wrong>
+
+```bash
+git cherry-pick c1 c2 c3 c4 c5 c6 c7 c8    # copying a whole feature commit by commit
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git merge feature                          # bring in the branch properly
+```
+
+</Right>
+
+Cherry-pick is for one or a few specific commits. For a whole branch, merge (or rebase).
+
+</Mistake>
+
+<Mistake title="Not recording where a backport came from">
+
+<Wrong>
+
+```bash
+git switch release/1.4
+git cherry-pick 9d2e4f1      # later nobody knows this fix also exists on main
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git cherry-pick -x 9d2e4f1   # message ends with "(cherry picked from commit 9d2e4f1)"
+```
+
+</Right>
+
+`-x` links the copy to the original, which helps when auditing which releases have which fixes.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is git cherry-pick and when would you use it?">
+
+It applies the changes introduced by one or more existing commits onto the current branch, creating new commits. It is used to bring a specific fix to another branch without merging everything else, such as hotfixes to production or backports to release branches.
+
+</QA>
+
+<QA q="What are the downsides of cherry-picking?">
+
+It duplicates changes as separate commits with different ids, which can confuse history and later merges, cause repeated conflicts, and make it hard to track where a change lives. Frequent cherry-picking often signals a branching strategy problem; fixing on the oldest relevant branch and merging forward is usually cleaner.
+
+</QA>
+
+<QA q="How do you cherry-pick a range of commits?">
+
+`git cherry-pick A..B` applies the commits after A up to and including B; `git cherry-pick A^..B` includes A as well. You can also list several commit ids in order.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does cherry-pick create on the current branch?',
+      options: ['A merge commit', 'A new commit with the same change', 'A tag', 'Nothing'],
+      answer: 1,
+      why: 'Same change and message, new id.',
+    },
+    {
+      q: 'Best use of cherry-pick?',
+      options: ['Merging a finished feature', 'Bringing one urgent fix to a release branch', 'Renaming a branch', 'Deleting commits'],
+      answer: 1,
+      why: 'It copies specific commits only.',
+    },
+    {
+      q: 'Which option notes the original commit id in the message?',
+      options: ['-n', '-x', '-m', '--continue'],
+      answer: 1,
+      why: '-x adds "(cherry picked from commit ...)".',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Copy one commit here | `git cherry-pick <id>` |
+| Several | `git cherry-pick <id1> <id2>` |
+| A range (incl. first) | `git cherry-pick A^..B` |
+| Record the source | `git cherry-pick -x <id>` |
+| Apply, do not commit | `git cherry-pick -n <id>` |
+| After a conflict | `git add <f>` then `git cherry-pick --continue` |
+| Cancel | `git cherry-pick --abort` |
+
+</CheatSheet>

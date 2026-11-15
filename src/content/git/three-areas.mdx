@@ -1,0 +1,194 @@
+---
+id: git-three-areas
+title: Working directory, staging area, repository
+summary: Every change moves through three areas, from your working folder to the staging area with git add, and from there into the repository with git commit.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of sending gifts by courier. Your **room** is where you make and change things. The **packing table** is where you place exactly the items for this parcel. The **courier office** is where sealed parcels are recorded for ever.
+
+In Git: the room is the **working directory**, the packing table is the **staging area**, the office is the **repository**.
+
+</Analogy>
+
+## Simple explanation
+
+| Area | Also called | What it holds | Move into it with |
+| --- | --- | --- | --- |
+| **Working directory** | working tree | the files you see and edit | (just edit) |
+| **Staging area** | index | the exact snapshot of the **next** commit | `git add` |
+| **Repository** | `.git`, history | all commits | `git commit` |
+
+Why a staging area? It lets you **choose** what goes into a commit. You may have fixed a bug and also started a new feature; you can stage and commit only the bug fix, with a clear message, and keep the feature for a later commit.
+
+Each file is in one of these states:
+
+- **Untracked**: new, Git has never stored it (`??` in `git status -s`)
+- **Modified**: changed since the last commit, not staged
+- **Staged**: changed and added, will go into the next commit
+- **Committed (unmodified)**: same as the last commit
+
+Moving back (undo) between areas:
+
+- `git restore --staged file`: staging area → back to only modified (keeps your edit)
+- `git restore file`: throw away the edit in the working directory (gets the staged/committed version)
+
+`git status` always tells you which area every changed file is in, and `git diff` / `git diff --staged` show the exact lines.
+
+## Code example
+
+```bash
+echo "bug fixed" > fix.py
+echo "half-done feature" > feature.py
+git add fix.py                         # stage only the fix
+git status -s
+git commit -m "Fix crash on empty cart"
+git status -s
+```
+
+```output
+A  fix.py
+?? feature.py
+[main 1c2d3e4] Fix crash on empty cart
+ 1 file changed
+?? feature.py
+```
+
+The first column of `git status -s` is the staging area, the second the working directory: `A ` staged new file, ` M` modified but not staged, `??` untracked.
+
+<Playground kind="git">
+
+```bash
+git init
+echo "v1" > app.py
+git status -s
+git add app.py
+git status -s
+git commit -m "v1"
+echo "v2" > app.py
+git status -s
+git add app.py
+echo "v3" > app.py
+git status -s
+git diff
+git diff --staged
+```
+
+</Playground>
+
+At the end `MM`: v2 is staged, v3 is only in the working directory. A commit now would save v2.
+
+<Mistakes>
+
+<Mistake title="Editing after git add and expecting the edit in the commit">
+
+<Wrong>
+
+```bash
+git add app.py
+# ...edit app.py again...
+git commit -m "Update app"      # commits the version from the moment of git add
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git add app.py                  # add again after the last edit
+git commit -m "Update app"
+```
+
+</Right>
+
+`git add` copies the file as it is at that moment. Later edits need another `git add` (or `git commit -a` for tracked files).
+
+</Mistake>
+
+<Mistake title="Committing everything at once without looking">
+
+<Wrong>
+
+```bash
+git add . && git commit -m "changes"    # includes debug prints, .env, half-done work
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git status
+git diff
+git add fix.py tests/test_fix.py
+git commit -m "Fix crash on empty cart"
+```
+
+</Right>
+
+Check what is staged before committing. Small, focused commits are easier to review and revert.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain the working directory, staging area and repository.">
+
+The working directory contains the checked-out files you edit. The staging area (index) holds the snapshot that will become the next commit; `git add` copies changes into it. The repository stores committed snapshots permanently in `.git`; `git commit` turns the staging area into a new commit.
+
+</QA>
+
+<QA q="Why does Git have a staging area?">
+
+To build commits deliberately: stage only related changes (even parts of a file with `git add -p`) so each commit is focused, reviewable and easy to revert, while other changes stay in the working directory.
+
+</QA>
+
+<QA q="What is the difference between git diff and git diff --staged?">
+
+`git diff` shows changes in the working directory that are not staged yet. `git diff --staged` (or `--cached`) shows what is staged, compared with the last commit, which is exactly what the next commit will contain.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command moves a change into the staging area?',
+      options: ['git commit', 'git add', 'git push', 'git stage-all'],
+      answer: 1,
+      why: 'git add copies the current version into the index.',
+    },
+    {
+      q: 'In git status -s, what does ?? mean?',
+      options: ['Conflict', 'Untracked file', 'Deleted', 'Staged'],
+      answer: 1,
+      why: 'Git has never stored this file.',
+    },
+    {
+      q: 'You stage v2, then edit to v3, then commit. What is committed?',
+      options: ['v3', 'v2', 'Both', 'Nothing'],
+      answer: 1,
+      why: 'The commit takes the staging area, which holds v2.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Move | Command |
+| --- | --- |
+| working → staging | `git add <file>` (`git add -p` for parts) |
+| staging → repository | `git commit -m "msg"` |
+| staging → working (unstage) | `git restore --staged <file>` |
+| discard working edit | `git restore <file>` |
+| see unstaged changes | `git diff` |
+| see staged changes | `git diff --staged` |
+| where is everything? | `git status` / `git status -s` |
+
+</CheatSheet>

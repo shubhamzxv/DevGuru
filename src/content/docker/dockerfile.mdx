@@ -1,0 +1,240 @@
+---
+id: docker-dockerfile
+title: Dockerfile
+summary: A Dockerfile is a text file of instructions (FROM, WORKDIR, COPY, RUN, ENV, EXPOSE, CMD) that docker build follows step by step to create an image.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A Dockerfile is a **recipe**: "Take a base of rice (FROM), go to the kitchen counter (WORKDIR), bring the ingredients (COPY), cook them (RUN), and when someone orders, serve it like this (CMD)."
+
+`docker build` is the cook following the recipe exactly, every time, so every plate tastes the same.
+
+</Analogy>
+
+## Simple explanation
+
+A Dockerfile for a Python web app:
+
+```dockerfile
+FROM python:3.12-slim                 # 1. start from a base image
+WORKDIR /app                          # 2. folder inside the image (created if missing)
+COPY requirements.txt .               # 3. copy the dependency list first
+RUN pip install --no-cache-dir -r requirements.txt   # 4. run a command at BUILD time
+COPY . .                              # 5. copy the rest of the code
+ENV PYTHONUNBUFFERED=1                # 6. environment variable
+EXPOSE 8000                           # 7. document the port
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]   # 8. default command at RUN time
+```
+
+The instructions:
+
+| Instruction | Meaning |
+| --- | --- |
+| `FROM` | base image; must come first |
+| `WORKDIR` | set the working folder for the next steps |
+| `COPY src dest` | copy files from the **build context** (your folder) into the image |
+| `ADD` | like COPY, plus URLs and auto-extracting tar files; prefer COPY |
+| `RUN` | run a command while **building** (install packages) |
+| `ENV KEY=value` | environment variable, at build and run time |
+| `ARG NAME` | variable only at build time (`--build-arg`) |
+| `EXPOSE 8000` | documents the port; does **not** publish it (that is `-p`) |
+| `USER app` | run as a non-root user |
+| `CMD [...]` | default command when the container **starts** |
+| `ENTRYPOINT [...]` | fixed executable (see CMD vs ENTRYPOINT) |
+| `HEALTHCHECK` | command Docker runs to see if the app is healthy |
+
+Build it:
+
+```bash
+docker build -t shop-api:1.0 .
+```
+
+- `-t` gives the image a name and tag
+- `.` is the **build context**: the folder whose files COPY can see. Exclude junk with a **`.dockerignore`** file (`.git`, `venv`, `__pycache__`, `.env`)
+
+**RUN vs CMD**: RUN happens once when the image is built. CMD happens every time a container starts.
+
+## Code example
+
+```bash
+cd ~/app
+cat Dockerfile
+docker build -t shop-api:1.0 .
+docker run -d --name api -p 8000:8000 shop-api:1.0
+curl localhost:8000
+```
+
+```output
+[+] Building 4.2s
+ => [1/7] FROM python:3.12-slim
+ => [2/7] WORKDIR /app
+ => [3/7] COPY requirements.txt .
+ => [4/7] RUN pip install -r requirements.txt
+ => [5/7] COPY . .
+ => [6/7] EXPOSE 8000
+ => [7/7] CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]
+ => naming to docker.io/library/shop-api:1.0
+Hello from my app! (image shop-api:1.0)
+```
+
+<Playground kind="terminal">
+
+```bash
+cd ~/app
+ls
+cat Dockerfile
+cat requirements.txt
+docker build -t shop-api:1.0 .
+docker images
+docker run -d --name api -p 8000:8000 shop-api:1.0
+curl localhost:8000
+docker logs api
+```
+
+</Playground>
+
+Try your own: `mkdir ~/hello && cd ~/hello`, then `echo "FROM alpine" > Dockerfile`, `echo 'CMD ["echo", "hi"]' >> Dockerfile`, and `docker build -t hello .`.
+
+<Mistakes>
+
+<Mistake title="Copying everything before installing dependencies">
+
+<Wrong>
+
+```dockerfile
+COPY . .
+RUN pip install -r requirements.txt    # reinstalls every package on every code change
+```
+
+</Wrong>
+
+<Right>
+
+```dockerfile
+COPY requirements.txt .
+RUN pip install -r requirements.txt    # cached until requirements.txt changes
+COPY . .
+```
+
+</Right>
+
+Order steps from least to most often changed. The next topic explains the cache.
+
+</Mistake>
+
+<Mistake title="Binding the server to localhost inside the container">
+
+<Wrong>
+
+```dockerfile
+CMD ["uvicorn", "main:app", "--port", "8000"]          # listens on 127.0.0.1 only
+```
+
+</Wrong>
+
+<Right>
+
+```dockerfile
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+</Right>
+
+127.0.0.1 inside a container means "this container only", so `-p` traffic from the host never reaches it.
+
+</Mistake>
+
+<Mistake title="Baking secrets into the image">
+
+<Wrong>
+
+```dockerfile
+ENV DB_PASSWORD=SuperSecret123
+COPY .env .
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker run -e DB_PASSWORD=... shop-api    # or secrets from AWS Secrets Manager at run time
+```
+
+</Right>
+
+Anyone who pulls the image can read its layers and ENV values.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Walk me through a Dockerfile for a Python API.">
+
+Start FROM a slim Python base, set WORKDIR, COPY requirements.txt and RUN pip install with no cache so the dependency layer is cached, COPY the source, set ENV such as PYTHONUNBUFFERED, create and switch to a non-root USER, EXPOSE the port for documentation, and set CMD to start gunicorn or uvicorn on 0.0.0.0. Add a .dockerignore to keep the build context small.
+
+</QA>
+
+<QA q="What is the difference between RUN, CMD and ENTRYPOINT?">
+
+RUN executes at build time and creates a new image layer (for example installing packages). CMD sets the default command or arguments when a container starts and is easily overridden by arguments to docker run. ENTRYPOINT sets the fixed executable; CMD then supplies default arguments to it.
+
+</QA>
+
+<QA q="What is the difference between COPY and ADD?">
+
+Both copy files into the image. ADD can also download from URLs and auto-extract local tar archives, which is less predictable, so COPY is recommended unless you specifically need the extraction behaviour.
+
+</QA>
+
+<QA q="Does EXPOSE publish a port?">
+
+No. EXPOSE only documents which port the application listens on (and is used by `-P`). To make it reachable from the host you publish it with `-p HOST:CONTAINER` or in Compose `ports`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which instruction runs at build time?',
+      options: ['CMD', 'RUN', 'EXPOSE', 'ENTRYPOINT'],
+      answer: 1,
+      why: 'RUN executes while building and saves the result as a layer.',
+    },
+    {
+      q: 'What does the . in docker build -t app . mean?',
+      options: ['Current tag', 'The build context folder', 'All images', 'Nothing'],
+      answer: 1,
+      why: 'COPY can only see files inside the context.',
+    },
+    {
+      q: 'Which file keeps .git and venv out of the build?',
+      options: ['.gitignore', '.dockerignore', 'Dockerfile', 'compose.yaml'],
+      answer: 1,
+      why: 'Docker reads .dockerignore for the build context.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Instruction | When | Example |
+| --- | --- | --- |
+| `FROM` | first line | `FROM python:3.12-slim` |
+| `WORKDIR` | build | `WORKDIR /app` |
+| `COPY` | build | `COPY requirements.txt .` |
+| `RUN` | build | `RUN pip install --no-cache-dir -r requirements.txt` |
+| `ENV` / `ARG` | build+run / build | `ENV PYTHONUNBUFFERED=1` |
+| `USER` | build+run | `USER app` |
+| `EXPOSE` | docs only | `EXPOSE 8000` |
+| `CMD` | run | `CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]` |
+
+Build: `docker build -t name:tag .` · Exclude: `.dockerignore`
+
+</CheatSheet>

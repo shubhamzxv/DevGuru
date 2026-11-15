@@ -1,0 +1,190 @@
+---
+id: docker-containers-vs-vms
+title: Containers vs virtual machines
+summary: A virtual machine runs a full guest operating system on virtual hardware, while a container shares the host's kernel and isolates only the process, so containers are much lighter and faster to start.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A **virtual machine** is like building separate houses on one plot: each house has its own foundation, walls, plumbing and electricity. Very private, but expensive and slow to build.
+
+A **container** is like a flat in an apartment building: everyone shares the same foundation and main pipes (the **kernel**), but each flat has its own lock, rooms and furniture. Much cheaper, and you can move in the same day.
+
+</Analogy>
+
+## Simple explanation
+
+```text
+     Virtual machines                    Containers
++--------+ +--------+            +--------+ +--------+
+| App A  | | App B  |            | App A  | | App B  |
+| Libs   | | Libs   |            | Libs   | | Libs   |
+| Guest  | | Guest  |            +--------+ +--------+
+|  OS    | |  OS    |            |   Docker Engine    |
++--------+ +--------+            +--------------------+
+|     Hypervisor     |            |  Host OS (kernel)  |
++--------------------+            +--------------------+
+|      Hardware      |            |      Hardware      |
++--------------------+            +--------------------+
+```
+
+- A **VM** virtualises **hardware**. A **hypervisor** (VMware, KVM, Hyper-V, the one under EC2) gives each VM virtual CPUs, memory and disks, and each VM boots its **own full operating system**
+- A **container** virtualises the **operating system**. All containers share the **host kernel**; each gets its own isolated processes, files and network
+
+| | Virtual machine | Container |
+| --- | --- | --- |
+| Isolates | the whole machine | a process |
+| Kernel | its own | shared with the host |
+| Size | gigabytes | megabytes |
+| Start time | minutes | about a second |
+| Density | a few per host | dozens to hundreds per host |
+| Isolation strength | strong (hardware boundary) | good, but weaker (shared kernel) |
+| Run another OS | yes (Windows on Linux) | no: Linux containers need a Linux kernel |
+
+Docker Desktop on Windows and Mac runs a small **Linux VM** in the background, because Linux containers need a Linux kernel.
+
+**They are not rivals.** In the cloud you usually run containers **inside** VMs: your ECS tasks or Kubernetes pods run on EC2 instances. The VM gives strong isolation between customers; containers give fast, dense packing of apps.
+
+## Code example
+
+A container is just an isolated process on the host. Inside it sees itself as process 1:
+
+```bash
+docker run -d --name cache redis:7
+docker exec cache ps
+docker run --rm alpine cat /etc/os-release
+uname -r
+```
+
+```output
+PID   USER     COMMAND
+    1 redis    redis-server *:6379
+   42 root     ps
+NAME="Alpine Linux"
+VERSION_ID=3.20.3
+6.8.0-45-generic
+```
+
+The Alpine container shows Alpine's files, but it runs on the host's kernel: no boot, no guest OS.
+
+<Playground kind="terminal">
+
+```bash
+docker run -d --name cache redis:7
+docker exec cache ps
+docker exec cache hostname
+docker run --rm alpine cat /etc/os-release
+docker run --rm ubuntu cat /etc/os-release
+cat /etc/os-release
+uname -r
+docker stats
+```
+
+</Playground>
+
+Three different "OS" file sets, one kernel. `docker stats` shows how little memory each container uses.
+
+<Mistakes>
+
+<Mistake title="Claiming containers are as isolated as VMs">
+
+<Wrong>
+
+```text
+"Containers are completely isolated, so running untrusted customer code in them is safe."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Containers share the kernel; a kernel bug can let a process escape.
+For untrusted multi-tenant code use VMs or micro-VMs (Firecracker, used by AWS Lambda and Fargate).
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Expecting a Windows app in a Linux container">
+
+<Wrong>
+
+```bash
+docker run windows-app.exe     # on a Linux host
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Linux containers run Linux programs. To run Windows software on Linux you need a VM.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a container and a virtual machine?">
+
+A VM virtualises hardware through a hypervisor and runs a full guest OS with its own kernel, so it is heavy (gigabytes) and slow to boot but strongly isolated. A container virtualises the OS: it is an isolated process sharing the host kernel using namespaces and cgroups, so it is small (megabytes), starts in about a second and many fit on one host, with somewhat weaker isolation.
+
+</QA>
+
+<QA q="When would you still choose a VM?">
+
+When you need strong isolation for untrusted or multi-tenant workloads, a different operating system or kernel version, kernel-level customisation, or legacy software that expects a full machine. In practice containers usually run on VMs anyway.
+
+</QA>
+
+<QA q="How does Docker run Linux containers on Windows or macOS?">
+
+Docker Desktop starts a lightweight Linux virtual machine (WSL 2 on Windows, a hypervisor VM on macOS) and runs the Docker Engine and containers inside it, because Linux containers need a Linux kernel.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What do containers share with the host?',
+      options: ['Nothing', 'The kernel', 'Their passwords', 'A hypervisor per container'],
+      answer: 1,
+      why: 'That is why they are light and fast.',
+    },
+    {
+      q: 'Which starts faster?',
+      options: ['VM', 'Container', 'Same', 'Depends on Git'],
+      answer: 1,
+      why: 'A container starts a process; a VM boots an OS.',
+    },
+    {
+      q: 'Where do ECS or Kubernetes containers usually run in AWS?',
+      options: ['On bare metal only', 'Inside VMs such as EC2 instances', 'In S3', 'In the browser'],
+      answer: 1,
+      why: 'VMs and containers work together.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| | VM | Container |
+| --- | --- | --- |
+| Virtualises | hardware | operating system |
+| Kernel | own | shared |
+| Size / start | GBs / minutes | MBs / seconds |
+| Isolation | strongest | process-level |
+| Tools | VMware, KVM, Hyper-V, EC2 | Docker, containerd, Podman |
+
+Rule of thumb: containers to package and run apps, VMs to isolate machines and tenants.
+
+</CheatSheet>

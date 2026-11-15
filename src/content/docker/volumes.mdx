@@ -1,0 +1,209 @@
+---
+id: docker-volumes
+title: Volumes
+summary: Volumes store data outside a container's writable layer so it survives when the container is removed; named volumes are managed by Docker, bind mounts map a host folder into the container.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A hotel room (container) is cleaned completely after every guest: anything left in it is thrown away. If you want to keep your things between stays, you put them in a **locker** at reception. A new room next time, same locker.
+
+A **volume** is that locker: the container can be deleted and recreated, the data stays.
+
+</Analogy>
+
+## Simple explanation
+
+Three ways to give a container storage:
+
+| Type | Syntax | Lives | Use for |
+| --- | --- | --- | --- |
+| **Named volume** | `-v pgdata:/var/lib/postgresql/data` | managed by Docker (`/var/lib/docker/volumes/...`) | databases, uploads: **production data** |
+| **Bind mount** | `-v ./src:/app/src` or `-v $(pwd):/app` | a folder on your host | **development**: edit code on the host, see it live inside |
+| **tmpfs** | `--tmpfs /tmp` | memory only | temporary or secret scratch files |
+
+Rule of thumb: the left side starting with `/`, `./` or `$` is a **host path** (bind mount); a plain name is a **named volume**.
+
+Volume commands:
+
+```bash
+docker volume create pgdata
+docker volume ls
+docker volume inspect pgdata
+docker volume rm pgdata          # only when no container uses it
+docker volume prune              # remove unused volumes (careful!)
+```
+
+Key facts:
+
+- A volume is independent of containers: `docker rm` does not delete it (`docker rm -v` deletes anonymous ones only)
+- One volume can be mounted into several containers
+- A new empty named volume is pre-filled with whatever the image had at that path; a bind mount **hides** the image's files at that path
+- `:ro` mounts read-only: `-v ./nginx.conf:/etc/nginx/nginx.conf:ro`
+- Back up a volume by running a helper container: `docker run --rm -v pgdata:/data -v $(pwd):/backup alpine tar czf /backup/pg.tgz /data`
+- In production on AWS you would usually use **RDS** for the database and **S3** for uploads, rather than volumes on one server
+
+## Code example
+
+```bash
+docker volume create pgdata
+docker run -d --name db -e POSTGRES_PASSWORD=secret -v pgdata:/var/lib/postgresql/data postgres:16
+docker rm -f db
+docker volume ls
+docker run -d --name db2 -e POSTGRES_PASSWORD=secret -v pgdata:/var/lib/postgresql/data postgres:16
+```
+
+```output
+pgdata
+4e5f6a7b8c9d...
+db
+DRIVER    VOLUME NAME
+local     pgdata
+9f8e7d6c5b4a...
+```
+
+The first container is gone, the volume is still there, and `db2` starts with all the old tables.
+
+<Playground kind="terminal">
+
+```bash
+docker volume create pgdata
+docker volume ls
+docker run -d --name db -e POSTGRES_PASSWORD=secret -v pgdata:/var/lib/postgresql/data postgres:16
+docker volume rm pgdata
+docker rm -f db
+docker volume ls
+docker run -d --name db2 -e POSTGRES_PASSWORD=secret -v pgdata:/var/lib/postgresql/data postgres:16
+docker inspect db2
+docker volume inspect pgdata
+```
+
+</Playground>
+
+`docker volume rm` fails while a container uses the volume. After `rm -f db` the volume, and the data, survive for `db2`.
+
+<Mistakes>
+
+<Mistake title="No volume for the database">
+
+<Wrong>
+
+```bash
+docker run -d --name db -e POSTGRES_PASSWORD=secret postgres:16
+docker rm -f db        # upgrade or recreate: all data lost
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker run -d --name db -e POSTGRES_PASSWORD=secret -v pgdata:/var/lib/postgresql/data postgres:16
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Bind-mounting over node_modules or installed packages">
+
+<Wrong>
+
+```bash
+docker run -v $(pwd):/app my-node-app
+# the host folder (with no node_modules) hides the ones installed in the image: "Cannot find module"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker run -v $(pwd):/app -v /app/node_modules my-node-app   # anonymous volume keeps the image's node_modules
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Running prune without thinking">
+
+<Wrong>
+
+```bash
+docker volume prune -a -f     # deletes every volume not used right now, including the stopped database's data
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker volume ls              # look first, back up, then remove specific volumes
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you persist data in Docker?">
+
+Use volumes. Named volumes are managed by Docker and are the preferred way for databases and other persistent data; bind mounts map a host directory and are used mainly in development or for config files; tmpfs mounts keep data in memory. Data in volumes outlives containers, unlike the container's writable layer.
+
+</QA>
+
+<QA q="What is the difference between a volume and a bind mount?">
+
+A named volume is created and managed by Docker in its own storage area, is portable, works the same on every OS, can be pre-populated from the image and is easy to back up with Docker commands. A bind mount points at an exact host path, depends on the host's folder structure and permissions, and hides the image's files at the mount point; it is ideal for live-editing code in development.
+
+</QA>
+
+<QA q="Is running a database in Docker in production a good idea?">
+
+It is possible with volumes, backups and careful resource settings, and common for development and small setups. For production on a cloud, a managed service such as Amazon RDS is usually preferred because it handles backups, replication, failover and patching.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: '-v ./src:/app/src is a...',
+      options: ['Named volume', 'Bind mount', 'tmpfs', 'Network'],
+      answer: 1,
+      why: 'The left side is a host path.',
+    },
+    {
+      q: 'Does docker rm delete a named volume?',
+      options: ['Yes', 'No', 'Only on Windows', 'Only with -d'],
+      answer: 1,
+      why: 'Volumes live independently of containers.',
+    },
+    {
+      q: 'Best choice for PostgreSQL data in a container?',
+      options: ['Writable layer', 'Named volume', 'tmpfs', 'ENV variable'],
+      answer: 1,
+      why: 'Managed by Docker, survives container changes.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| Named volume | `-v pgdata:/var/lib/postgresql/data` |
+| Bind mount (dev) | `-v $(pwd):/app` |
+| Read-only | `-v ./nginx.conf:/etc/nginx/nginx.conf:ro` |
+| Memory only | `--tmpfs /tmp` |
+| Manage | `docker volume create / ls / inspect / rm` |
+| Clean | `docker volume prune` (careful) |
+| Backup | `docker run --rm -v pgdata:/data -v $(pwd):/b alpine tar czf /b/pg.tgz /data` |
+
+</CheatSheet>

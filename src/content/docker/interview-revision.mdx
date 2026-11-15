@@ -1,0 +1,216 @@
+---
+id: docker-interview-revision
+title: Docker interview revision
+summary: A one-page revision of the Docker questions asked most in interviews, with short answers, scenario commands and a cheat sheet.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+The night before the exam you do not reread the textbook: you go through the formula sheet and the past papers. This page is both for Docker.
+
+</Analogy>
+
+## Simple explanation
+
+**The 20 answers to know**
+
+| Question | Short answer |
+| --- | --- |
+| What is Docker | packages app + dependencies into an image, runs it as an isolated container |
+| Image vs container | read-only layered template vs running instance with a writable layer |
+| Container vs VM | shares the host kernel (MBs, seconds) vs full guest OS (GBs, minutes) |
+| How isolation works | namespaces (view) + cgroups (limits) + union filesystem |
+| Dockerfile | instructions to build an image: FROM, WORKDIR, COPY, RUN, ENV, EXPOSE, USER, CMD |
+| RUN vs CMD | RUN at build (new layer), CMD at container start |
+| CMD vs ENTRYPOINT | CMD = default command/args (replaced by run args); ENTRYPOINT = fixed executable (args appended) |
+| COPY vs ADD | ADD also fetches URLs and extracts tars; prefer COPY |
+| ARG vs ENV | ARG build-time only; ENV build and run time |
+| EXPOSE vs -p | EXPOSE documents; `-p HOST:CONTAINER` publishes |
+| Layer cache | step reused if unchanged; a miss reruns all later steps → deps before source |
+| Multi-stage | build in a heavy stage, `COPY --from` artefacts into a small final image |
+| Volume vs bind mount | Docker-managed storage (prod data) vs host folder (dev code) |
+| Persist DB data | named volume, or a managed database (RDS) |
+| Container networking | user-defined network, reach others by name (`db:5432`), not localhost |
+| Compose | multi-container app in compose.yaml; `up -d`, `down`, service names as DNS |
+| depends_on | start order only; use healthcheck + `service_healthy` for readiness |
+| Secrets | never in image; Secrets Manager / SSM, `/run/secrets`, BuildKit secrets |
+| Smaller images | slim/distroless, multi-stage, no caches, `.dockerignore` |
+| Docker vs Kubernetes | Docker builds/runs on a host; Kubernetes orchestrates across a cluster |
+
+**Scenario questions: say the commands**
+
+- "Container exits immediately": `docker ps -a` (exit code) → `docker logs <name>` → fix env/command; 137 = out of memory
+- "App runs but browser cannot connect": check `-p` mapping, app listens on `0.0.0.0`, `docker port`, firewall/security group
+- "API cannot reach the database": same network, host name `db` not `localhost`, database healthy
+- "Builds are slow": reorder for cache, `.dockerignore`, CI cache (`--cache-from`), slim base
+- "Image is 1.2 GB": multi-stage, slim base, `--no-cache-dir`, check `docker history`
+- "Data disappeared after redeploy": it was in the writable layer; use a named volume or RDS
+- "Disk full on the server": `docker system df`, `docker system prune`, prune old images (careful with volumes)
+- "Deploy to AWS": build → tag with git SHA → push to ECR → ECS service / EKS deployment pulls the new tag
+
+## Code example
+
+The full path from code to a running container, which interviewers often ask you to walk through:
+
+```bash
+docker build -t shop-api:7c8d9e0 .
+docker run --rm shop-api:7c8d9e0 pytest -q
+docker tag shop-api:7c8d9e0 123456789012.dkr.ecr.ap-south-1.amazonaws.com/shop-api:7c8d9e0
+aws ecr get-login-password | docker login --username AWS --password-stdin 123456789012.dkr.ecr.ap-south-1.amazonaws.com
+docker push 123456789012.dkr.ecr.ap-south-1.amazonaws.com/shop-api:7c8d9e0
+aws ecs update-service --cluster shop --service api --force-new-deployment
+```
+
+```output
+ => naming to docker.io/library/shop-api:7c8d9e0
+42 passed in 3.1s
+Login Succeeded
+7c8d9e0: digest: sha256:4f3e2d1c... size: 2201
+{ "service": { "serviceName": "api", "status": "ACTIVE", "deployments": [ ... ] } }
+```
+
+<Playground kind="terminal">
+
+```bash
+cd ~/app
+docker build -t shop-api:1.0 .
+docker network create shop
+docker volume create pgdata
+docker run -d --name db --network shop -e POSTGRES_PASSWORD=secret -v pgdata:/var/lib/postgresql/data postgres:16
+docker run -d --name cache --network shop redis:7
+docker run -d --name api --network shop -p 8000:8000 -e REDIS_URL=redis://cache:6379/0 shop-api:1.0
+docker ps
+curl localhost:8000
+docker exec cache redis-cli ping
+docker logs api
+docker stats
+docker tag shop-api:1.0 shubham/shop-api:1.0
+docker login
+docker push shubham/shop-api:1.0
+docker rm -f api cache db
+docker system prune
+```
+
+</Playground>
+
+Practice round: build, network, volume, three containers talking by name, logs, push, clean up: the whole track in one run.
+
+<Mistakes>
+
+<Mistake title="Definitions without trade-offs">
+
+<Wrong>
+
+```text
+Q: "Volume or bind mount?"   A: "Volume."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+A: "Named volumes for persistent data like PostgreSQL in Compose: Docker manages them and they work
+    the same everywhere. Bind mounts in development, so code edits on my laptop appear in the container."
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Not connecting Docker to your real project">
+
+<Wrong>
+
+```text
+"I know Docker commands."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"In my Django project I wrote a multi-stage Dockerfile, ran web, Celery, PostgreSQL and Redis with Compose
+ locally, and in production pushed images tagged with the commit SHA to ECR, deployed on ECS."
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What happens when you run docker run nginx?">
+
+The CLI sends the request to the Docker daemon. If `nginx:latest` is not local, the daemon pulls its layers from Docker Hub. It creates a container: a writable layer on top of the image layers, namespaces and cgroups, a network interface on the default bridge, and then starts the image's command (nginx) as PID 1. Output streams to the terminal unless `-d` is used.
+
+</QA>
+
+<QA q="How do you make a container restart automatically?">
+
+Use a restart policy, for example `--restart unless-stopped` or `on-failure:5`, or `restart:` in Compose. In orchestrators, the Deployment, ECS service or similar keeps the desired count running.
+
+</QA>
+
+<QA q="How do you clean up disk space used by Docker?">
+
+Check with `docker system df`, then remove stopped containers (`docker container prune`), dangling and unused images (`docker image prune -a`), unused networks, and build cache (`docker builder prune`); `docker system prune` combines most of these. Volumes are removed only with `--volumes` or `docker volume prune`, which deletes data, so check first.
+
+</QA>
+
+<QA q="How does a Docker image get to production in your pipeline?">
+
+CI builds the image, runs tests in it, scans it, tags it with the commit SHA, pushes it to a registry such as ECR, then updates the deployment (an ECS task definition or Kubernetes Deployment) to the new tag, which performs a rolling update with health checks; rollback means redeploying the previous tag.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'The app container cannot reach postgres at localhost:5432. Fix?',
+      options: ['Publish 5432', 'Use the db container/service name on a shared network', 'Restart Docker', 'Use ADD'],
+      answer: 1,
+      why: 'localhost is the container itself.',
+    },
+    {
+      q: 'Exit code 137 usually means...',
+      options: ['Success', 'Killed (often out of memory)', 'Missing image', 'Port clash'],
+      answer: 1,
+      why: '128 + 9 = SIGKILL.',
+    },
+    {
+      q: 'Which keeps pip install cached when only code changes?',
+      options: ['COPY . . first', 'COPY requirements.txt, RUN pip install, then COPY . .', '--no-cache', 'ENTRYPOINT'],
+      answer: 1,
+      why: 'Dependencies before source.',
+    },
+    {
+      q: 'Which removes named volumes too?',
+      options: ['docker compose down', 'docker compose down -v', 'docker stop', 'docker rm'],
+      answer: 1,
+      why: '-v deletes the volumes and their data.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Situation | Commands |
+| --- | --- |
+| Build | `docker build -t app:1.0 .` |
+| Run server | `docker run -d --name api -p 8000:8000 -e KEY=v app:1.0` |
+| One-off | `docker run --rm app:1.0 python manage.py migrate` |
+| Inspect | `docker ps -a` · `logs -f` · `exec -it api sh` · `inspect` · `stats` |
+| Data | `-v pgdata:/var/lib/postgresql/data` |
+| Network | `docker network create shop` + `--network shop` |
+| Compose | `up -d --build` · `ps` · `logs -f` · `exec` · `down` |
+| Ship | `tag` → `login` → `push` (ECR: `aws ecr get-login-password`) |
+| Clean | `docker system df` · `system prune` |
+
+</CheatSheet>

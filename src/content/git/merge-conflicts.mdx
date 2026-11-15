@@ -1,0 +1,222 @@
+---
+id: git-merge-conflicts
+title: Merge conflicts
+summary: A merge conflict happens when two branches changed the same lines differently; Git marks both versions in the file, you choose the final text, then add and commit.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Two editors work on the same newspaper headline. One writes "Rain stops play", the other "Match abandoned". The printer cannot guess which one is right, so it stops and asks the chief editor.
+
+A **merge conflict** is Git stopping to ask you: "Both of you changed this line. Which version (or what mix) should stay?"
+
+</Analogy>
+
+## Simple explanation
+
+Git merges most changes by itself. It stops only when **both branches changed the same part of the same file** (or one deleted a file the other changed).
+
+During a conflict:
+
+1. `git merge feature` prints `CONFLICT (content): Merge conflict in app.py`
+2. `git status` lists the file under **Unmerged paths** ("both modified")
+3. The file contains **conflict markers**:
+
+```text
+<<<<<<< HEAD
+price = 120
+=======
+price = 150
+>>>>>>> feature
+```
+
+- between `<<<<<<< HEAD` and `=======`: **your** version (the branch you are on)
+- between `=======` and `>>>>>>> feature`: **their** version (the branch being merged)
+
+To resolve:
+
+1. Edit the file to the final, correct content and **delete all three marker lines**
+2. `git add app.py` to mark it resolved
+3. `git commit` to finish the merge (Git suggests the message)
+
+Or give up with `git merge --abort`, which puts everything back as before.
+
+Helpers:
+
+- VS Code shows **Accept Current / Accept Incoming / Accept Both** buttons above each conflict
+- `git checkout --ours app.py` or `--theirs app.py` takes one whole side
+- `git diff` during a conflict shows both sides
+- Run the **tests** after resolving: a file can be free of markers and still be wrong
+
+Fewer conflicts: merge or rebase from main **often**, keep branches **short-lived**, and avoid mass reformatting in the same PR as real changes.
+
+## Code example
+
+```bash
+git switch -c discount
+echo "price = 150" > shop.py && git commit -am "Set price 150"
+git switch main
+echo "price = 120" > shop.py && git commit -am "Set price 120"
+git merge discount
+cat shop.py
+```
+
+```output
+Auto-merging shop.py
+CONFLICT (content): Merge conflict in shop.py
+Automatic merge failed; fix conflicts and then commit the result.
+<<<<<<< HEAD
+price = 120
+=======
+price = 150
+>>>>>>> discount
+```
+
+Resolve, mark, commit:
+
+```bash
+echo "price = 135" > shop.py       # the agreed final value, no markers
+git add shop.py
+git commit -m "Merge discount: settle on price 135"
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "price = 100" > shop.py
+git add .
+git commit -m "Price 100"
+git switch -c discount
+echo "price = 150" > shop.py
+git commit -am "Price 150"
+git switch main
+echo "price = 120" > shop.py
+git commit -am "Price 120"
+git merge discount
+git status
+cat shop.py
+git commit -m "Try to finish"
+echo "price = 135" > shop.py
+git add shop.py
+git commit -m "Merge discount: price 135"
+git log --oneline
+```
+
+</Playground>
+
+The commit before the fix is refused on purpose: Git does not allow a commit while a file is still unmerged.
+
+<Mistakes>
+
+<Mistake title="Committing the conflict markers">
+
+<Wrong>
+
+```python
+<<<<<<< HEAD
+price = 120
+=======
+price = 150
+>>>>>>> discount
+```
+
+</Wrong>
+
+<Right>
+
+```python
+price = 135
+```
+
+</Right>
+
+Markers left in code break the program. Search for `<<<<<<<` before committing, and run the tests.
+
+</Mistake>
+
+<Mistake title="Picking one side without reading">
+
+<Wrong>
+
+```bash
+git checkout --theirs . && git add . && git commit    # silently throws away all your changes
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Look at each conflict, understand both changes, keep what is needed from each,
+and ask the other developer if the intent is unclear.
+```
+
+</Right>
+
+Both sides were changed for a reason. Blindly taking one side often reintroduces a bug the other side fixed.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a merge conflict and how do you resolve it?">
+
+It occurs when Git cannot automatically combine changes because both branches modified the same lines (or one deleted a file the other modified). Git marks the conflicting sections in the file. You edit the file to the correct content, remove the markers, `git add` the file to mark it resolved, run tests, and `git commit` to complete the merge, or `git merge --abort` to cancel.
+
+</QA>
+
+<QA q="What do ours and theirs mean during a merge?">
+
+During a merge, "ours" is the branch you are on (HEAD) and "theirs" is the branch being merged in. During a rebase they are swapped: "ours" is the branch being rebased onto, and "theirs" is your commit being replayed.
+
+</QA>
+
+<QA q="How do you reduce merge conflicts in a team?">
+
+Keep branches short-lived and small, integrate with the main branch frequently, split big changes into smaller PRs, agree on formatting tools so style changes do not collide, and communicate when several people work in the same files.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In a conflict, the part between <<<<<<< HEAD and ======= is...',
+      options: ['Their version', 'Your current branch\'s version', 'The common ancestor', 'Git\'s suggestion'],
+      answer: 1,
+      why: 'HEAD is the branch you are on.',
+    },
+    {
+      q: 'After editing the file, what marks the conflict as resolved?',
+      options: ['git commit only', 'git add <file>', 'git resolve', 'Saving the file'],
+      answer: 1,
+      why: 'git add tells Git the file is ready; then commit.',
+    },
+    {
+      q: 'How do you cancel a conflicted merge?',
+      options: ['git reset --soft', 'git merge --abort', 'Delete .git', 'git stash'],
+      answer: 1,
+      why: 'It restores the state from before git merge.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | Command |
+| --- | --- |
+| See conflicted files | `git status` (Unmerged paths) |
+| Look at both sides | open the file, or `git diff` |
+| Take one whole side | `git checkout --ours <f>` / `--theirs <f>` |
+| Mark resolved | `git add <file>` |
+| Finish | `git commit` |
+| Give up | `git merge --abort` |
+
+Markers: `<<<<<<< HEAD` (yours) `=======` `>>>>>>> branch` (theirs). Remove all of them; run the tests.
+
+</CheatSheet>

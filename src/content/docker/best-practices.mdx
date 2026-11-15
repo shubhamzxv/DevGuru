@@ -1,0 +1,225 @@
+---
+id: docker-best-practices
+title: Best practices
+summary: Production Docker images should be pinned, small, cache-friendly, run as a non-root user, keep secrets and state out of the image, log to stdout, shut down gracefully and include a healthcheck.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Packing for a business trip: a fixed checklist (passport, charger, laptop), only what you need, valuables locked, nothing borrowed that you cannot return. Following the same checklist every time means no surprises at the airport.
+
+These are the **checklist rules** for images and containers that reviewers and interviewers look for.
+
+</Analogy>
+
+## Simple explanation
+
+**Building the image**
+
+1. **Pin the base image**: `FROM python:3.12-slim` (or with a digest), never just `python`
+2. **Small base**: `-slim`, `-alpine` or distroless; multi-stage for build tools
+3. **Cache-friendly order**: dependency files → install → source code
+4. **`.dockerignore`**: `.git`, `venv`, `__pycache__`, `.env`, `node_modules`, tests data
+5. **One RUN for install + cleanup**: `apt-get install --no-install-recommends ... && rm -rf /var/lib/apt/lists/*`, `pip install --no-cache-dir`
+6. **Non-root user**: `RUN useradd -m app` + `USER app`
+7. **No secrets** in ENV, ARG or copied files; BuildKit secret mounts for private indexes
+8. **Exec-form CMD**, binding to `0.0.0.0`
+9. **HEALTHCHECK** (or the orchestrator's health check)
+10. **Labels and tags**: version or git SHA tags, `LABEL org.opencontainers.image.source=...`
+
+**Running the container**
+
+- **One main process per container** (web, worker, scheduler as separate containers from one image)
+- **Stateless**: data in volumes or managed services (RDS, S3); any container can be replaced at any time
+- **Logs to stdout/stderr**, not files; Docker, CloudWatch or Loki collect them
+- **Config from environment**, same image everywhere
+- **Graceful shutdown**: handle SIGTERM (gunicorn and uvicorn do), set `stop_grace_period` if needed
+- **Resource limits**: `--memory 512m --cpus 1` (and requests/limits in ECS or Kubernetes)
+- **Read-only filesystem where possible**: `--read-only --tmpfs /tmp`
+- **Scan images** for vulnerabilities in CI (Trivy, Docker Scout, ECR scanning) and rebuild regularly for patches
+
+A Dockerfile that follows them:
+
+```dockerfile
+FROM python:3.12-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+RUN useradd --create-home --uid 10001 app && chown -R app /app
+USER app
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=3s CMD curl -fsS http://localhost:8000/health || exit 1
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "--workers", "3", "app:app"]
+```
+
+## Code example
+
+```bash
+docker run -d --name api --memory 512m --cpus 1 --restart unless-stopped \
+  --read-only --tmpfs /tmp -p 8000:8000 shop-api:1.4.0
+docker exec api whoami
+docker inspect api
+```
+
+```output
+app
+[
+  {
+    "State": { "Status": "running", "Health": { "Status": "healthy" } },
+    "HostConfig": { "Memory": 536870912, "NanoCpus": 1000000000, "ReadonlyRootfs": true }
+  }
+]
+```
+
+<Playground kind="terminal">
+
+```bash
+cd ~/app
+cat Dockerfile
+echo "RUN useradd -m app" >> Dockerfile
+echo "USER app" >> Dockerfile
+cat Dockerfile
+docker build -t shop-api:1.4.0 .
+docker run -d --name api --restart unless-stopped -p 8000:8000 shop-api:1.4.0
+curl localhost:8000
+docker logs api
+docker stats
+```
+
+</Playground>
+
+The seeded Dockerfile already pins the base, orders steps for the cache and uses exec-form CMD; you added a non-root user. (The simulator does not change users, so `whoami` would still say root here.)
+
+<Mistakes>
+
+<Mistake title="Running as root">
+
+<Wrong>
+
+```dockerfile
+FROM python:3.12-slim
+COPY . .
+CMD ["python", "app.py"]       # root inside: a bug that allows code execution owns the container
+```
+
+</Wrong>
+
+<Right>
+
+```dockerfile
+RUN useradd -m app
+USER app
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Writing logs to a file inside the container">
+
+<Wrong>
+
+```python
+logging.basicConfig(filename="/app/logs/app.log")   # lost with the container, invisible to docker logs
+```
+
+</Wrong>
+
+<Right>
+
+```python
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Several processes in one container">
+
+<Wrong>
+
+```dockerfile
+CMD service redis-server start && celery -A shop worker & gunicorn shop.wsgi
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Separate containers: web (gunicorn), worker (celery), redis (redis image).
+```
+
+</Right>
+
+They scale, restart and log independently; one crash does not hide inside another process.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What Dockerfile best practices do you follow?">
+
+Pinned slim base images, multi-stage builds, dependency installation before copying source for caching, a .dockerignore, combined RUN steps with cache cleanup, a non-root user, no secrets in the image, exec-form CMD binding to 0.0.0.0, a healthcheck, and tagging images with version or commit SHA. Images are scanned in CI and rebuilt regularly.
+
+</QA>
+
+<QA q="Why should containers be stateless?">
+
+So any container can be stopped, replaced, scaled out or moved to another host without losing data, which is what orchestrators do constantly during deploys, autoscaling and failures. State lives in databases, caches, object storage or volumes.
+
+</QA>
+
+<QA q="How do you secure Docker containers?">
+
+Minimal, patched base images and vulnerability scanning; non-root users; dropping capabilities and avoiding --privileged; read-only root filesystems; resource limits; secrets from a secrets manager; publishing only needed ports and keeping databases on private networks; signed images from trusted registries; and keeping the Docker daemon socket away from containers.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where should a containerised app write its logs?',
+      options: ['/var/log inside the container', 'stdout/stderr', 'A volume only', 'Nowhere'],
+      answer: 1,
+      why: 'Docker and the cloud collect stdout.',
+    },
+    {
+      q: 'Which line makes the app run as non-root?',
+      options: ['EXPOSE 8000', 'USER app', 'WORKDIR /app', 'ENV ROOT=false'],
+      answer: 1,
+      why: 'USER switches the user for later steps and the CMD.',
+    },
+    {
+      q: 'Web and Celery worker should be...',
+      options: ['One container', 'Separate containers from the same image', 'Separate repos', 'Run on the host'],
+      answer: 1,
+      why: 'One main process per container.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Area | Rule |
+| --- | --- |
+| Base | pinned, slim/alpine/distroless, multi-stage |
+| Layers | deps first, source last, cleanup in same RUN, `.dockerignore` |
+| Security | `USER app`, no secrets, scan images, no `--privileged` |
+| Runtime | one process, stateless, config via env, logs to stdout |
+| Reliability | exec-form CMD, SIGTERM handling, HEALTHCHECK, `--restart` |
+| Resources | `--memory`, `--cpus`, `--read-only --tmpfs /tmp` |
+| Tags | version or git SHA, never only `latest` |
+
+</CheatSheet>

@@ -1,0 +1,193 @@
+---
+id: git-init
+title: git init
+summary: git init turns the current folder into a Git repository by creating a hidden .git folder; git clone does the same for an existing remote project.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Opening a new account at a bank: the bank gives you a passbook. Nothing is in it yet, but from now on every deposit and withdrawal can be recorded.
+
+`git init` gives your folder its passbook: the hidden **.git** folder. Nothing is recorded until your first commit.
+
+</Analogy>
+
+## Simple explanation
+
+Two ways to get a repository:
+
+1. **Start a new one**: `cd my-project` then `git init`. Git creates `.git/` with an empty history and a `main` branch that has no commits yet
+2. **Copy an existing one**: `git clone https://github.com/user/repo.git`. It downloads the whole history, sets up the remote `origin` and checks out the default branch
+
+What is inside `.git/` (you never need to edit it by hand):
+
+- `objects/` all snapshots (commits, file contents)
+- `refs/heads/` branch pointers
+- `HEAD` which branch you are on
+- `config` settings for this repo (remotes, local user)
+
+Rules of thumb:
+
+- Run `git init` **once**, in the **project's top folder**
+- **Never** run it in your home folder or inside another repo (you get a repo inside a repo)
+- Deleting `.git` deletes the **entire history**; the files stay, the past is gone
+- `git init` on an existing repo is harmless ("Reinitialized")
+- Create a `.gitignore` before the first commit, so secrets and junk never get in
+
+After `git init`, `git status` says "No commits yet". The `main` branch really exists only after the first commit.
+
+## Code example
+
+```bash
+mkdir shop-api && cd shop-api
+git init
+ls -a
+git status
+```
+
+```output
+Initialized empty Git repository in /home/guru/shop-api/.git/
+.  ..  .git
+On branch main
+
+No commits yet
+
+nothing to commit (create/copy files and use "git add" to track)
+```
+
+Cloning instead:
+
+```bash
+git clone https://github.com/fastapi/fastapi.git
+cd fastapi
+git log --oneline -3
+git remote -v
+```
+
+<Playground kind="git">
+
+```bash
+git status
+git init
+git status
+echo "# Shop API" > README.md
+git status
+git init
+```
+
+</Playground>
+
+The first `git status` fails because the folder is not a repository yet. Running `git init` twice is harmless.
+
+<Mistakes>
+
+<Mistake title="git init in the home folder">
+
+<Wrong>
+
+```bash
+cd ~
+git init         # now EVERY file under your home folder looks untracked
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+cd ~/projects/shop-api
+git init
+```
+
+</Right>
+
+If it happened, remove only that `.git` folder: `rm -rf ~/.git` (check the path carefully first).
+
+</Mistake>
+
+<Mistake title="Cloning and then running git init">
+
+<Wrong>
+
+```bash
+git clone https://github.com/you/app.git
+cd app
+git init        # unnecessary; clone already created .git
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git clone https://github.com/you/app.git
+cd app
+git status
+```
+
+</Right>
+
+`git clone` = create folder + init + add the remote + download history + check out a branch.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What does git init do?">
+
+It creates a `.git` directory in the current folder containing the object database, references, HEAD and configuration, turning the folder into an empty Git repository on the default branch. Files are not tracked until they are added and committed.
+
+</QA>
+
+<QA q="What is the difference between git init and git clone?">
+
+`git init` creates a new, empty repository locally. `git clone <url>` copies an existing repository: it creates the folder, initialises it, downloads all objects and history, configures the remote `origin`, and checks out the default branch.
+
+</QA>
+
+<QA q="What is a bare repository?">
+
+A repository without a working directory, created with `git init --bare`, containing only the Git data. It is used as a central or remote repository that people push to, as on servers; you do not edit files in it directly.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does git init create?',
+      options: ['A GitHub repo', 'A hidden .git folder', 'A first commit', 'A README'],
+      answer: 1,
+      why: 'The .git folder stores the repository data.',
+    },
+    {
+      q: 'You delete the .git folder. What happens?',
+      options: ['Nothing', 'Files are deleted', 'The history is gone, the files stay', 'GitHub restores it'],
+      answer: 2,
+      why: 'All history lives in .git.',
+    },
+    {
+      q: 'Which command copies an existing remote repository?',
+      options: ['git init', 'git clone', 'git copy', 'git pull --new'],
+      answer: 1,
+      why: 'clone downloads everything and sets up origin.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| New repo here | `git init` |
+| New repo in a folder | `git init my-app` |
+| Copy a remote repo | `git clone <url>` |
+| Clone into a name | `git clone <url> my-folder` |
+| Server-side repo | `git init --bare` |
+| Check | `git status` |
+
+</CheatSheet>

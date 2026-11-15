@@ -1,0 +1,203 @@
+---
+id: git-reflog
+title: Reflog
+summary: The reflog is Git's local diary of every place HEAD has pointed, so you can find and recover commits lost through reset, rebase, amend or a deleted branch.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A car's GPS keeps a trip history: every place you drove, even if you took a wrong turn and came back. If you forget where you parked last Tuesday, the history knows.
+
+The **reflog** is Git's trip history for HEAD. Even after a "destructive" reset or rebase, the old commits are still listed, so you can drive back to them.
+
+</Analogy>
+
+## Simple explanation
+
+Whenever HEAD moves (commit, checkout, reset, merge, rebase, amend, pull), Git writes a line in the **reflog**:
+
+```text
+a1b2c3d HEAD@{0}: reset: moving to HEAD~2
+f6e5d4c HEAD@{1}: commit: Add invoice PDF
+9c8b7a6 HEAD@{2}: commit: Add invoice model
+```
+
+`HEAD@{0}` is now, `HEAD@{1}` the position before, and so on. You can use these names anywhere a commit is expected.
+
+Why it saves you: commits are rarely deleted immediately. After `reset --hard`, a bad rebase or deleting a branch, the commits still exist; they are just not on any branch. The reflog shows their ids.
+
+Recovery recipes:
+
+- Undo a reset or rebase: `git reset --hard HEAD@{1}` (or the id from the list)
+- Recover a deleted branch: find its last commit in the reflog, then `git branch recovered <id>`
+- Get one file back: `git restore --source=<id> invoice.py`
+- Look first, without changing anything: `git show HEAD@{2}` or `git log -3 HEAD@{2}`
+
+Limits:
+
+- The reflog is **local only**: it is not pushed, and a fresh clone has an empty one
+- Entries expire (by default after about 90 days; unreachable ones after 30), then `git gc` may delete the commits
+- It cannot recover changes that were **never committed** (or stashed)
+
+Also: `git reflog show feature` shows the history of one branch's pointer.
+
+## Code example
+
+```bash
+git log --oneline
+git reset --hard HEAD~2            # oops: the invoice work is "gone"
+git log --oneline
+git reflog
+git reset --hard HEAD@{1}          # back to before the reset
+git log --oneline
+```
+
+```output
+f6e5d4c (HEAD -> main) Add invoice PDF
+9c8b7a6 Add invoice model
+a1b2c3d Initial commit
+HEAD is now at a1b2c3d Initial commit
+a1b2c3d (HEAD -> main) Initial commit
+a1b2c3d HEAD@{0}: reset: moving to HEAD~2
+f6e5d4c HEAD@{1}: commit: Add invoice PDF
+9c8b7a6 HEAD@{2}: commit: Add invoice model
+a1b2c3d HEAD@{3}: commit (initial): Initial commit
+HEAD is now at f6e5d4c Add invoice PDF
+f6e5d4c (HEAD -> main) Add invoice PDF
+9c8b7a6 Add invoice model
+a1b2c3d Initial commit
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "app" > app.py
+git add .
+git commit -m "Initial commit"
+echo "model" > invoice.py
+git add .
+git commit -m "Add invoice model"
+echo "pdf" > pdf.py
+git add .
+git commit -m "Add invoice PDF"
+git reset --hard HEAD~2
+git log --oneline
+git reflog
+git reset --hard HEAD@{1}
+git log --oneline
+ls
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Panicking and re-cloning after a bad reset">
+
+<Wrong>
+
+```bash
+rm -rf project && git clone ...    # the lost local commits were never pushed: now truly gone
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git reflog
+git reset --hard HEAD@{1}          # or: git branch rescue <id>
+```
+
+</Right>
+
+Your local `.git` still has the commits. Deleting the folder throws away the only copy.
+
+</Mistake>
+
+<Mistake title="Expecting the reflog to recover uncommitted edits">
+
+<Wrong>
+
+```bash
+git restore app.py                 # edits discarded
+git reflog                         # nothing there to bring them back
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git stash                          # or commit "WIP" before risky commands
+```
+
+</Right>
+
+The reflog tracks commits, not files you never committed.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is git reflog?">
+
+A local log of every update to HEAD (and to branch tips): commits, checkouts, resets, rebases, merges and amends. Each entry is addressable as `HEAD@{n}`, so commits that are no longer reachable from any branch can still be found and recovered until they expire.
+
+</QA>
+
+<QA q="How do you recover from an accidental git reset --hard?">
+
+Run `git reflog`, find the entry from before the reset (often `HEAD@{1}`), and `git reset --hard HEAD@{1}`, or create a branch at that commit with `git branch rescue <id>`. Uncommitted changes that were discarded cannot be recovered this way.
+
+</QA>
+
+<QA q="How do you recover a deleted branch?">
+
+Find the branch's last commit id in `git reflog` (or the output of `git branch -D`, which prints it), then recreate it with `git branch <name> <id>`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does HEAD@{1} mean?',
+      options: ['The first commit', 'Where HEAD was one move ago', 'The parent commit', 'The remote HEAD'],
+      answer: 1,
+      why: 'Reflog positions count moves of HEAD, newest = 0.',
+    },
+    {
+      q: 'Is the reflog pushed to GitHub?',
+      options: ['Yes', 'No, it is local only', 'Only for main', 'Only tags'],
+      answer: 1,
+      why: 'Each clone has its own reflog.',
+    },
+    {
+      q: 'Can the reflog recover edits you never committed?',
+      options: ['Yes', 'No', 'Only staged ones, sometimes', 'Only on Windows'],
+      answer: 1,
+      why: 'It records commits that HEAD pointed to.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| See where HEAD has been | `git reflog` |
+| Undo the last reset / rebase | `git reset --hard HEAD@{1}` |
+| Rescue as a new branch | `git branch rescue <id>` |
+| Look without changing | `git show HEAD@{2}` |
+| One branch's history | `git reflog show feature` |
+| One file from there | `git restore --source=HEAD@{2} <file>` |
+
+Local only, entries expire (about 90 days), commits only.
+
+</CheatSheet>

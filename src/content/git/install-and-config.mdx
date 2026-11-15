@@ -1,0 +1,197 @@
+---
+id: git-install-and-config
+title: Install and configure
+summary: Install Git once, then set your name, email and default branch with git config, because they are written into every commit you make.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Before writing in a new office register, you write your name and employee id on the first page. Every entry you make later carries that signature.
+
+`git config` is that first page: your **name and email** go into every commit, so the team knows who changed what.
+
+</Analogy>
+
+## Simple explanation
+
+**Install**:
+
+- **Windows**: download *Git for Windows* from git-scm.com (it includes Git Bash), or `winget install Git.Git`
+- **macOS**: `xcode-select --install` or `brew install git`
+- **Ubuntu / Debian**: `sudo apt install git`
+
+Check with `git --version`.
+
+**Configure** (once per computer):
+
+```bash
+git config --global user.name "Shubham Kumar"
+git config --global user.email "you@example.com"
+git config --global init.defaultBranch main
+```
+
+Settings live at three levels; the more specific one wins:
+
+| Level | Flag | File | Applies to |
+| --- | --- | --- | --- |
+| System | `--system` | `/etc/gitconfig` | every user |
+| Global | `--global` | `~/.gitconfig` | you, all repos |
+| Local | (none) or `--local` | `.git/config` | one repo |
+
+Use a **local** email for, say, work repositories: `git config user.email "you@company.com"` inside that repo.
+
+Other useful settings:
+
+- `git config --global core.editor "code --wait"`: VS Code for commit messages
+- `git config --global pull.rebase false`: what `git pull` does by default (merge)
+- `git config --global core.autocrlf true` on Windows (`input` on Mac/Linux) to handle line endings
+- Aliases: `git config --global alias.lg "log --oneline --graph --all"`, then `git lg`
+
+See everything with `git config --list --show-origin`.
+
+To push to GitHub you also need authentication: an **SSH key** (`ssh-keygen -t ed25519`, then add the public key to GitHub) or **HTTPS with a token** through a credential manager. GitHub no longer accepts account passwords for Git.
+
+## Code example
+
+```bash
+git config --global user.name "Shubham Kumar"
+git config --global user.email "you@example.com"
+git config user.name                  # read one value
+git config --list                     # read all
+```
+
+```output
+Shubham Kumar
+user.name=Shubham Kumar
+user.email=you@example.com
+init.defaultbranch=main
+```
+
+<Playground kind="git">
+
+```bash
+git config user.name
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+git config --list
+git init
+echo "hello" > a.txt
+git add .
+git commit -m "First commit"
+git log
+```
+
+</Playground>
+
+The last `git log` shows your configured name as the author.
+
+<Mistakes>
+
+<Mistake title="Committing with the wrong email">
+
+<Wrong>
+
+```text
+Author: root <root@ubuntu-server>     (never configured; GitHub cannot link the commit to you)
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git config --global user.email "the-email-on-your-github-account@example.com"
+```
+
+</Right>
+
+GitHub matches commits to your profile by email. Set it before your first commit.
+
+</Mistake>
+
+<Mistake title="Using your GitHub password to push">
+
+<Wrong>
+
+```text
+Username: guru  Password: my-github-password
+remote: Support for password authentication was removed.
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+ssh-keygen -t ed25519 -C "you@example.com"     # then add ~/.ssh/id_ed25519.pub on GitHub
+git remote set-url origin git@github.com:you/project.git
+```
+
+</Right>
+
+Use an SSH key or a personal access token instead of a password.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the levels of Git configuration?">
+
+System (`/etc/gitconfig`, all users), global (`~/.gitconfig`, the current user) and local (`.git/config`, one repository). Local overrides global, which overrides system. `git config --list --show-origin` shows each value and where it comes from.
+
+</QA>
+
+<QA q="How do you use a different email for work repositories?">
+
+Set it locally inside each work repo with `git config user.email work@company.com`, or use conditional includes in `~/.gitconfig` (`[includeIf "gitdir:~/work/"]`) that load a separate config for every repo under a folder.
+
+</QA>
+
+<QA q="How do you authenticate to GitHub from the terminal?">
+
+With SSH keys (generate a key pair, add the public key to GitHub, use git@github.com URLs) or over HTTPS with a personal access token or a credential manager / GitHub CLI login. Password authentication for Git operations is no longer supported.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command sets your name for all repositories?',
+      options: ['git config user.name "X"', 'git config --global user.name "X"', 'git name "X"', 'git init --name X'],
+      answer: 1,
+      why: '--global writes to ~/.gitconfig for every repo.',
+    },
+    {
+      q: 'A repo has a local user.email and you also have a global one. Which is used?',
+      options: ['Global', 'Local', 'Both', 'Neither'],
+      answer: 1,
+      why: 'The more specific level wins.',
+    },
+    {
+      q: 'Where is the global config file?',
+      options: ['.git/config', '~/.gitconfig', '/etc/hosts', 'package.json'],
+      answer: 1,
+      why: 'Global settings are stored in your home folder.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Check install | `git --version` |
+| Name / email | `git config --global user.name "X"` / `user.email "x@y.com"` |
+| Default branch | `git config --global init.defaultBranch main` |
+| Per-repo email | `git config user.email "work@company.com"` |
+| Editor | `git config --global core.editor "code --wait"` |
+| Alias | `git config --global alias.lg "log --oneline --graph --all"` |
+| Show all | `git config --list --show-origin` |
+| SSH key | `ssh-keygen -t ed25519 -C "you@example.com"` |
+
+</CheatSheet>

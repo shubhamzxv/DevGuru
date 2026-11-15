@@ -1,0 +1,214 @@
+---
+id: git-workflows
+title: Workflows (feature branch, Git Flow, trunk-based)
+summary: A Git workflow is the team's agreement on how branches are used; the common ones are feature branches with pull requests, Git Flow with develop and release branches, and trunk-based development with short-lived branches.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Traffic rules decide who drives where so nobody crashes. Different cities choose different rules: roundabouts in one, signals in another. What matters is that everyone in the city follows the same ones.
+
+A **Git workflow** is the traffic rules for a team's branches.
+
+</Analogy>
+
+## Simple explanation
+
+**1. Feature branch workflow (GitHub Flow)**: the most common
+
+- `main` is always deployable
+- Every change gets a short branch: `feature/order-cancel`, `fix/login-redirect`
+- Open a pull request → review + CI → merge to main → deploy
+- Simple, works well with continuous deployment
+
+**2. Git Flow**: for scheduled, versioned releases
+
+- Long-lived `main` (released code, tagged) and `develop` (integration)
+- `feature/*` branch from and merge into `develop`
+- `release/1.4` branches from develop for final testing, then merges into main (tagged v1.4.0) and back into develop
+- `hotfix/*` branch from main for urgent fixes, merged into main and develop
+- Good for products with versions and long support (mobile apps, installed software); heavy for web apps that deploy daily
+
+**3. Trunk-based development**: for high-speed teams
+
+- Everyone integrates into `main` (the trunk) at least daily
+- Branches live **hours to a day or two**, or people commit straight to main with strong CI
+- Unfinished features hide behind **feature flags** instead of long branches
+- Needs excellent automated tests; gives the fewest merge conflicts and fastest delivery
+
+| | Feature branch | Git Flow | Trunk-based |
+| --- | --- | --- | --- |
+| Long-lived branches | main | main + develop | main |
+| Branch lifetime | days | days to weeks | hours |
+| Release style | continuous | scheduled versions | continuous |
+| Complexity | low | high | low (but needs CI and flags) |
+
+Common conventions in any workflow: branch names with a type prefix (`feature/`, `fix/`, `chore/`), protected main, required reviews and checks, squash or rebase merges for a clean history, and tags for releases.
+
+## Code example
+
+Feature branch workflow, end to end:
+
+```bash
+git switch main && git pull
+git switch -c fix/login-redirect
+# ...fix, test, commit...
+git push -u origin fix/login-redirect
+gh pr create --fill
+# review + green checks, then:
+gh pr merge --squash --delete-branch
+git switch main && git pull
+```
+
+A Git Flow hotfix:
+
+```bash
+git switch -c hotfix/1.4.1 main
+git commit -am "Fix crash on empty cart"
+git switch main && git merge --no-ff hotfix/1.4.1 && git tag -a v1.4.1 -m "Hotfix 1.4.1"
+git switch develop && git merge --no-ff hotfix/1.4.1
+git branch -d hotfix/1.4.1
+```
+
+```output
+[hotfix/1.4.1 7c8d9e0] Fix crash on empty cart
+Merge made by the 'ort' strategy.
+Merge made by the 'ort' strategy.
+Deleted branch hotfix/1.4.1 (was 7c8d9e0).
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "app" > app.py
+git add .
+git commit -m "Release 1.4"
+git tag v1.4.0
+git switch -c develop
+echo "new feature" > feature.py
+git add .
+git commit -m "Feature in progress"
+git switch main
+git switch -c hotfix/1.4.1
+echo "fixed" > app.py
+git commit -am "Fix crash on empty cart"
+git switch main
+git merge --no-ff hotfix/1.4.1
+git tag v1.4.1
+git switch develop
+git merge --no-ff hotfix/1.4.1
+git branch -d hotfix/1.4.1
+git log --oneline --all
+```
+
+</Playground>
+
+The graph shows the Git Flow shape: the hotfix starts from main and is merged into both main (tagged v1.4.1) and develop.
+
+<Mistakes>
+
+<Mistake title="Long-lived feature branches">
+
+<Wrong>
+
+```text
+feature/new-checkout lives for 6 weeks; merging it takes 2 days of conflicts.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Split the work into small PRs merged every day or two,
+hiding unfinished parts behind a feature flag.
+```
+
+</Right>
+
+The longer a branch lives, the more it drifts from main and the harder the merge.
+
+</Mistake>
+
+<Mistake title="Git Flow for a web app that deploys daily">
+
+<Wrong>
+
+```text
+develop, release/*, hotfix/* branches, a release manager... for a site deployed 10 times a day
+```
+
+</Wrong>
+
+<Right>
+
+```text
+GitHub Flow or trunk-based: main always deployable, short branches, CI/CD on merge.
+```
+
+</Right>
+
+Pick the lightest workflow that fits how you actually release.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What Git branching strategies do you know?">
+
+Feature branch (GitHub Flow): short branches off main, merged by pull request after review and CI, main always deployable. Git Flow: main and develop plus feature, release and hotfix branches, suited to scheduled versioned releases. Trunk-based development: very short-lived branches or direct commits to main several times a day, with feature flags and strong CI.
+
+</QA>
+
+<QA q="What workflow did your team use, and why?">
+
+Describe it concretely: for example, feature branches named by ticket, PRs with one required approval and passing GitHub Actions checks, squash merges to protected main, automatic deploy to staging on merge and to production on a version tag. Then give the reason: frequent small releases, a small team, and the need for review.
+
+</QA>
+
+<QA q="What are feature flags and why do they matter for trunk-based development?">
+
+Configuration switches that turn features on or off at runtime without deploying. They let unfinished code be merged to main and deployed while staying hidden, so branches stay short; they also enable gradual rollouts and quick kill switches.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which workflow has a develop branch?',
+      options: ['GitHub Flow', 'Git Flow', 'Trunk-based', 'None'],
+      answer: 1,
+      why: 'Git Flow uses main + develop + feature/release/hotfix branches.',
+    },
+    {
+      q: 'In trunk-based development, branches live...',
+      options: ['Months', 'Weeks', 'Hours to a day or two', 'Forever'],
+      answer: 2,
+      why: 'Frequent integration is the core idea.',
+    },
+    {
+      q: 'In Git Flow, a hotfix is merged into...',
+      options: ['Only develop', 'Only main', 'Both main and develop', 'A new repo'],
+      answer: 2,
+      why: 'Production gets the fix, and develop keeps it for the next release.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Workflow | Branches | Best for |
+| --- | --- | --- |
+| Feature branch / GitHub Flow | main + short `feature/*` + PRs | most web teams |
+| Git Flow | main, develop, feature/*, release/*, hotfix/* | versioned, scheduled releases |
+| Trunk-based | main + very short branches + feature flags | fast CI/CD teams |
+
+Everywhere: protected main, reviews, CI checks, tags for releases, small PRs.
+
+</CheatSheet>

@@ -1,0 +1,177 @@
+---
+id: git-what-is-git
+title: What is Git?
+summary: Git is a version control system that records snapshots of your project over time, so you can go back, work in parallel on branches and share work with others.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a game with **save points**. Before a hard level you save; if things go wrong, you load the save and try again. You can even keep two save files and try two different paths.
+
+**Git** gives your code save points (**commits**), lets you go back to any of them, and lets you try different paths (**branches**) without losing anything.
+
+</Analogy>
+
+## Simple explanation
+
+**Version control** means keeping the full history of a project: who changed what, when and why. Without it, people email zip files named `final_v2_REAL_final.zip`.
+
+**Git** (created by Linus Torvalds in 2005 for the Linux kernel) is the most used version control system. Key ideas:
+
+- **Repository (repo)**: your project folder plus a hidden `.git` folder that stores the whole history
+- **Commit**: a saved snapshot of all tracked files, with a message, an author and a unique id (a hash like `a3f9c21`)
+- **Branch**: a movable name pointing at a commit, for working on something separately
+- **Distributed**: every developer has the **full history** on their own laptop. You can commit, branch and view history **offline**; you sync with others through a **remote** such as GitHub
+
+Why everyone uses it:
+
+- **Undo** mistakes: go back to any commit
+- **Work in parallel**: many people, many branches, merged later
+- **Know why** code changed: history with messages, and `git blame` per line
+- **Collaborate**: pull requests and code review on GitHub or GitLab
+- **Deploy**: CI/CD pipelines start from a Git push
+
+**Git is not GitHub.** Git is the tool on your computer. **GitHub** (also GitLab, Bitbucket) is a website that hosts Git repositories and adds pull requests, issues and Actions.
+
+## Code example
+
+```bash
+git --version
+git init                          # start tracking this folder
+echo "print('hi')" > app.py
+git add app.py                    # choose what goes into the snapshot
+git commit -m "Add app.py"        # save the snapshot
+git log --oneline                 # see the history
+```
+
+```output
+git version 2.47.0
+Initialized empty Git repository in /home/guru/project/.git/
+[main (root-commit) 4b8e1f2] Add app.py
+ 1 file changed
+4b8e1f2 (HEAD -> main) Add app.py
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "v1 of my notes" > notes.txt
+git add notes.txt
+git commit -m "First notes"
+echo "v2 with more ideas" > notes.txt
+git commit -am "Improve notes"
+git log --oneline
+git show HEAD~1
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Thinking Git and GitHub are the same">
+
+<Wrong>
+
+```text
+"I can't commit, GitHub is down."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Commits are local. Only push, pull and fetch need GitHub. Keep committing; push later.
+```
+
+</Right>
+
+Git works fully offline. GitHub is just one place to share the repository.
+
+</Mistake>
+
+<Mistake title="Copying folders as backups">
+
+<Wrong>
+
+```text
+project/  project_backup/  project_old/  project_final/
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git commit -m "Working version before refactor"
+git switch -c refactor
+```
+
+</Right>
+
+Commits and branches give named, comparable versions without copying folders.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Git and why is it called distributed?">
+
+Git is a version control system that stores the history of a project as a series of snapshots (commits). It is distributed because every clone contains the complete repository and history, so developers can commit, branch, diff and view history locally and offline, then synchronise with remotes.
+
+</QA>
+
+<QA q="What is the difference between Git and GitHub?">
+
+Git is the version control tool that runs locally. GitHub is a hosting service for Git repositories that adds collaboration features: pull requests, code review, issues, permissions and GitHub Actions for CI/CD. GitLab and Bitbucket are alternatives.
+
+</QA>
+
+<QA q="What is a commit?">
+
+A snapshot of the tracked files at a moment, identified by a SHA hash, with author, date, message and a pointer to its parent commit (two for a merge). Commits form the project's history.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where is the full history of a Git repo stored?',
+      options: ['Only on GitHub', 'In the hidden .git folder of every clone', 'In the cloud only', 'In each file'],
+      answer: 1,
+      why: 'Every clone has the whole history in .git.',
+    },
+    {
+      q: 'Which needs an internet connection?',
+      options: ['git commit', 'git log', 'git push', 'git branch'],
+      answer: 2,
+      why: 'Push talks to a remote; the others are local.',
+    },
+    {
+      q: 'GitHub is...',
+      options: ['Git itself', 'A hosting service for Git repositories', 'A programming language', 'A database'],
+      answer: 1,
+      why: 'It hosts repos and adds pull requests, issues and Actions.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Meaning |
+| --- | --- |
+| Repository | project + `.git` history folder |
+| Commit | saved snapshot with id, author, message |
+| Branch | movable name pointing at a commit |
+| HEAD | where you are now |
+| Remote | another copy, e.g. on GitHub (`origin`) |
+| Clone | download a full repo with history |
+| Push / Pull | send / receive commits |
+
+</CheatSheet>

@@ -1,0 +1,276 @@
+---
+id: docker-docker-compose
+title: docker-compose
+summary: Docker Compose describes a multi-container application (services, ports, environment, volumes, networks) in one compose.yaml file and starts or stops all of it with docker compose up and down.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Running a wedding by phoning each vendor separately: caterer, decorator, band, photographer, each with their own instructions. Or giving one **event planner** a single sheet listing everything, and saying "make it happen".
+
+**Docker Compose** is the event planner. `compose.yaml` is the sheet. `docker compose up` is "make it happen".
+
+</Analogy>
+
+## Simple explanation
+
+Instead of several long `docker run` commands plus `docker network create`, you write:
+
+```yaml
+# compose.yaml
+services:
+  web:
+    build: .                     # build from the Dockerfile in this folder
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://shop:secret@db:5432/shop
+    depends_on:
+      - db
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+What Compose does for you:
+
+- Creates a network `<folder>_default`; every service can reach the others by **service name** (`db:5432`)
+- Names containers `<project>-<service>-1`
+- Builds images (`build:`) or pulls them (`image:`)
+- Creates named volumes from the top-level `volumes:`
+
+Service keys you will use most:
+
+| Key | Meaning |
+| --- | --- |
+| `image` / `build` | which image, or build one |
+| `ports` | `"HOST:CONTAINER"` |
+| `environment` / `env_file` | variables |
+| `volumes` | named volumes or bind mounts (`./src:/app/src` for live code in dev) |
+| `depends_on` | start order (add `condition: service_healthy` to wait for a healthcheck) |
+| `command` | override CMD |
+| `restart` | `unless-stopped` etc. |
+| `healthcheck` | how to test the service is ready |
+
+Commands:
+
+| Command | Does |
+| --- | --- |
+| `docker compose up -d` | build/pull, create, start everything in the background |
+| `docker compose up -d --build` | rebuild images first |
+| `docker compose ps` | status of this project's containers |
+| `docker compose logs -f web` | logs of one service |
+| `docker compose exec web sh` | shell in a service |
+| `docker compose run --rm web python manage.py migrate` | one-off command |
+| `docker compose down` | stop and remove containers + network (volumes stay) |
+| `docker compose down -v` | also delete the named volumes (data gone!) |
+
+`docker compose` (with a space, v2, built into Docker) replaced the old `docker-compose` Python tool; the file can be `compose.yaml` or `docker-compose.yml`.
+
+Compose is mainly for **local development, CI and single servers**. For production clusters you use ECS or Kubernetes, though their configs look similar.
+
+## Code example
+
+```bash
+cd ~/app
+cat compose.yaml
+docker compose up -d
+docker compose ps
+curl localhost:8000
+docker compose down
+```
+
+```output
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+  redis:
+    image: redis:7
+[+] Network app_default  Created
+[+] Container app-web-1  Started
+[+] Container app-redis-1  Started
+NAME                 IMAGE          STATUS
+app-web-1            app-web        Up
+app-redis-1          redis:7        Up
+Hello from my app! (image app-web:latest)
+[+] Container app-web-1  Removed
+[+] Container app-redis-1  Removed
+[+] Network app_default  Removed
+```
+
+<Playground kind="terminal">
+
+```bash
+cd ~/app
+cat compose.yaml
+docker compose up -d
+docker compose ps
+docker ps
+docker network ls
+curl localhost:8000
+docker compose logs
+docker exec app-redis-1 redis-cli ping
+docker compose down
+docker compose ps
+```
+
+</Playground>
+
+One command started two containers on their own network; `down` removed all of it.
+
+<Mistakes>
+
+<Mistake title="Thinking depends_on waits until the database is ready">
+
+<Wrong>
+
+```yaml
+web:
+  depends_on:
+    - db          # only waits for the db CONTAINER to start; Postgres may need 5 more seconds
+```
+
+</Wrong>
+
+<Right>
+
+```yaml
+web:
+  depends_on:
+    db:
+      condition: service_healthy
+db:
+  image: postgres:16
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U shop"]
+    interval: 5s
+    retries: 5
+```
+
+</Right>
+
+Also make the app retry its database connection; services restart in production too.
+
+</Mistake>
+
+<Mistake title="down -v by habit">
+
+<Wrong>
+
+```bash
+docker compose down -v      # wipes the database volume
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker compose down         # containers and network go, data stays
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Forgetting --build after changing the Dockerfile or requirements">
+
+<Wrong>
+
+```bash
+docker compose up -d        # reuses the old image: "my new package is missing"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker compose up -d --build
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Docker Compose and when do you use it?">
+
+A tool for defining and running multi-container applications from a YAML file listing services, networks and volumes. With `docker compose up` it builds or pulls images, creates a shared network with DNS by service name, creates volumes and starts the containers in dependency order. It is used for local development environments, integration tests in CI and simple single-host deployments.
+
+</QA>
+
+<QA q="How do services in Compose talk to each other?">
+
+Compose puts all services of a project on a default network, and each service name is a DNS name. A web service connects to `db:5432` or `redis:6379`; only ports needed from the host are published.
+
+</QA>
+
+<QA q="Does depends_on guarantee the dependency is ready?">
+
+No, plain depends_on only orders container start-up. To wait for readiness, define a healthcheck on the dependency and use `condition: service_healthy`, and still build retry logic into the application.
+
+</QA>
+
+<QA q="What is the difference between docker compose down and down -v?">
+
+`down` stops and removes the project's containers and networks, keeping named volumes and therefore data. `down -v` also removes the named volumes declared in the file, deleting their data.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'How does the web service reach PostgreSQL in Compose?',
+      options: ['localhost:5432', 'db:5432 (the service name)', 'Only with -p', '127.0.0.1'],
+      answer: 1,
+      why: 'Service names are DNS names on the project network.',
+    },
+    {
+      q: 'Which command also deletes named volumes?',
+      options: ['docker compose stop', 'docker compose down', 'docker compose down -v', 'docker compose ps'],
+      answer: 2,
+      why: '-v removes volumes.',
+    },
+    {
+      q: 'After editing requirements.txt, use...',
+      options: ['docker compose up -d --build', 'docker compose ps', 'docker compose logs', 'Nothing'],
+      answer: 0,
+      why: 'Rebuild so the image has the new packages.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Do | Command |
+| --- | --- |
+| Start all | `docker compose up -d` |
+| Rebuild + start | `docker compose up -d --build` |
+| Status | `docker compose ps` |
+| Logs | `docker compose logs -f web` |
+| Shell | `docker compose exec web sh` |
+| One-off | `docker compose run --rm web python manage.py migrate` |
+| Stop, keep data | `docker compose down` |
+| Stop, delete data | `docker compose down -v` |
+
+File: `services:` (image/build, ports, environment, volumes, depends_on, healthcheck) + top-level `volumes:`.
+
+</CheatSheet>

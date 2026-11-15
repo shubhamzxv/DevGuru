@@ -1,0 +1,188 @@
+---
+id: git-remotes
+title: Remotes
+summary: A remote is a named address of another copy of your repository, usually origin on GitHub, that you push to and fetch from.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Your phone contact "Office" saves the office number, so you do not type it every time. You can also save "Home" and "Ravi".
+
+A Git **remote** is a saved contact for another copy of your repository: `origin` usually means "our repo on GitHub", `upstream` might mean "the original project I forked".
+
+</Analogy>
+
+## Simple explanation
+
+A **remote** = a short **name** + a **URL**.
+
+- `git clone <url>` adds a remote called **origin** automatically
+- In a repo you started with `git init`, add it yourself: `git remote add origin git@github.com:you/shop.git`
+- `git remote -v` lists remotes with their URLs
+
+URL types:
+
+- **HTTPS**: `https://github.com/you/shop.git` (log in with a token or credential manager)
+- **SSH**: `git@github.com:you/shop.git` (uses your SSH key; no password prompts)
+
+**Remote-tracking branches** such as `origin/main` are your local, read-only copy of where `main` was on the remote at your last `fetch`. They update only when you fetch, pull or push. `git branch -a` lists them; `git branch -vv` shows which local branch tracks which remote branch and whether you are ahead or behind.
+
+An **upstream** (tracking) branch links a local branch to a remote one, set by `git push -u origin feature` (or automatically on clone). Then plain `git push` and `git pull` know where to go.
+
+Several remotes are normal for **forks**:
+
+- `origin` = your fork (you can push)
+- `upstream` = the original project (you only fetch, to stay updated)
+
+Manage them: `git remote rename old new`, `git remote remove name`, `git remote set-url origin <new-url>` (for example switching HTTPS to SSH).
+
+## Code example
+
+```bash
+git remote add origin git@github.com:you/shop.git
+git remote -v
+git push -u origin main
+git branch -vv
+```
+
+```output
+origin	git@github.com:you/shop.git (fetch)
+origin	git@github.com:you/shop.git (push)
+To github.com:you/shop.git
+ * [new branch]      main -> main
+branch 'main' set up to track 'origin/main'.
+* main 4b8e1f2 [origin/main] Add app.py
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "shop" > app.py
+git add .
+git commit -m "Start shop"
+git remote -v
+git push
+git remote add origin https://github.com/you/shop.git
+git remote -v
+git push
+git push -u origin main
+git log --oneline
+```
+
+</Playground>
+
+The first push fails (no remote), the second fails (no upstream yet). After `push -u`, the graph shows the `origin/main` label.
+
+<Mistakes>
+
+<Mistake title="Pushing to the original project instead of your fork">
+
+<Wrong>
+
+```bash
+git clone https://github.com/django/django.git
+git push origin my-fix      # denied: you cannot push to django/django
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git clone git@github.com:you/django.git          # your fork is origin
+git remote add upstream https://github.com/django/django.git
+git push origin my-fix                           # then open a PR to upstream
+```
+
+</Right>
+
+Push to your fork; open a pull request to the original.
+
+</Mistake>
+
+<Mistake title="Thinking origin/main updates by itself">
+
+<Wrong>
+
+```bash
+git log origin/main      # "my teammate pushed an hour ago but I don't see it"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git fetch origin
+git log origin/main
+```
+
+</Right>
+
+Remote-tracking branches change only when you talk to the remote.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is origin?">
+
+The default name Git gives the remote you cloned from. It is just a convention: an alias for the repository URL, which can be renamed or changed.
+
+</QA>
+
+<QA q="What is the difference between main and origin/main?">
+
+`main` is your local branch, which moves when you commit. `origin/main` is a remote-tracking branch, your local record of where main was on the remote at the last fetch; you cannot commit to it directly.
+
+</QA>
+
+<QA q="How do you keep a fork up to date?">
+
+Add the original repository as a second remote (`git remote add upstream <url>`), then `git fetch upstream` and merge or rebase `upstream/main` into your main, and push to your fork (`origin`). GitHub's "Sync fork" button does the same.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command lists remotes with their URLs?',
+      options: ['git remote', 'git remote -v', 'git branch -r', 'git log --remote'],
+      answer: 1,
+      why: '-v shows fetch and push URLs.',
+    },
+    {
+      q: 'What sets the upstream branch while pushing?',
+      options: ['git push -f', 'git push -u origin main', 'git remote add', 'git fetch -u'],
+      answer: 1,
+      why: '-u (--set-upstream) links the local and remote branch.',
+    },
+    {
+      q: 'In a fork workflow, upstream usually means...',
+      options: ['Your fork', 'The original project', 'Your laptop', 'A tag'],
+      answer: 1,
+      why: 'origin = your fork, upstream = the original.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| List remotes | `git remote -v` |
+| Add one | `git remote add origin <url>` |
+| Change URL | `git remote set-url origin <url>` |
+| Rename / remove | `git remote rename a b` / `git remote remove a` |
+| First push + upstream | `git push -u origin main` |
+| Tracking info | `git branch -vv` |
+| Remote branches | `git branch -r` / `git branch -a` |
+| Fork sync | `git fetch upstream` then `git merge upstream/main` |
+
+</CheatSheet>

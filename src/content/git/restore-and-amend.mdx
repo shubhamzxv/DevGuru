@@ -1,0 +1,194 @@
+---
+id: git-restore-and-amend
+title: restore and commit --amend
+summary: git restore throws away or unstages changes that are not committed yet, and git commit --amend fixes the last commit's message or content.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+While writing a letter you can rub out a line before it is posted (**restore**), or take a letter back out of the "to send" tray (**restore --staged**). If you just sealed an envelope and spotted a typo, you can open that last one and fix it before it goes out (**amend**).
+
+</Analogy>
+
+## Simple explanation
+
+**Undo before committing: git restore**
+
+| Situation | Command | Your edit |
+| --- | --- | --- |
+| Staged by mistake | `git restore --staged app.py` | kept in the file, just unstaged |
+| Want to throw away the edit | `git restore app.py` | **lost** (file back to the staged or committed version) |
+| Restore from an older commit | `git restore --source=HEAD~2 app.py` | file becomes that version |
+
+`git restore` (Git 2.23+) replaces the older `git checkout -- app.py` and `git reset HEAD app.py`, which you will still see in old answers.
+
+**Fix the last commit: git commit --amend**
+
+- Wrong message: `git commit --amend -m "Correct message"`
+- Forgot a file: `git add forgotten.py` then `git commit --amend --no-edit` (keeps the message)
+
+Amend **replaces** the last commit with a new one (a **new id**). The old one disappears from the branch.
+
+Rule: amend only commits you have **not pushed** (or pushed only to your own branch, followed by `git push --force-with-lease`). Amending a commit others already pulled rewrites shared history.
+
+Careful: `git restore <file>` permanently discards uncommitted edits. Git never saw them, so there is no undo. If unsure, `git stash` first.
+
+## Code example
+
+```bash
+echo "debug = True" >> settings.py
+git add settings.py
+git restore --staged settings.py       # oops, do not stage that
+git restore settings.py                # and throw the edit away
+git status -s
+
+echo "def login(): ..." > auth.py
+git add auth.py
+git commit -m "Add lgoin"              # typo, and forgot tests
+echo "def test_login(): ..." > test_auth.py
+git add test_auth.py
+git commit --amend -m "Add login with tests"
+git log --oneline -1
+```
+
+```output
+[main 6f1e2d3] Add lgoin
+ 1 file changed
+[main 8b9c0a4] Add login with tests
+ 2 files changed
+8b9c0a4 (HEAD -> main) Add login with tests
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "debug = False" > settings.py
+git add .
+git commit -m "Settings"
+echo "debug = True" > settings.py
+git add settings.py
+git status -s
+git restore --staged settings.py
+git status -s
+git restore settings.py
+cat settings.py
+echo "def login(): pass" > auth.py
+git add .
+git commit -m "Add lgoin"
+git commit --amend -m "Add login"
+git log --oneline
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Amending a pushed commit on a shared branch">
+
+<Wrong>
+
+```bash
+git push origin main
+git commit --amend -m "better message"
+git push --force origin main          # teammates' main now differs from yours
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git commit -m "Fix typo in login message"   # a new commit on top instead
+git push
+```
+
+</Right>
+
+After pushing to a shared branch, add a new commit (or revert) instead of rewriting.
+
+</Mistake>
+
+<Mistake title="Using git restore when you meant to keep the work">
+
+<Wrong>
+
+```bash
+git restore .          # every uncommitted edit in the repo is gone, no undo
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git stash              # shelve it if you are not sure
+git restore app.py     # or restore only the one file you meant
+```
+
+</Right>
+
+Discarded uncommitted changes cannot be recovered by Git.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you unstage a file?">
+
+`git restore --staged <file>` (older: `git reset HEAD <file>`). The change stays in the working directory; it is only removed from the staging area.
+
+</QA>
+
+<QA q="How do you change the last commit message or add a forgotten file?">
+
+Stage any forgotten files, then `git commit --amend` (with `-m "new message"` or `--no-edit` to keep the message). It replaces the last commit with a new one, so only do this before pushing, or force-push with lease on a personal branch.
+
+</QA>
+
+<QA q="How do you discard local changes to a file?">
+
+`git restore <file>` (older: `git checkout -- <file>`) replaces it with the staged or committed version. This permanently loses the uncommitted edits.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which keeps your edit but removes it from staging?',
+      options: ['git restore file', 'git restore --staged file', 'git reset --hard', 'git commit --amend'],
+      answer: 1,
+      why: '--staged only unstages.',
+    },
+    {
+      q: 'What does git commit --amend do to the commit id?',
+      options: ['Keeps it', 'Creates a new commit with a new id', 'Deletes the history', 'Adds a merge'],
+      answer: 1,
+      why: 'Amend replaces the last commit.',
+    },
+    {
+      q: 'Can Git recover edits you discarded with git restore file?',
+      options: ['Yes, with reflog', 'No, they were never committed', 'Only on GitHub', 'Only after push'],
+      answer: 1,
+      why: 'Git only remembers what was committed (or stashed).',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Unstage | `git restore --staged <file>` |
+| Discard an edit | `git restore <file>` |
+| File from an old commit | `git restore --source=<id> <file>` |
+| Fix last message | `git commit --amend -m "msg"` |
+| Add a forgotten file | `git add <file>` then `git commit --amend --no-edit` |
+| Old equivalents | `git reset HEAD <file>`, `git checkout -- <file>` |
+
+</CheatSheet>

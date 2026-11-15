@@ -38,6 +38,10 @@ interface Container {
   network: string;
   volumes: string[];
   project?: string;
+  restart?: string;
+  memory?: string;
+  cpus?: string;
+  readOnly?: boolean;
 }
 
 const CATALOG: Record<string, Omit<Image, 'id'>> = {
@@ -381,6 +385,18 @@ export class DockerEngine {
     const autoRemove = takeFlag(args, ['--rm']);
     const name = takeOption(args, ['--name']);
     const network = takeOption(args, ['--network', '--net']) ?? 'bridge';
+    const restart = takeOption(args, ['--restart']);
+    const memory = takeOption(args, ['-m', '--memory']);
+    const cpus = takeOption(args, ['--cpus']);
+    const readOnly = takeFlag(args, ['--read-only']);
+    while (takeOption(args, ['--tmpfs']) !== undefined) {
+      // memory-only mount: accepted, nothing to store in the simulator
+    }
+    if (restart && !/^(no|always|unless-stopped|on-failure(:\d+)?)$/.test(restart))
+      return fail(
+        `docker: invalid restart policy "${restart}"`,
+        'Use no, always, unless-stopped or on-failure[:max-retries].',
+      );
     const ports: [number, number][] = [];
     const env: Record<string, string> = {};
     const volumes: string[] = [];
@@ -416,6 +432,11 @@ export class DockerEngine {
     }
     const [imageName, ...command] = args;
     if (!imageName) return fail('"docker run" requires at least 1 argument.');
+    if (imageName.startsWith('-'))
+      return fail(
+        `unknown flag: ${imageName}`,
+        'The simulator knows -d, -it, --rm, --name, -p, -e, -v, --network, --restart, --memory, --cpus, --read-only and --tmpfs. Options go before the image name.',
+      );
     if (name && this.find(name)) {
       return fail(
         `docker: Error response from daemon: Conflict. The container name "/${name}" is already in use.`,
@@ -453,6 +474,10 @@ export class DockerEngine {
       cmd: command.length > 0 ? command.join(' ') : image.cmd,
       network,
       volumes,
+      restart,
+      memory,
+      cpus,
+      readOnly,
     };
 
     if (image.requiresEnv && !(image.requiresEnv in env)) {
@@ -698,7 +723,13 @@ export class DockerEngine {
               Env: Object.entries(container.env).map(([k, v]) => `${k}=${v}`),
               Cmd: container.cmd.split(' '),
             },
-            HostConfig: { Binds: container.volumes },
+            HostConfig: {
+              Binds: container.volumes,
+              RestartPolicy: { Name: container.restart ?? 'no' },
+              Memory: container.memory ?? 0,
+              NanoCpus: container.cpus ? Number(container.cpus) * 1e9 : 0,
+              ReadonlyRootfs: container.readOnly ?? false,
+            },
             NetworkSettings: {
               Networks: {
                 [container.network]: {
@@ -921,6 +952,7 @@ export class DockerEngine {
           network,
           ...service.ports.flatMap((p) => ['-p', p]),
           ...Object.entries(service.env).flatMap(([k, v]) => ['-e', `${k}=${v}`]),
+          ...(service.volumes ?? []).flatMap((v) => ['-v', v]),
           imageName,
         ]);
         if (result.error) return result;
@@ -950,9 +982,21 @@ export class DockerEngine {
       for (const c of mine) this.containers.splice(this.containers.indexOf(c), 1);
       this.networks.delete(`${project}_default`);
       out.push(`[+] Network ${project}_default  Removed`);
+      const removeVolumes = rest.includes('-v') || rest.includes('--volumes');
+      if (removeVolumes) {
+        const named = mine.flatMap((c) =>
+          c.volumes.map((v) => v.split(':')[0] ?? '').filter((v) => this.volumes.has(v)),
+        );
+        for (const v of new Set(named)) {
+          this.volumes.delete(v);
+          out.push(`[+] Volume ${v}  Removed`);
+        }
+      }
       return ok(
         out.join('\n'),
-        'Stopped and removed the containers and the network. Named volumes stay unless you add -v.',
+        removeVolumes
+          ? 'Removed the containers, the network and the named volumes: the data is gone.'
+          : 'Stopped and removed the containers and the network. Named volumes stay unless you add -v.',
       );
     }
     if (action === 'logs')
@@ -1009,18 +1053,27 @@ interface ComposeService {
   build?: string;
   ports: string[];
   env: Record<string, string>;
+  volumes?: string[];
 }
 
-/** Reads the simple compose.yaml shapes used in the lessons (services, image, build, ports, environment). */
+/** Reads the simple compose.yaml shapes used in the lessons (services, image, build, ports, environment, volumes). */
 export function parseCompose(text: string): ComposeService[] {
   const services: ComposeService[] = [];
   let current: ComposeService | null = null;
-  let list: 'ports' | 'environment' | null = null;
+  let list: 'ports' | 'environment' | 'volumes' | null = null;
+  let inServices = true; // files without a services: key still work
   for (const raw of text.split('\n')) {
     if (raw.trim() === '' || raw.trim().startsWith('#')) continue;
     const indent = raw.length - raw.trimStart().length;
     const line = raw.trim();
-    if (indent === 2 && /^[\w-]+:$/.test(line)) {
+    if (indent === 0) {
+      // top-level keys: only services: holds services (volumes:, networks: do not)
+      inServices = line === 'services:';
+      current = null;
+      list = null;
+    } else if (!inServices) {
+      continue;
+    } else if (indent === 2 && /^[\w-]+:$/.test(line)) {
       current = { name: line.slice(0, -1), ports: [], env: {} };
       services.push(current);
       list = null;
@@ -1035,9 +1088,11 @@ export function parseCompose(text: string): ComposeService[] {
       else if (key === 'build') current.build = text2 || '.';
       else if (key === 'ports') list = 'ports';
       else if (key === 'environment') list = 'environment';
+      else if (key === 'volumes') list = 'volumes';
     } else if (current && indent >= 6 && list) {
       const item = line.replace(/^-\s*/, '').replace(/^["']|["']$/g, '');
       if (list === 'ports') current.ports.push(item);
+      else if (list === 'volumes') current.volumes = [...(current.volumes ?? []), item];
       else {
         const [k = '', ...v] = item.split(/[:=]/);
         current.env[k.trim()] = v

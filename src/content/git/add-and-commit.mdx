@@ -1,0 +1,192 @@
+---
+id: git-add-and-commit
+title: add and commit
+summary: git add chooses which changes go into the next snapshot and git commit saves that snapshot with a message, creating a new point in history.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Taking a group photo: first you call the people who should be in it (**git add**), then you press the shutter (**git commit**). The photo has a date and a caption, and you can look at it any time later.
+
+</Analogy>
+
+## Simple explanation
+
+**git add** stages changes:
+
+- `git add app.py` one file
+- `git add src/` a folder
+- `git add .` everything changed in the current folder and below (respects `.gitignore`)
+- `git add -p` go through changes piece by piece and choose (great for clean commits)
+- `git add -A` everything in the repo, including deletions
+
+**git commit** records the staged snapshot:
+
+- `git commit -m "Add login endpoint"` with a short message
+- `git commit` without `-m` opens your editor for a longer message (a summary line, a blank line, then details)
+- `git commit -am "Fix typo"` stages **already tracked** files and commits in one step (new files are NOT included)
+- `git commit --amend` changes the last commit (next topics)
+
+Every commit stores: a unique **hash id**, the **author** and date, the **message**, a pointer to the **parent** commit, and the full snapshot (unchanged files are stored once and shared).
+
+Good habits:
+
+- **Small, focused commits**: one logical change each ("Fix tax rounding", not "changes")
+- **Commit often** on your branch; you can tidy history before sharing
+- **Write the message in the imperative**: "Add", "Fix", "Remove" (see Good commit messages)
+- Never commit secrets (`.env`, keys) or generated files (`node_modules`, `__pycache__`)
+
+## Code example
+
+```bash
+echo "def total(items): return sum(items)" > cart.py
+echo "def test_total(): assert total([1, 2]) == 3" > test_cart.py
+git add cart.py test_cart.py
+git commit -m "Add cart total with a test"
+echo "# rounding fix" >> cart.py
+git commit -am "Round cart total to 2 decimals"
+git log --oneline
+```
+
+```output
+[main 8a1b2c3] Add cart total with a test
+ 2 files changed
+[main 5d6e7f8] Round cart total to 2 decimals
+ 1 file changed
+5d6e7f8 (HEAD -> main) Round cart total to 2 decimals
+8a1b2c3 Add cart total with a test
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "def total(items): return sum(items)" > cart.py
+git add cart.py
+git commit -m "Add cart total"
+echo "def tax(x): return x * 0.18" > tax.py
+git commit -am "Add tax"
+git status
+git add tax.py
+git commit -m "Add tax"
+git log --oneline
+```
+
+</Playground>
+
+`git commit -am` skips `tax.py` because it is a new file. It needs a normal `git add` first.
+
+<Mistakes>
+
+<Mistake title="Vague commit messages">
+
+<Wrong>
+
+```text
+git commit -m "update"
+git commit -m "fix"
+git commit -m "asdf"
+```
+
+</Wrong>
+
+<Right>
+
+```text
+git commit -m "Fix 500 error when the cart is empty"
+git commit -m "Add pagination to GET /orders"
+```
+
+</Right>
+
+In six months, `git log` is your only record of why the code changed.
+
+</Mistake>
+
+<Mistake title="Committing a secret">
+
+<Wrong>
+
+```bash
+git add .
+git commit -m "Add config"         # .env with the database password is now in history
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+echo ".env" >> .gitignore
+git add .gitignore app.py
+git commit -m "Add config loading"
+```
+
+</Right>
+
+Deleting the file later does not remove it from history. If a secret was pushed, **rotate it** immediately.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between git add . and git add -A?">
+
+In modern Git (2.x) both stage new, modified and deleted files; `git add .` does it for the current directory and below, while `git add -A` does it for the whole working tree regardless of where you are. `git add -u` stages only modified and deleted tracked files, not new ones.
+
+</QA>
+
+<QA q="What does git commit -a do?">
+
+It automatically stages all modified and deleted tracked files before committing. Untracked (new) files are not included; they still need `git add`.
+
+</QA>
+
+<QA q="How do you commit only part of a file?">
+
+Use `git add -p` (patch mode), which shows each change hunk and lets you stage it (y), skip it (n) or split it (s). Then commit only what is staged.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Does git commit -am include a brand-new file?',
+      options: ['Yes', 'No, only tracked files', 'Only if small', 'Only in main'],
+      answer: 1,
+      why: '-a stages tracked files only.',
+    },
+    {
+      q: 'Which lets you stage only some changes inside a file?',
+      options: ['git add .', 'git add -p', 'git commit -a', 'git stage --all'],
+      answer: 1,
+      why: 'Patch mode asks hunk by hunk.',
+    },
+    {
+      q: 'What makes a good commit?',
+      options: ['Many unrelated changes', 'One logical change with a clear message', 'Only on Fridays', 'No message'],
+      answer: 1,
+      why: 'Focused commits are easy to review and revert.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Stage a file | `git add app.py` |
+| Stage all here | `git add .` |
+| Stage pieces | `git add -p` |
+| Commit | `git commit -m "Add login endpoint"` |
+| Tracked files + commit | `git commit -am "Fix typo"` |
+| Long message | `git commit` (editor) |
+| Fix last commit | `git commit --amend` |
+| See result | `git log --oneline` |
+
+</CheatSheet>

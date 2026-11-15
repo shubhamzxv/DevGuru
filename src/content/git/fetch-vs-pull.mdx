@@ -1,0 +1,194 @@
+---
+id: git-fetch-vs-pull
+title: fetch vs pull
+summary: git fetch only downloads new commits so you can look before changing anything, while git pull downloads and immediately merges or rebases them into your current branch.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+**Fetch** is checking your letter box and reading the letters at the door. **Pull** is checking the letter box and immediately acting on every letter: filing them, paying the bills, replying.
+
+Fetch lets you **look before you act**; pull acts straight away.
+
+</Analogy>
+
+## Simple explanation
+
+| | `git fetch` | `git pull` |
+| --- | --- | --- |
+| Downloads new commits | yes | yes |
+| Updates `origin/main` | yes | yes |
+| Changes your branch | **no** | **yes** (merge or rebase) |
+| Changes your files | no | yes |
+| Can cause conflicts | no | yes |
+| Safe any time | yes | best with a clean working directory |
+
+`git pull` = `git fetch` + `git merge origin/<branch>` (or `git rebase` with `--rebase`).
+
+Why fetch first? To see what is coming before it touches your work:
+
+```bash
+git fetch
+git log --oneline main..origin/main     # commits on the remote that I do not have
+git diff main origin/main               # what they change
+git merge origin/main                   # or: git rebase origin/main
+```
+
+Other reasons to fetch:
+
+- `git fetch --all --prune` before starting a day: all remotes updated, deleted branches cleaned up
+- Check whether your branch is behind: `git status` after a fetch says "Your branch is behind 'origin/main' by 3 commits"
+- Get a teammate's branch to review: `git fetch` then `git switch their-feature`
+
+Use **pull** when you just want the latest and you trust it (for example on `main` before branching). Use **fetch** when you want control: reviewing, or deciding between merge and rebase.
+
+## Code example
+
+```bash
+git fetch
+git status
+git log --oneline main..origin/main
+git merge origin/main
+```
+
+```output
+remote: Enumerating objects: 5, done.
+From github.com:you/shop
+   4b8e1f2..7a1b2c3  main       -> origin/main
+On branch main
+Your branch is behind 'origin/main' by 1 commit, and can be fast-forwarded.
+7a1b2c3 Fix footer link
+Updating 4b8e1f2..7a1b2c3
+Fast-forward
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "shop" > app.py
+git add .
+git commit -m "Start shop"
+git remote add origin https://github.com/you/shop.git
+git push -u origin main
+git fetch
+git status
+git pull
+git log --oneline --all
+```
+
+</Playground>
+
+The simulator has no teammates, so there is nothing new to fetch. On a real team, `git status` after `git fetch` tells you how far behind you are.
+
+<Mistakes>
+
+<Mistake title="Running git pull on the wrong branch">
+
+<Wrong>
+
+```bash
+# on feature-x
+git pull origin main      # merges main into feature-x; maybe not what you wanted
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git fetch
+git rebase origin/main    # deliberately update feature-x on top of the latest main
+```
+
+</Right>
+
+Fetch first, then choose how and where to integrate.
+
+</Mistake>
+
+<Mistake title="Believing fetch updated your files">
+
+<Wrong>
+
+```bash
+git fetch
+cat app.py                # "still old, fetch is broken"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git fetch
+git merge origin/main     # now your branch and files update
+```
+
+</Right>
+
+Fetch only updates `origin/*`. Your branch moves when you merge, rebase or pull.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between git fetch and git pull?">
+
+`git fetch` downloads commits and updates remote-tracking branches such as origin/main without modifying local branches or the working directory. `git pull` does a fetch and then integrates the upstream branch into the current branch by merging (or rebasing with --rebase), which can change files and cause conflicts.
+
+</QA>
+
+<QA q="How do you see what changes a pull would bring before pulling?">
+
+`git fetch`, then `git log main..origin/main` to list incoming commits and `git diff main origin/main` (or `...origin/main`) to see the changes, then merge or rebase when ready.
+
+</QA>
+
+<QA q="What does git fetch --prune do?">
+
+It removes remote-tracking branches (such as origin/old-feature) whose branches were deleted on the remote, keeping `git branch -a` accurate.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which can cause a merge conflict?',
+      options: ['git fetch', 'git pull', 'git remote -v', 'git branch -r'],
+      answer: 1,
+      why: 'Pull integrates changes into your branch.',
+    },
+    {
+      q: 'After git fetch, where are the new commits?',
+      options: ['In your main branch', 'In origin/main', 'Nowhere', 'In the stash'],
+      answer: 1,
+      why: 'Remote-tracking branches are updated.',
+    },
+    {
+      q: 'Which shows commits on the remote that you do not have?',
+      options: ['git log origin/main..main', 'git log main..origin/main', 'git diff --staged', 'git status -s'],
+      answer: 1,
+      why: 'A..B lists commits reachable from B but not A.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Download only | `git fetch` |
+| All remotes, clean up | `git fetch --all --prune` |
+| Am I behind? | `git fetch` then `git status` |
+| Incoming commits | `git log main..origin/main` |
+| Incoming changes | `git diff main origin/main` |
+| Integrate | `git merge origin/main` or `git rebase origin/main` |
+| All in one | `git pull` / `git pull --rebase` |
+
+</CheatSheet>

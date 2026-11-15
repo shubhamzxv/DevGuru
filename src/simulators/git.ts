@@ -111,6 +111,7 @@ const EXPLAIN: Record<string, string> = {
   remote: 'A remote is a saved address of another copy of the repository, usually named origin.',
   config: 'Saved a Git setting. user.name and user.email appear in every commit you make.',
   show: 'Shows one commit: who, when, the message and what changed.',
+  'check-ignore': 'Says whether (and by which .gitignore line) a file is ignored.',
 };
 
 export class GitSimulator implements Simulator {
@@ -131,6 +132,8 @@ export class GitSimulator implements Simulator {
     ['user.email', 'guru@devguru.dev'],
   ]);
   private lanes = new Map<string, number>();
+  /** Every move of HEAD, oldest first (git reflog shows newest first). */
+  private reflogEntries: { id: string; text: string }[] = [];
   private seq = 0;
 
   prompt(): string {
@@ -236,7 +239,10 @@ export class GitSimulator implements Simulator {
     if (!match) return undefined;
     const [, base = '', suffix, count] = match;
     let id: string | null | undefined;
-    if (base === 'HEAD') id = this.headId();
+    const reflogRef = /^HEAD@\{(\d+)\}$/.exec(base);
+    if (reflogRef)
+      id = this.reflogEntries[this.reflogEntries.length - 1 - Number(reflogRef[1])]?.id;
+    else if (base === 'HEAD') id = this.headId();
     else if (this.branches.has(base)) id = this.branches.get(base);
     else if (this.tags.has(base)) id = this.tags.get(base);
     else if (this.remoteRefs.has(base)) id = this.remoteRefs.get(base);
@@ -292,6 +298,34 @@ export class GitSimulator implements Simulator {
     this.index = copy(tree);
   }
 
+  /** The .gitignore rule that ignores `file`, if any (later rules win, ! re-includes). */
+  ignoredBy(file: string): string | null {
+    const rules = (this.working['.gitignore'] ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '' && !line.startsWith('#'));
+    let match: string | null = null;
+    for (const rule of rules) {
+      const negate = rule.startsWith('!');
+      const pattern = negate ? rule.slice(1) : rule;
+      const regex = new RegExp(
+        '^' +
+          pattern
+            .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+            .replace(/\*\*/g, '\uE000')
+            .replace(/\*/g, '[^/]*')
+            .replace(/\uE000/g, '.*')
+            .replace(/\?/g, '.') +
+          (pattern.endsWith('/') ? '.*' : '(/.*)?') +
+          '$',
+      );
+      const name = file.split('/').pop() ?? file;
+      const hit = regex.test(file) || (!pattern.includes('/') && regex.test(name));
+      if (hit) match = negate ? null : rule;
+    }
+    return match;
+  }
+
   private shortMessage(id: string): string {
     return `${id} ${this.commits.get(id)?.message ?? ''}`;
   }
@@ -334,12 +368,52 @@ export class GitSimulator implements Simulator {
     }
   }
 
+  private checkIgnore(args: string[]): CommandResult {
+    const verbose = takeFlag(args, ['-v', '--verbose']);
+    const hits = args
+      .map((file) => ({ file, rule: this.ignoredBy(file) }))
+      .filter((h) => h.rule !== null);
+    if (hits.length === 0) return { output: '', explanation: 'None of these files is ignored.' };
+    return ok(hits.map((h) => (verbose ? `.gitignore:${h.rule}\t${h.file}` : h.file)).join('\n'));
+  }
+
+  private reflogText(sub: string, args: string[], from: string, id: string): string {
+    const message = this.commits.get(id)?.message ?? '';
+    const target = args.find((a) => !a.startsWith('-')) ?? 'HEAD';
+    switch (sub) {
+      case 'commit':
+        if (args.includes('--amend')) return `commit (amend): ${message}`;
+        return `commit${this.reflogEntries.length === 0 ? ' (initial)' : ''}: ${message}`;
+      case 'switch':
+      case 'checkout':
+        return `checkout: moving from ${from} to ${this.head.kind === 'branch' ? this.head.name : id}`;
+      case 'reset':
+        return `reset: moving to ${target}`;
+      case 'merge':
+        return `merge ${target}: ${(this.commits.get(id)?.parents.length ?? 0) > 1 ? "Merge made by the 'ort' strategy." : 'Fast-forward'}`;
+      case 'rebase':
+        return `rebase (finish): returning to refs/heads/${this.branchName()}`;
+      default:
+        return `${sub}: ${message}`;
+    }
+  }
+
+  private reflog(): CommandResult {
+    const lines = [...this.reflogEntries]
+      .reverse()
+      .map((entry, i) => `${entry.id} HEAD@{${i}}: ${entry.text}`);
+    return ok(
+      lines.join('\n'),
+      'The reflog is your local diary of where HEAD has been. Even commits removed by reset or rebase are listed, so you can get them back with git reset --hard HEAD@{n}.',
+    );
+  }
+
   private help(): string {
     return [
       'Files:   echo "text" > file   echo "more" >> file   cat file   ls   touch file   rm file',
       'Start:   git init   git config user.name "Your Name"',
       'Save:    git status   git add <file>|.   git commit -m "message"   git diff [--staged]',
-      'History: git log --oneline   git show <id>',
+      'History: git log --oneline   git show <id>   git reflog',
       'Branch:  git branch <name>   git switch <name>   git switch -c <name>   git branch -d <name>',
       'Join:    git merge <branch>   git merge --abort   git rebase <branch>',
       'Undo:    git restore <file>   git restore --staged <file>   git reset [--soft|--hard] HEAD~1',
@@ -385,7 +459,12 @@ export class GitSimulator implements Simulator {
     ) {
       return fail(NOT_A_REPO, 'Run git init first, to turn this folder into a Git repository.');
     }
-    const result = this.gitCommand(sub, rest);
+    const before = { id: this.headId(), where: this.branchName() };
+    const result = this.gitCommand(sub, [...rest]);
+    const after = this.headId();
+    if (!result.error && after && (after !== before.id || this.branchName() !== before.where)) {
+      this.reflogEntries.push({ id: after, text: this.reflogText(sub, rest, before.where, after) });
+    }
     const key = sub === 'checkout' ? 'switch' : sub;
     return result.explanation || result.error ? result : { ...result, explanation: EXPLAIN[key] };
   }
@@ -445,6 +524,10 @@ export class GitSimulator implements Simulator {
         return this.stash(args);
       case 'tag':
         return this.tag(args);
+      case 'reflog':
+        return this.reflog();
+      case 'check-ignore':
+        return this.checkIgnore(args);
       case 'remote':
         return this.remote(args);
       case 'push':
@@ -496,7 +579,7 @@ export class GitSimulator implements Simulator {
     );
     const unstagedDeleted = tracked.filter((f) => !(f in this.working));
     const untracked = Object.keys(this.working)
-      .filter((f) => !(f in this.index))
+      .filter((f) => !(f in this.index) && !this.ignoredBy(f))
       .sort();
     const conflicts = [...(this.merging?.conflicts ?? [])].sort();
 
@@ -579,10 +662,22 @@ export class GitSimulator implements Simulator {
         'Nothing specified, nothing added.',
         'Try git add <file> or git add . for everything.',
       );
+    const force = takeFlag(paths, ['-f', '--force']);
     const all = paths.some((p) => p === '.' || p === '-A' || p === '--all');
     const targets = all
-      ? [...new Set([...Object.keys(this.working), ...Object.keys(this.index)])]
+      ? [...new Set([...Object.keys(this.working), ...Object.keys(this.index)])].filter(
+          (f) => f in this.index || !this.ignoredBy(f),
+        )
       : paths;
+    if (!all && !force) {
+      const blocked = targets.filter((f) => !(f in this.index) && this.ignoredBy(f));
+      if (blocked.length > 0) {
+        return fail(
+          `The following paths are ignored by one of your .gitignore files:\n${blocked.join('\n')}\nhint: Use -f if you really want to add them.`,
+          'Git skips files listed in .gitignore. That is usually what you want (logs, secrets, node_modules).',
+        );
+      }
+    }
     for (const file of targets) {
       if (file in this.working) this.index[file] = this.working[file] ?? '';
       else if (file in this.index) delete this.index[file];

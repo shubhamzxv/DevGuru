@@ -150,6 +150,35 @@ describe('Git simulator', () => {
     expect(git.run('cat app.txt').output).toBe('wip');
   });
 
+  it('reflog finds commits lost by reset', () => {
+    const git = setup();
+    git.run('echo "two" > app.txt');
+    git.run('git commit -am "second"');
+    const lost = git.resolve('HEAD');
+    git.run('git reset --hard HEAD~1');
+    const log = git.run('git reflog').output.split('\n');
+    expect(log[0]).toContain('HEAD@{0}: reset: moving to HEAD~1');
+    expect(log[1]).toContain('HEAD@{1}: commit: second');
+    git.run('git reset --hard HEAD@{1}');
+    expect(git.resolve('HEAD')).toBe(lost);
+    expect(git.run('cat app.txt').output).toBe('two');
+  });
+
+  it('respects .gitignore', () => {
+    const git = new GitSimulator();
+    git.run('git init');
+    git.run('echo "*.log" > .gitignore');
+    git.run('echo "secret" > .env');
+    git.run('echo ".env" >> .gitignore');
+    git.run('echo "x" > debug.log');
+    git.run('echo "code" > app.py');
+    expect(git.run('git status -s').output).toBe('?? .gitignore\n?? app.py');
+    git.run('git add .');
+    expect(Object.keys(git.index).sort()).toEqual(['.gitignore', 'app.py']);
+    expect(git.run('git add debug.log').error).toBe(true);
+    expect(git.run('git check-ignore -v .env').output).toBe('.gitignore:.env\t.env');
+  });
+
   it('push needs a remote, then shows origin/main', () => {
     const git = setup();
     expect(git.run('git push').error).toBe(true);
@@ -243,6 +272,31 @@ describe('Docker simulator', () => {
     expect(sh.run('curl localhost:8000').output).toContain('Hello from my app!');
     sh.run('docker compose down');
     expect(sh.run('docker ps -a').output.split('\n')).toHaveLength(1);
+  });
+
+  it('accepts restart and resource options', () => {
+    const sh = new ShellSimulator();
+    const run = sh.run(
+      'docker run -d --name api --restart unless-stopped --memory 512m --cpus 1 --read-only --tmpfs /tmp -p 8080:80 nginx',
+    );
+    expect(run.error).toBeFalsy();
+    expect(sh.run('docker inspect api').output).toContain('"unless-stopped"');
+    expect(sh.run('docker run -d --restart sometimes nginx').error).toBe(true);
+    expect(sh.run('docker run -d --bogus nginx').output).toContain('unknown flag: --bogus');
+  });
+
+  it('skips top-level volumes in compose and removes them with down -v', () => {
+    const text =
+      'services:\n  db:\n    image: postgres:16\n    environment:\n      POSTGRES_PASSWORD: secret\n    volumes:\n      - pgdata:/var/lib/postgresql/data\nvolumes:\n  pgdata:';
+    expect(parseCompose(text)).toEqual([
+      {
+        name: 'db',
+        image: 'postgres:16',
+        ports: [],
+        env: { POSTGRES_PASSWORD: 'secret' },
+        volumes: ['pgdata:/var/lib/postgresql/data'],
+      },
+    ]);
   });
 });
 

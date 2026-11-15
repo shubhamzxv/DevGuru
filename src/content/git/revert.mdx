@@ -1,0 +1,194 @@
+---
+id: git-revert
+title: Revert
+summary: git revert undoes a commit by adding a new commit that does the opposite, so history is kept and it is safe on shared branches.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+In an accounts ledger written in ink, you never erase a wrong entry. You add a new line: "Reversal of entry 42". The mistake and its correction are both visible, and the balance is right.
+
+**git revert** is that reversal entry. Nothing is erased; a new commit cancels the old one.
+
+</Analogy>
+
+## Simple explanation
+
+```bash
+git revert a3f9c21
+```
+
+Git looks at what commit `a3f9c21` changed, applies the **opposite** change on top of the current branch, and creates a **new commit**, by default with the message `Revert "<original message>"`.
+
+Why it matters:
+
+- History only moves **forward**: no commit ids change, nobody needs to force-push or re-clone
+- So it is the right way to undo something **already pushed** to `main` or any shared branch
+- The record shows what was undone and when, which is useful for audits and incidents
+
+Options:
+
+- `git revert HEAD`: undo the last commit
+- `git revert A B`: several commits (one revert commit each)
+- `git revert --no-commit A..D`: stage the undo of a range, then commit once
+- **Reverting a merge commit**: `git revert -m 1 <merge-id>` (`-m 1` = keep the first parent, main's side, and undo what the merge brought in)
+- On conflict: fix, `git add`, `git revert --continue`
+
+Typical incident: a deploy breaks production. `git revert <bad commit>` → push → deploy. The fix is safe and quick, and the real fix can follow later.
+
+Note: if you revert a merged feature and later want it back, **revert the revert**; merging the same branch again would not bring back the changes.
+
+## Code example
+
+```bash
+git log --oneline
+git revert HEAD --no-edit       # undo "Change price to 0" with a new commit
+git log --oneline
+cat shop.py
+```
+
+```output
+9e8f7a6 (HEAD -> main) Change price to 0
+5d4c3b2 Set price 100
+1a2b3c4 Initial commit
+[main 2b3c4d5] Revert "Change price to 0"
+ 1 file changed
+2b3c4d5 (HEAD -> main) Revert "Change price to 0"
+9e8f7a6 Change price to 0
+5d4c3b2 Set price 100
+1a2b3c4 Initial commit
+price = 100
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "price = 100" > shop.py
+git add .
+git commit -m "Set price 100"
+echo "price = 0" > shop.py
+git commit -am "Change price to 0"
+git remote add origin https://github.com/you/shop.git
+git push -u origin main
+git revert HEAD
+cat shop.py
+git push
+git log --oneline
+```
+
+</Playground>
+
+The bad commit was already pushed, so revert is the right tool: the push afterwards is a normal one, no force needed.
+
+<Mistakes>
+
+<Mistake title="Resetting instead of reverting on main">
+
+<Wrong>
+
+```bash
+git reset --hard HEAD~1
+git push --force          # rewrites shared history
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git revert HEAD
+git push
+```
+
+</Right>
+
+On shared branches, undo with a new commit.
+
+</Mistake>
+
+<Mistake title="Re-merging a reverted feature">
+
+<Wrong>
+
+```bash
+git revert -m 1 <merge-of-feature>   # feature removed
+# ... feature is fixed later ...
+git merge feature                    # "Already up to date": changes do not come back
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git revert <the-revert-commit>       # bring the original changes back
+git merge feature                    # then merge the new fixes
+```
+
+</Right>
+
+Git remembers the feature's commits are already merged; you must undo the revert itself.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What does git revert do?">
+
+It creates a new commit that applies the inverse of the changes made by a given commit, undoing its effect while keeping the original commit in history. It does not rewrite history, so it is safe on shared branches.
+
+</QA>
+
+<QA q="How do you revert a merge commit?">
+
+`git revert -m 1 <merge-commit>`, where `-m 1` chooses the first parent (the branch you merged into) as the mainline to keep; the changes introduced by the merged branch are undone.
+
+</QA>
+
+<QA q="When would you use revert instead of reset?">
+
+Whenever the commit has been pushed to a branch others use: revert adds a new commit and avoids rewriting shared history. Reset is for local, unpushed commits or personal branches.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does git revert create?',
+      options: ['Nothing', 'A new commit undoing the change', 'A new branch', 'A tag'],
+      answer: 1,
+      why: 'The original stays; a new opposite commit is added.',
+    },
+    {
+      q: 'Is revert safe on a pushed, shared branch?',
+      options: ['Yes', 'No', 'Only with --force', 'Only on tags'],
+      answer: 0,
+      why: 'It does not rewrite existing commits.',
+    },
+    {
+      q: 'Which option is needed to revert a merge commit?',
+      options: ['--hard', '-m 1', '--soft', '-x'],
+      answer: 1,
+      why: '-m picks which parent is the mainline.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Undo last commit (safe) | `git revert HEAD` |
+| Undo a specific commit | `git revert <id>` |
+| Keep default message | `git revert <id> --no-edit` |
+| Undo a range in one commit | `git revert --no-commit A..D` then `git commit` |
+| Undo a merge | `git revert -m 1 <merge-id>` |
+| After a conflict | `git add <f>` then `git revert --continue` |
+
+</CheatSheet>

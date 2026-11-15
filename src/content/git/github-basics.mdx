@@ -1,0 +1,195 @@
+---
+id: git-github-basics
+title: "GitHub: repositories, forks and clones"
+summary: GitHub hosts Git repositories online; you clone a repository to work on it locally, and you fork someone else's repository to get your own copy you can push to.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A library (GitHub) keeps books (repositories). You can **borrow a copy** to read and write notes at home (**clone**). If the book belongs to someone else and you want to suggest changes, you first get **your own copy registered in your name** at the library (**fork**), write in it, and then ask the author to accept your changes (**pull request**).
+
+</Analogy>
+
+## Simple explanation
+
+**Repository** on GitHub: the hosted copy of a Git repo, plus a web page with the README, files, history, issues, pull requests, Actions and settings. It can be **public** (anyone can read) or **private** (only invited people).
+
+**Clone**: download a repository with its full history to your computer.
+
+```bash
+git clone git@github.com:you/shop.git
+```
+
+You can push back if you have **write access** (it is yours, or you are a collaborator, or a member of the organisation team).
+
+**Fork**: a copy of someone else's repository **under your GitHub account**, made with the Fork button. Used for open source: you have no write access to the original, so you:
+
+1. Fork `django/django` → `you/django`
+2. Clone your fork, add the original as `upstream`
+3. Create a branch, commit, push to **your fork**
+4. Open a **pull request** from your fork's branch to the original
+
+| | Clone | Fork |
+| --- | --- | --- |
+| Where | on your computer | on GitHub, under your account |
+| Made with | `git clone` | the Fork button / `gh repo fork` |
+| Purpose | work locally | get your own server-side copy to push to |
+| Typical | your team's repo | open source contributions |
+
+Other GitHub basics: a **README.md** shows on the repo page; **Issues** track bugs and tasks; **branch protection rules** stop direct pushes to main and require reviews and passing checks; the **GitHub CLI** (`gh`) does most of it from the terminal: `gh repo create`, `gh repo clone`, `gh pr create`.
+
+Creating a new repo from a local project: create an empty repo on GitHub (no README, so histories do not clash), then:
+
+```bash
+git remote add origin git@github.com:you/shop.git
+git push -u origin main
+```
+
+## Code example
+
+Contributing to an open-source project:
+
+```bash
+gh repo fork django/django --clone          # fork on GitHub AND clone your fork
+cd django
+git remote -v
+git switch -c fix-typo-in-docs
+# ...edit, commit...
+git push -u origin fix-typo-in-docs
+gh pr create --repo django/django --fill
+```
+
+```output
+origin	git@github.com:you/django.git (fetch)
+origin	git@github.com:you/django.git (push)
+upstream	https://github.com/django/django.git (fetch)
+upstream	https://github.com/django/django.git (push)
+https://github.com/django/django/pull/18842
+```
+
+<Playground kind="git">
+
+```bash
+git clone https://github.com/you/shop.git
+git init
+echo "# Shop" > README.md
+git add .
+git commit -m "Add README"
+git remote add origin https://github.com/you/shop.git
+git push -u origin main
+git remote -v
+```
+
+</Playground>
+
+The simulator works in one local folder; `git clone` only explains what it would do. The rest is the "publish a local project to a new GitHub repo" flow.
+
+<Mistakes>
+
+<Mistake title="Creating the GitHub repo with a README, then pushing an existing project">
+
+<Wrong>
+
+```text
+New repo on GitHub with "Add a README" ticked, then git push -u origin main
+! [rejected] main -> main (fetch first)     (two unrelated histories)
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Create the repo EMPTY when you already have a local project,
+or first: git pull origin main --allow-unrelated-histories, then push.
+```
+
+</Right>
+
+An empty remote accepts your history directly.
+
+</Mistake>
+
+<Mistake title="Making a public repo with secrets">
+
+<Wrong>
+
+```text
+Public repo containing .env, AWS keys, a database dump with customer data
+```
+
+</Wrong>
+
+<Right>
+
+```text
+.gitignore secrets before the first commit, use private repos for company code,
+enable GitHub secret scanning and push protection.
+```
+
+</Right>
+
+Public repos are scanned by bots within minutes. Leaked keys must be rotated even after deleting them.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between a fork and a clone?">
+
+A clone is a local copy of a repository on your machine, with full history. A fork is a server-side copy of someone else's repository under your own GitHub account, which you can push to; you usually clone your fork to work on it and open pull requests back to the original.
+
+</QA>
+
+<QA q="How do you contribute to an open-source project?">
+
+Fork the repository, clone your fork, add the original as an upstream remote, create a branch, make focused commits following the project's guidelines (and tests), push the branch to your fork, and open a pull request to the original repository. Keep it updated by fetching upstream and rebasing.
+
+</QA>
+
+<QA q="What are branch protection rules?">
+
+Repository settings for important branches (such as main) that block direct pushes and force pushes, require pull requests with a number of approving reviews, require status checks (CI) to pass, and optionally require linear history or signed commits.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'You want to contribute to a project where you have no write access. First step?',
+      options: ['git push to it', 'Fork it', 'Delete it', 'git init'],
+      answer: 1,
+      why: 'A fork gives you your own copy to push to.',
+    },
+    {
+      q: 'Where does a fork live?',
+      options: ['On your laptop', 'On GitHub, under your account', 'Inside .git', 'In the original repo'],
+      answer: 1,
+      why: 'Clones are local; forks are on the server.',
+    },
+    {
+      q: 'What stops direct pushes to main on GitHub?',
+      options: ['.gitignore', 'Branch protection rules', 'Tags', 'Forks'],
+      answer: 1,
+      why: 'Rules can require PRs, reviews and passing checks.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | How |
+| --- | --- |
+| Copy a repo locally | `git clone <url>` / `gh repo clone owner/repo` |
+| Own server copy of others' repo | Fork button / `gh repo fork owner/repo --clone` |
+| Publish a local project | empty repo on GitHub, `git remote add origin <url>`, `git push -u origin main` |
+| Track the original | `git remote add upstream <url>` |
+| Open a PR | push branch, then `gh pr create` |
+| Protect main | Settings → Branches → protection rules |
+
+</CheatSheet>

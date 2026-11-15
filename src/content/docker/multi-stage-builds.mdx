@@ -1,0 +1,215 @@
+---
+id: docker-multi-stage-builds
+title: Multi-stage builds
+summary: A multi-stage build uses several FROM stages in one Dockerfile, builds or compiles in a heavy stage, and copies only the finished result into a small final image.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A carpenter builds a table in a workshop full of saws, glue and sawdust. The customer gets only the polished table, not the workshop.
+
+In a **multi-stage build**, the first stage is the workshop (compilers, build tools, dev dependencies), and the last stage is the delivery van that carries only the finished product.
+
+</Analogy>
+
+## Simple explanation
+
+```dockerfile
+# ---- Stage 1: build ----
+FROM python:3.12 AS builder                  # full image: has gcc, headers
+WORKDIR /app
+COPY requirements.txt .
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+# ---- Stage 2: runtime ----
+FROM python:3.12-slim                         # small image
+WORKDIR /app
+COPY --from=builder /wheels /wheels           # take only the built wheels
+RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels
+COPY . .
+RUN useradd -m app
+USER app
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]
+```
+
+How it works:
+
+- Each `FROM` starts a **new stage**. Name it with `AS builder`
+- `COPY --from=builder <path>` copies files out of an earlier stage
+- Only the **last stage** becomes the image you tag and ship. Everything else (gcc, caches, source of build tools) is thrown away
+- `docker build --target builder .` builds only up to a named stage (useful for a test stage)
+
+Typical results:
+
+| App | Single stage | Multi-stage |
+| --- | --- | --- |
+| Python with psycopg2/numpy compiled | ~1.1 GB (python:3.12) | ~180 MB (slim runtime) |
+| React frontend | ~1.2 GB (node + node_modules) | ~45 MB (nginx + build/) |
+| Go service | ~900 MB (golang) | ~15 MB (scratch/distroless + binary) |
+
+Benefits: **smaller** images (faster pull and deploy), **safer** (no compilers or secrets from the build stage in production), one Dockerfile for everything.
+
+React example, the most common one in interviews:
+
+```dockerfile
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM nginx:1.27-alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+```
+
+## Code example
+
+```bash
+docker build -t shop-api:fat -f Dockerfile.single .
+docker build -t shop-api:slim .
+docker images shop-api
+```
+
+```output
+REPOSITORY   TAG    IMAGE ID       SIZE
+shop-api     slim   4c5d6e7f8a9b   182MB
+shop-api     fat    9a8b7c6d5e4f   1.12GB
+```
+
+<Playground kind="terminal">
+
+```bash
+mkdir ~/multi
+cd ~/multi
+echo "flask" > requirements.txt
+echo "print('app')" > app.py
+echo "FROM python:3.12 AS builder" > Dockerfile
+echo "WORKDIR /app" >> Dockerfile
+echo "COPY requirements.txt ." >> Dockerfile
+echo "RUN pip wheel --wheel-dir /wheels -r requirements.txt" >> Dockerfile
+echo "FROM python:3.12-slim" >> Dockerfile
+echo "COPY --from=builder /wheels /wheels" >> Dockerfile
+echo "RUN pip install /wheels/*" >> Dockerfile
+echo "COPY . ." >> Dockerfile
+echo 'CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]' >> Dockerfile
+cat Dockerfile
+docker build -t api:slim .
+docker images
+```
+
+</Playground>
+
+Two FROM lines, one final image: only what is copied into the last stage is shipped.
+
+<Mistakes>
+
+<Mistake title="Copying the whole builder stage">
+
+<Wrong>
+
+```dockerfile
+COPY --from=builder / /          # brings back gcc, caches, everything
+```
+
+</Wrong>
+
+<Right>
+
+```dockerfile
+COPY --from=builder /wheels /wheels          # only the artefact you need
+COPY --from=build /app/dist /usr/share/nginx/html
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Secrets used in the build stage leaking anyway">
+
+<Wrong>
+
+```dockerfile
+FROM python:3.12 AS builder
+ARG PIP_TOKEN
+RUN pip install --index-url https://$PIP_TOKEN@pypi.company.com/simple -r requirements.txt
+FROM python:3.12-slim
+COPY --from=builder / /
+```
+
+</Wrong>
+
+<Right>
+
+```dockerfile
+# BuildKit secret: never stored in any layer
+RUN --mount=type=secret,id=pip_token \
+    pip install --index-url https://$(cat /run/secrets/pip_token)@pypi.company.com/simple -r requirements.txt
+```
+
+</Right>
+
+Build arguments are visible in the image history; use BuildKit secrets, and copy only artefacts out of the builder.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a multi-stage build and why use it?">
+
+A Dockerfile with several FROM stages, where earlier stages build or compile the application with full toolchains, and the final stage starts from a small base and copies only the needed artefacts with `COPY --from`. It produces much smaller, more secure images, because build tools and intermediate files never reach production, while keeping everything in one Dockerfile.
+
+</QA>
+
+<QA q="How would you containerise a React frontend?">
+
+A multi-stage build: a node stage runs `npm ci` and `npm run build`, and a final nginx (or another static server) stage copies the build output into nginx's html folder, with an nginx config for single-page routing. The final image is tens of megabytes and has no Node or node_modules.
+
+</QA>
+
+<QA q="How can one Dockerfile serve both tests and production?">
+
+Add named stages such as `test` that install dev dependencies and run the tests, and build them with `--target test` in CI, while the default build produces the production stage without dev dependencies.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which stage becomes the final image?',
+      options: ['The first', 'The last', 'The biggest', 'All merged'],
+      answer: 1,
+      why: 'Unless you use --target, the last stage is the result.',
+    },
+    {
+      q: 'How do you copy a file from a stage named builder?',
+      options: ['COPY builder:/x .', 'COPY --from=builder /x .', 'FROM builder COPY', 'ADD builder /x'],
+      answer: 1,
+      why: 'COPY --from=<stage>.',
+    },
+    {
+      q: 'Main benefit?',
+      options: ['Faster laptop', 'Smaller and safer production images', 'More layers', 'No Dockerfile needed'],
+      answer: 1,
+      why: 'Build tools stay in the throwaway stages.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Piece | Syntax |
+| --- | --- |
+| Name a stage | `FROM python:3.12 AS builder` |
+| Copy from it | `COPY --from=builder /wheels /wheels` |
+| Build one stage | `docker build --target builder .` |
+| Python | build wheels in full image → install in slim |
+| React | `npm run build` in node → copy `dist` into nginx |
+| Go | build binary → copy into `scratch` or distroless |
+
+</CheatSheet>

@@ -1,0 +1,194 @@
+---
+id: docker-networks
+title: Networks
+summary: Docker networks connect containers; on a user-defined bridge network containers reach each other by name through built-in DNS, while the default bridge, host and none networks behave differently.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+An office building. A **user-defined network** is one company's floor: everyone on the floor can call each other by name ("call Priya"), and other floors cannot overhear. The **default bridge** is the shared lobby: people are there, but nobody has a name directory, so you need room numbers (IPs).
+
+</Analogy>
+
+## Simple explanation
+
+Network drivers:
+
+| Driver | What happens | Use |
+| --- | --- | --- |
+| **bridge (user-defined)** | private network on the host, **DNS by container name** | multi-container apps on one host: the normal choice |
+| bridge (default `bridge`) | containers get IPs but **no name lookup** | legacy; avoid for multi-container apps |
+| **host** | container uses the host's network directly, no `-p` needed (Linux) | maximum network performance, special tools |
+| **none** | no network at all | isolated jobs |
+| overlay | spans several hosts (Swarm) | clusters |
+
+How containers find each other:
+
+```bash
+docker network create shop
+docker run -d --name db    --network shop -e POSTGRES_PASSWORD=secret postgres:16
+docker run -d --name cache --network shop redis:7
+docker run -d --name api   --network shop -p 8000:8000 \
+  -e DATABASE_URL=postgresql://postgres:secret@db:5432/postgres \
+  -e REDIS_URL=redis://cache:6379/0 shop-api
+```
+
+- The API uses **`db`** and **`cache`** as host names: Docker's embedded DNS resolves them to the containers' IPs
+- Only the API publishes a port; the database and Redis are reachable **only inside** the `shop` network
+- **Docker Compose** creates a network like `<project>_default` automatically and uses **service names** as host names
+
+**localhost inside a container is the container itself**, not your laptop and not another container. To reach a service on your host from a container on Docker Desktop, use `host.docker.internal`.
+
+Commands: `docker network create / ls / inspect / connect / disconnect / rm`.
+
+## Code example
+
+```bash
+docker network create shop
+docker run -d --name cache --network shop redis:7
+docker run -d --name api --network shop alpine sleep 3600
+docker exec api ping -c 1 cache
+docker network inspect shop
+```
+
+```output
+PING cache (172.18.0.2): 56 data bytes
+64 bytes from 172.18.0.2: seq=0 ttl=64 time=0.081 ms
+[
+  {
+    "Name": "shop",
+    "Driver": "bridge",
+    "Containers": {
+      "...": { "Name": "cache", "IPv4Address": "172.18.0.2/16" },
+      "...": { "Name": "api", "IPv4Address": "172.18.0.3/16" }
+    }
+  }
+]
+```
+
+<Playground kind="terminal">
+
+```bash
+docker network ls
+docker network create shop
+docker run -d --name db --network shop -e POSTGRES_PASSWORD=secret postgres:16
+docker run -d --name cache --network shop redis:7
+docker run -d --name web --network shop -p 8080:80 nginx
+docker network ls
+docker inspect cache
+docker ps
+docker run -d --name stray --network missing redis:7
+curl localhost:8080
+```
+
+</Playground>
+
+`inspect cache` shows it on the `shop` network. The `missing` network does not exist, so that run fails.
+
+<Mistakes>
+
+<Mistake title="Using localhost to reach another container">
+
+<Wrong>
+
+```python
+DATABASE_URL = "postgresql://postgres:secret@localhost:5432/shop"   # inside the api container
+```
+
+</Wrong>
+
+<Right>
+
+```python
+DATABASE_URL = "postgresql://postgres:secret@db:5432/shop"          # the container / service name
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Relying on the default bridge for names">
+
+<Wrong>
+
+```bash
+docker run -d --name db postgres:16
+docker run -d --name api shop-api      # both on the default bridge: "db" does not resolve
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker network create shop
+docker run -d --name db --network shop ...
+docker run -d --name api --network shop ...
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do containers communicate with each other?">
+
+Put them on the same user-defined network (or the same Compose project). Docker's embedded DNS resolves container names and service names to their IPs, so one container connects to another as `db:5432`. Ports do not need to be published for this; publishing is only for access from the host.
+
+</QA>
+
+<QA q="What network drivers does Docker have?">
+
+bridge (the default; user-defined bridges add name resolution and isolation), host (shares the host network stack, no port mapping), none (no networking), overlay (multi-host networks for Swarm), plus macvlan/ipvlan for giving containers addresses on the physical network.
+
+</QA>
+
+<QA q="Why does localhost not work between containers?">
+
+Each container has its own network namespace, so localhost refers to the container's own loopback interface. Other containers are separate hosts on the Docker network and must be reached by name or IP.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which network gives name-based DNS between containers?',
+      options: ['Default bridge', 'User-defined bridge', 'none', 'Any network'],
+      answer: 1,
+      why: 'Embedded DNS works on user-defined networks.',
+    },
+    {
+      q: 'Inside the api container, localhost means...',
+      options: ['Your laptop', 'The api container itself', 'The db container', 'The internet'],
+      answer: 1,
+      why: 'Each container has its own network namespace.',
+    },
+    {
+      q: 'Does the database need -p for the API to reach it on the same network?',
+      options: ['Yes', 'No', 'Only for Redis', 'Only on AWS'],
+      answer: 1,
+      why: 'Publishing is for the host, not container-to-container.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command |
+| --- | --- |
+| Create | `docker network create shop` |
+| Attach at start | `docker run --network shop --name db ...` |
+| Attach later | `docker network connect shop api` |
+| List / details | `docker network ls` · `docker network inspect shop` |
+| Address another container | `db:5432`, `cache:6379` (name, not localhost) |
+| Reach the host (Desktop) | `host.docker.internal` |
+
+Compose: automatic `<project>_default` network, service names as hosts.
+
+</CheatSheet>

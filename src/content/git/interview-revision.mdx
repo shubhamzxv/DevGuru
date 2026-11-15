@@ -1,0 +1,242 @@
+---
+id: git-interview-revision
+title: Git interview revision
+summary: A one-page revision of the Git questions asked most in interviews, with short answers and the commands to remember.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Before an exam you revise the formula sheet, not the whole book. This page is the formula sheet for Git: the questions that come up again and again, with answers you can say in two or three sentences.
+
+</Analogy>
+
+## Simple explanation
+
+**The 20 answers to know**
+
+| Question | Short answer |
+| --- | --- |
+| Git vs GitHub | Git = local version control tool; GitHub = hosting + PRs, issues, Actions |
+| Three areas | working directory → `git add` → staging area → `git commit` → repository |
+| What is a commit | snapshot with id (hash), author, message, parent(s) |
+| What is a branch | a movable pointer to a commit; creating one is instant |
+| HEAD | pointer to where you are, normally the current branch |
+| Detached HEAD | HEAD points at a commit, not a branch; new commits need a branch to be kept |
+| merge vs rebase | merge keeps history + merge commit; rebase replays commits on top for a straight line (new ids); never rebase shared commits |
+| Fast-forward | target had no new commits, so the label just moves |
+| Merge conflict | both sides changed the same lines; edit, remove markers, `git add`, `git commit` |
+| fetch vs pull | fetch downloads only; pull = fetch + merge (or rebase) |
+| reset vs revert | reset moves the branch back (rewrites history, local only); revert adds an undo commit (safe when shared) |
+| reset modes | `--soft` keep staged, `--mixed` keep as edits, `--hard` discard |
+| Undo last commit, keep work | `git reset --soft HEAD~1` |
+| Undo a pushed commit | `git revert <id>` |
+| Recover lost commits | `git reflog` then `git reset --hard HEAD@{n}` or `git branch rescue <id>` |
+| stash | shelve uncommitted changes: `git stash`, `git stash pop` (`-u` for new files) |
+| cherry-pick | copy one commit's change onto the current branch |
+| .gitignore | patterns for untracked files to ignore; already tracked files need `git rm --cached` |
+| Tag vs branch | tag stays on one commit (releases); branch moves |
+| Fork vs clone | fork = your server-side copy on GitHub; clone = local copy |
+
+**Scenario questions: say the commands**
+
+- "You committed to main instead of a feature branch (not pushed)": `git branch feature` → `git reset --hard HEAD~1` → `git switch feature`
+- "You need to fix production while in the middle of a feature": `git stash` → `git switch main` → fix branch, PR, merge → back, `git stash pop`
+- "Push rejected": `git pull --rebase` → resolve conflicts if any → `git push`
+- "Committed a secret": rotate the secret first; `git rm --cached`, add to `.gitignore`; rewrite history with `git filter-repo` if needed
+- "Squash your last 3 commits": `git reset --soft HEAD~3 && git commit -m "..."` or `git rebase -i HEAD~3`
+- "Find which commit introduced a bug": `git bisect start`, `git bisect bad`, `git bisect good <old-id>`, test each step, `git bisect reset`
+- "Who changed this line?": `git blame file`, then `git show <id>`
+
+## Code example
+
+The "committed on main by mistake" fix, which interviewers love:
+
+```bash
+git log --oneline -2
+git branch feature/discount        # keep the commit on a new branch
+git reset --hard HEAD~1            # take it off main (not pushed, so safe)
+git switch feature/discount
+git log --oneline -1
+```
+
+```output
+9a8b7c6 (HEAD -> main) Add discount codes
+4b8e1f2 (origin/main) Fix footer
+HEAD is now at 4b8e1f2 Fix footer
+Switched to branch 'feature/discount'
+9a8b7c6 (HEAD -> feature/discount) Add discount codes
+```
+
+Finding a bug with bisect (binary search through history):
+
+```bash
+git bisect start
+git bisect bad                     # current commit is broken
+git bisect good v1.3.0             # this release worked
+# Git checks out the middle commit: test it, then say
+git bisect good                    # or: git bisect bad
+# ...repeat; Git prints "<id> is the first bad commit"
+git bisect reset
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "app" > app.py
+git add .
+git commit -m "Fix footer"
+git remote add origin https://github.com/you/shop.git
+git push -u origin main
+echo "codes" > discount.py
+git add .
+git commit -m "Add discount codes"
+git branch feature/discount
+git reset --hard HEAD~1
+git switch feature/discount
+git log --oneline --all
+git switch main
+echo "wip" > app.py
+git stash
+git switch -c fix/urgent
+echo "fixed" > app.py
+git commit -am "Fix urgent bug"
+git switch main
+git merge fix/urgent
+git stash pop
+git reflog
+```
+
+</Playground>
+
+Practice round: two classic interview scenarios in one run, ending with the reflog that records every move.
+
+<Mistakes>
+
+<Mistake title="Answering with commands but no reason">
+
+<Wrong>
+
+```text
+Q: reset or revert?   A: "git revert."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+A: "It depends on whether the commit is shared. If it is pushed to main, I revert,
+    because it adds an undo commit and does not rewrite history for others.
+    If it is only local, reset is fine."
+```
+
+</Right>
+
+Interviewers check that you understand the consequences, not just the syntax.
+
+</Mistake>
+
+<Mistake title="Suggesting force push casually">
+
+<Wrong>
+
+```text
+"If the push is rejected, I use git push --force."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"I pull with rebase and push again. I force-push only my own branch,
+ after a rebase, and with --force-with-lease."
+```
+
+</Right>
+
+Force-pushing a shared branch can delete teammates' work; saying it casually is a red flag.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What happens when you run git commit?">
+
+Git takes the staging area (index), stores any new file contents as blob objects, writes tree objects for the directory structure, creates a commit object pointing to the root tree, the parent commit(s), author, committer and message, and moves the current branch reference to the new commit.
+
+</QA>
+
+<QA q="How do you resolve a merge conflict?">
+
+Run `git status` to see unmerged files, open each one, choose or combine the two versions between the conflict markers and remove the markers, run the tests, `git add` each resolved file and `git commit` (or `git rebase --continue` during a rebase). `git merge --abort` cancels.
+
+</QA>
+
+<QA q="What is git bisect?">
+
+A binary search through history to find the commit that introduced a bug: mark a bad and a good commit, and Git checks out commits in between for you to test and mark until it identifies the first bad commit. It can be automated with `git bisect run <test-script>`.
+
+</QA>
+
+<QA q="How would you clean up your commits before opening a PR?">
+
+Use `git rebase -i origin/main` to squash fixup commits, reorder, and reword messages into a few logical commits, then `git push --force-with-lease` to update your own branch. Alternatively rely on squash merge at the end.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A pushed commit on main broke production. Best undo?',
+      options: ['git reset --hard', 'git revert <id>', 'git commit --amend', 'Delete the branch'],
+      answer: 1,
+      why: 'Revert is safe for shared history.',
+    },
+    {
+      q: 'Which command finds the commit that introduced a bug by binary search?',
+      options: ['git blame', 'git bisect', 'git reflog', 'git grep'],
+      answer: 1,
+      why: 'bisect halves the range of commits each step.',
+    },
+    {
+      q: 'git pull is equivalent to...',
+      options: ['fetch + merge (or rebase)', 'push + fetch', 'clone + init', 'stash + pop'],
+      answer: 0,
+      why: 'Download, then integrate.',
+    },
+    {
+      q: 'You lost commits after reset --hard. First command?',
+      options: ['git clone', 'git reflog', 'git stash', 'git init'],
+      answer: 1,
+      why: 'The reflog shows where HEAD was.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Situation | Commands |
+| --- | --- |
+| Start | `git init` / `git clone <url>` |
+| Save | `git add -p` → `git commit -m "Fix ..."` |
+| Branch | `git switch -c feature/x` |
+| Integrate | `git merge x` / `git rebase main` (own branch) |
+| Conflict | edit → `git add` → `git commit` / `--continue` |
+| Sync | `git fetch` / `git pull --rebase` / `git push -u origin x` |
+| Undo uncommitted | `git restore [--staged] <f>` |
+| Undo local commit | `git reset --soft HEAD~1` |
+| Undo shared commit | `git revert <id>` |
+| Lost something | `git reflog` |
+| Shelve | `git stash` / `git stash pop` |
+| Copy one commit | `git cherry-pick <id>` |
+| Find a bad commit | `git bisect` |
+| Who changed it | `git blame <f>` |
+
+</CheatSheet>

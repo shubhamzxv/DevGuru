@@ -1,0 +1,196 @@
+---
+id: docker-what-is-docker
+title: What is Docker?
+summary: Docker packages an application together with everything it needs (runtime, libraries, settings) into an image, and runs it as an isolated container that behaves the same on every machine.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Before shipping containers, every ship was loaded by hand: sacks, barrels and boxes of every shape, and each port handled them differently. The **steel shipping container** fixed that: one standard box, and every crane, truck and ship in the world knows how to move it. What is inside does not matter.
+
+**Docker** is the shipping container for software. Your app, Python, the libraries and the settings go inside one standard box, and any machine with Docker can run it the same way.
+
+</Analogy>
+
+## Simple explanation
+
+The classic problem: **"It works on my machine."** Your laptop has Python 3.12, a certain version of psycopg2 and an environment variable set; the server has Python 3.10 and something missing, so the app breaks.
+
+Docker solves it by shipping the **environment together with the code**:
+
+- **Image**: a read-only package with the OS files, runtime, libraries, your code and the start command. Built from a **Dockerfile**
+- **Container**: a running instance of an image, isolated from other containers and from the host
+- **Docker Engine (daemon)**: the background service that builds images and runs containers
+- **Docker CLI**: the `docker` command you type; it talks to the daemon
+- **Registry**: a store for images, such as **Docker Hub** or **Amazon ECR**
+
+The flow you will use every day:
+
+```text
+Dockerfile --docker build--> Image --docker push--> Registry
+                                |                       |
+                           docker run              docker pull
+                                v                       v
+                            Container            (on the server)
+```
+
+Why teams use it:
+
+| Benefit | Example |
+| --- | --- |
+| Same everywhere | The image tested in CI is the exact one deployed to production |
+| Fast setup | A new developer runs `docker compose up` instead of installing PostgreSQL and Redis |
+| Isolation | Two apps needing Python 3.9 and 3.12 run side by side |
+| Lightweight | Containers share the host kernel, start in seconds, use little memory |
+| Deploy anywhere | The same image runs on a laptop, EC2, ECS, Kubernetes |
+
+Containers are not magic: on Linux they use kernel features, **namespaces** (each container sees its own processes, network and files) and **cgroups** (limits on CPU and memory).
+
+## Code example
+
+```bash
+docker version
+docker run --rm python:3.12-slim python -c "print('Hello from a container')"
+docker images
+```
+
+```output
+Client: Docker Engine - Community
+ Version:           27.3.1
+Server: Docker Engine - Community
+ Engine:
+  Version:          27.3.1
+Unable to find image 'python:3.12-slim' locally
+3.12-slim: Pulling from library/python
+Status: Downloaded newer image for python:3.12-slim
+Hello from a container
+REPOSITORY   TAG         IMAGE ID       SIZE
+python       3.12-slim   1d2f3a4b5c6d   124MB
+```
+
+You did not install Python on your computer, yet you just ran Python 3.12.
+
+<Playground kind="terminal">
+
+```bash
+docker version
+docker run hello-world
+docker run --rm python:3.12-slim python --version
+docker run --rm node:22-alpine node --version
+docker images
+docker ps -a
+```
+
+</Playground>
+
+Two languages, no installation: each one came inside its image.
+
+<Mistakes>
+
+<Mistake title="Thinking a container is a small virtual machine">
+
+<Wrong>
+
+```text
+"Each container boots its own operating system kernel."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Containers share the host's kernel. An image only brings the user-space files
+(libraries, tools), which is why containers start in about a second.
+```
+
+</Right>
+
+See the next topic for the full comparison with virtual machines.
+
+</Mistake>
+
+<Mistake title="Mixing up Docker and Docker Hub">
+
+<Wrong>
+
+```text
+"I uploaded my code to Docker."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Docker = the tool that builds and runs containers.
+Docker Hub = a website (registry) that stores images, like GitHub stores code.
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Docker and why is it used?">
+
+Docker is a platform to package an application with its dependencies into an image and run it as an isolated container. It removes environment differences between development, testing and production ("works on my machine"), makes setup fast, lets different apps with conflicting dependencies run on one host, and gives a standard unit for deployment to any cloud or orchestrator.
+
+</QA>
+
+<QA q="What are the main components of Docker?">
+
+The Docker Engine (the daemon, dockerd) that builds and runs containers; the CLI client (`docker`) that sends commands to it through an API; images, the read-only templates; containers, the running instances; and registries such as Docker Hub or Amazon ECR that store and share images.
+
+</QA>
+
+<QA q="How does container isolation work on Linux?">
+
+Through kernel features: namespaces give each container its own view of processes (PID), network, mount points, hostname and users, and cgroups limit and account for CPU, memory and I/O. A union filesystem (overlay2) stacks the image layers with a writable layer for the container.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which problem does Docker mainly solve?',
+      options: ['Slow internet', '"It works on my machine" environment differences', 'Writing SQL', 'Git conflicts'],
+      answer: 1,
+      why: 'The environment ships with the code inside the image.',
+    },
+    {
+      q: 'A running instance of an image is called a...',
+      options: ['Registry', 'Layer', 'Container', 'Volume'],
+      answer: 2,
+      why: 'Image = template, container = running instance.',
+    },
+    {
+      q: 'Docker Hub is...',
+      options: ['The Docker daemon', 'A registry that stores images', 'A Linux distribution', 'A cloud VM'],
+      answer: 1,
+      why: 'Like GitHub, but for images.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | One line |
+| --- | --- |
+| Image | read-only package: files + libraries + code + start command |
+| Container | running instance of an image |
+| Dockerfile | recipe to build an image |
+| Engine / daemon | background service that does the work |
+| CLI | the `docker` command |
+| Registry | image store: Docker Hub, ECR, GHCR |
+| Namespaces / cgroups | isolation / resource limits |
+
+Flow: Dockerfile → `docker build` → image → `docker push` → registry → `docker pull` → `docker run` → container.
+
+</CheatSheet>

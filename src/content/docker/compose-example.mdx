@@ -1,0 +1,289 @@
+---
+id: docker-compose-example
+title: "Compose example: Django + PostgreSQL + Redis"
+summary: A complete compose.yaml for a Django app with PostgreSQL, Redis and a Celery worker, including healthchecks, volumes, environment and the commands to run migrations.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A restaurant kitchen: the **chef** (Django web) takes orders, the **store room** (PostgreSQL) keeps everything permanently, the **counter** (Redis) holds things needed in the next few minutes, and the **helper** (Celery worker) does slow jobs in the back, like packing parcels. Compose sets up the whole kitchen with one command.
+
+</Analogy>
+
+## Simple explanation
+
+Project layout:
+
+```text
+shop/
+├── compose.yaml
+├── Dockerfile
+├── .env              # not committed
+├── requirements.txt  # django, psycopg[binary], redis, celery, gunicorn
+├── manage.py
+└── shop/settings.py
+```
+
+**compose.yaml**
+
+```yaml
+services:
+  web:
+    build: .
+    command: gunicorn shop.wsgi:application -b 0.0.0.0:8000 --workers 3
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./:/app                      # dev only: live code reload
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: celery -A shop worker -l info
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: shop
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shop -d shop"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:
+```
+
+**.env**
+
+```text
+POSTGRES_PASSWORD=secret
+DJANGO_SECRET_KEY=change-me
+DJANGO_DEBUG=true
+DATABASE_URL=postgres://shop:secret@db:5432/shop
+REDIS_URL=redis://redis:6379/0
+```
+
+`${POSTGRES_PASSWORD}` in compose.yaml is filled from `.env` in the same folder.
+
+**settings.py** reads the variables:
+
+```python
+import os
+import dj_database_url
+
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
+DEBUG = os.environ.get("DJANGO_DEBUG", "false") == "true"
+DATABASES = {"default": dj_database_url.parse(os.environ["DATABASE_URL"])}
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.environ["REDIS_URL"],
+    }
+}
+CELERY_BROKER_URL = os.environ["REDIS_URL"]
+```
+
+Notice the host names: **`db`** and **`redis`**, the service names, never localhost.
+
+Day-to-day commands:
+
+```bash
+docker compose up -d --build
+docker compose exec web python manage.py migrate
+docker compose exec web python manage.py createsuperuser
+docker compose logs -f web worker
+docker compose exec db psql -U shop -d shop
+docker compose down            # data stays in pgdata
+```
+
+For production, remove the `./:/app` bind mount, set `DJANGO_DEBUG=false`, run `collectstatic` in the Dockerfile, and usually move PostgreSQL to RDS and Redis to ElastiCache.
+
+## Code example
+
+```bash
+docker compose up -d --build
+docker compose exec web python manage.py migrate
+docker compose ps
+```
+
+```output
+[+] Network shop_default  Created
+[+] Volume "shop_pgdata"  Created
+[+] Container shop-db-1      Healthy
+[+] Container shop-redis-1   Started
+[+] Container shop-web-1     Started
+[+] Container shop-worker-1  Started
+Operations to perform:
+  Apply all migrations: admin, auth, contenttypes, orders, sessions
+Running migrations:
+  Applying contenttypes.0001_initial... OK
+  Applying orders.0001_initial... OK
+NAME            SERVICE   STATUS
+shop-db-1       db        Up (healthy)
+shop-redis-1    redis     Up
+shop-web-1      web       Up
+shop-worker-1   worker    Up
+```
+
+<Playground kind="terminal">
+
+```bash
+mkdir ~/shop
+cd ~/shop
+echo "services:" > compose.yaml
+echo "  db:" >> compose.yaml
+echo "    image: postgres:16" >> compose.yaml
+echo "    environment:" >> compose.yaml
+echo "      POSTGRES_PASSWORD: secret" >> compose.yaml
+echo "    volumes:" >> compose.yaml
+echo "      - pgdata:/var/lib/postgresql/data" >> compose.yaml
+echo "  redis:" >> compose.yaml
+echo "    image: redis:7" >> compose.yaml
+echo "  web:" >> compose.yaml
+echo "    image: nginx" >> compose.yaml
+echo "    ports:" >> compose.yaml
+echo "      - 8000:80" >> compose.yaml
+echo "volumes:" >> compose.yaml
+echo "  pgdata:" >> compose.yaml
+cat compose.yaml
+docker compose up -d
+docker compose ps
+docker volume ls
+docker exec shop-redis-1 redis-cli ping
+curl localhost:8000
+docker compose down
+docker volume ls
+docker compose down -v
+```
+
+</Playground>
+
+A smaller version of the stack (nginx stands in for Django). After `down` the `pgdata` volume is still listed; `down -v` would also remove it.
+
+<Mistakes>
+
+<Mistake title="Running migrations inside the image build">
+
+<Wrong>
+
+```dockerfile
+RUN python manage.py migrate      # at build time there is no database to connect to
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker compose exec web python manage.py migrate     # or an entrypoint script / a one-off ECS task at deploy
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Committing .env with real passwords">
+
+<Wrong>
+
+```text
+git add .env
+```
+
+</Wrong>
+
+<Right>
+
+```text
+.gitignore and .dockerignore both contain .env
+commit a .env.example with dummy values instead
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How did you set up your Django project with Docker?">
+
+Describe the stack: a Dockerfile on python-slim installing requirements and running gunicorn; Compose with web, a Celery worker using the same image with a different command, PostgreSQL with a named volume and a pg_isready healthcheck, and Redis as cache and Celery broker. Configuration comes from an env file, services reach each other by service name, migrations run with `compose exec` or an entrypoint step, and in production the database and Redis move to managed services.
+
+</QA>
+
+<QA q="Why run the Celery worker as a separate service from the same image?">
+
+The code and dependencies are identical, so one image is built once; only the command differs. Separate containers let web and workers scale, restart and be monitored independently, and a slow task cannot block web requests.
+
+</QA>
+
+<QA q="How do you wait for PostgreSQL before starting Django?">
+
+Add a healthcheck using pg_isready on the db service and `depends_on` with `condition: service_healthy` on web, plus connection retries in the app or an entrypoint wait loop, because in production databases can restart independently.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In settings.py the database host should be...',
+      options: ['localhost', 'db', '127.0.0.1', 'The laptop IP'],
+      answer: 1,
+      why: 'The Compose service name.',
+    },
+    {
+      q: 'Where do you run manage.py migrate?',
+      options: ['In a Dockerfile RUN step', 'With docker compose exec web (or at deploy time)', 'In the db container', 'Never'],
+      answer: 1,
+      why: 'It needs a running database.',
+    },
+    {
+      q: 'The worker and web services share...',
+      options: ['Nothing', 'The same image, different commands', 'The same container', 'The same port'],
+      answer: 1,
+      why: 'Build once, run with a different command.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Service | Key settings |
+| --- | --- |
+| web | `build: .`, gunicorn command, `ports`, `env_file`, `depends_on` db healthy |
+| worker | same build, `celery -A shop worker` |
+| db | `postgres:16`, env, `pgdata` volume, `pg_isready` healthcheck |
+| redis | `redis:7`, optional volume |
+
+Run: `up -d --build` → `exec web python manage.py migrate` → `logs -f` → `down` (keep data).
+
+Hosts: `db:5432`, `redis:6379`.
+
+</CheatSheet>

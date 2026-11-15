@@ -1,0 +1,200 @@
+---
+id: git-stash
+title: Stash
+summary: git stash puts your uncommitted changes on a shelf and cleans the working directory, so you can switch tasks and bring the changes back later with git stash pop.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+You are cooking when the doorbell rings for an urgent delivery. You put the half-cut vegetables in a box in the fridge, clean the counter, deal with the delivery, then take the box out and continue.
+
+**git stash** is that box: your half-done work, kept safe while you deal with something else.
+
+</Analogy>
+
+## Simple explanation
+
+Typical moment: you are in the middle of a feature, and an urgent bug must be fixed on `main`. You cannot switch branches with uncommitted changes that clash, and the work is not ready to commit.
+
+```bash
+git stash            # shelve the changes; the folder is clean again
+git switch main      # fix the bug, commit, push
+git switch feature
+git stash pop        # bring the changes back
+```
+
+Commands:
+
+| Command | Does |
+| --- | --- |
+| `git stash` / `git stash push -m "msg"` | save tracked changes (staged and unstaged) and clean up |
+| `git stash -u` | also stash **untracked** (new) files |
+| `git stash list` | show all stashes: `stash@{0}` is the newest |
+| `git stash pop` | apply the newest stash **and remove** it |
+| `git stash apply` | apply it but **keep** it in the list |
+| `git stash drop` / `git stash clear` | delete one / all stashes |
+| `git stash show -p stash@{1}` | see what a stash contains |
+| `git stash branch new-branch` | create a branch from the stash (useful if pop conflicts) |
+
+Notes:
+
+- By default **untracked files are not stashed**: they stay in the folder. Use `-u` to include them
+- Stashes are **local only**, never pushed
+- `pop` can conflict if the code changed meanwhile; resolve like a merge, then `git stash drop`
+- A stash is a short-term shelf. For anything longer, commit on a branch ("WIP" commit) instead
+
+## Code example
+
+```bash
+echo "half-done search" >> search.py
+git status -s
+git stash push -m "search work"
+git status -s
+git stash list
+git stash pop
+git status -s
+```
+
+```output
+ M search.py
+Saved working directory and index state On feature: search work
+
+stash@{0}: On feature: search work
+Dropped refs/stash@{0}
+ M search.py
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "v1" > app.py
+git add .
+git commit -m "v1"
+git switch -c feature
+git switch main
+echo "half-done work" > app.py
+git status -s
+git stash
+git status -s
+cat app.py
+git stash list
+git stash pop
+cat app.py
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Expecting new files to be stashed">
+
+<Wrong>
+
+```bash
+echo "new" > notes.md          # untracked
+git stash
+git status -s                  # ?? notes.md is still there
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git stash -u                   # include untracked files
+```
+
+</Right>
+
+Plain `git stash` only shelves files Git already tracks.
+
+</Mistake>
+
+<Mistake title="Using stash as long-term storage">
+
+<Wrong>
+
+```text
+stash@{0}: WIP on main: ...
+stash@{1}: WIP on main: ...
+... stash@{14}: WIP on main: ...      (nobody remembers what is in them)
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git switch -c wip/search
+git commit -am "WIP: search (not ready)"
+```
+
+</Right>
+
+A named branch with a commit is safer and clearer than a pile of anonymous stashes. Stashes are also easy to lose with `stash clear`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What does git stash do?">
+
+It saves the current uncommitted changes of tracked files (both staged and unstaged) onto a stack and reverts the working directory to match HEAD, so you can switch context. `git stash pop` reapplies the latest stash and removes it; `apply` reapplies without removing.
+
+</QA>
+
+<QA q="What is the difference between git stash pop and git stash apply?">
+
+Both reapply the stashed changes. `pop` also deletes the stash entry if it applies cleanly; `apply` keeps it in the stash list, so you can apply it again elsewhere or drop it later.
+
+</QA>
+
+<QA q="How do you stash untracked files?">
+
+Use `git stash -u` (or `--include-untracked`). `git stash -a` also includes ignored files.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command brings back the newest stash and removes it?',
+      options: ['git stash apply', 'git stash pop', 'git stash list', 'git stash drop'],
+      answer: 1,
+      why: 'pop = apply + drop.',
+    },
+    {
+      q: 'Are untracked files stashed by default?',
+      options: ['Yes', 'No, use -u', 'Only on main', 'Only small files'],
+      answer: 1,
+      why: 'git stash -u includes them.',
+    },
+    {
+      q: 'Are stashes pushed to GitHub?',
+      options: ['Yes', 'No, they are local only', 'Only with --all', 'Only tags'],
+      answer: 1,
+      why: 'Stashes never leave your machine.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Shelve changes | `git stash` / `git stash push -m "msg"` |
+| Include new files | `git stash -u` |
+| List | `git stash list` |
+| Bring back + remove | `git stash pop` |
+| Bring back, keep | `git stash apply` |
+| Look inside | `git stash show -p stash@{0}` |
+| Delete | `git stash drop` / `git stash clear` |
+| Turn into a branch | `git stash branch <name>` |
+
+</CheatSheet>

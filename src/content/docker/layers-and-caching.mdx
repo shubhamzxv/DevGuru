@@ -1,0 +1,194 @@
+---
+id: docker-layers-and-caching
+title: Layers and build cache
+summary: Each Dockerfile instruction creates a layer; Docker reuses a cached layer when the instruction and its inputs have not changed, but once one step changes, every step after it runs again.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of making a layered cake for a shop every morning. If yesterday's sponge and cream layers are still fresh, you reuse them and only redo the decoration on top. But if you change the sponge recipe, everything stacked above it must be made again too.
+
+Docker's **build cache** works the same way: unchanged layers are reused; a change rebuilds that layer **and all layers above it**.
+
+</Analogy>
+
+## Simple explanation
+
+- Each instruction (`RUN`, `COPY`, `ADD`, and the metadata ones) produces a **layer**
+- On rebuild, Docker checks each step in order:
+  - same instruction text, same parent layer, and for `COPY`/`ADD` the **same file contents** → `CACHED`
+  - anything different → run it, and **every later step runs too** (the cache is broken from there)
+- Layers are shared between images: ten images built `FROM python:3.12-slim` store that base only once
+
+So the golden rule: **put things that change rarely at the top, things that change often at the bottom.**
+
+```dockerfile
+FROM python:3.12-slim                 # changes: almost never
+WORKDIR /app
+COPY requirements.txt .               # changes: when you add a package
+RUN pip install -r requirements.txt   # slow step, but cached most of the time
+COPY . .                              # changes: every code edit
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "app:app"]
+```
+
+Editing `app.py` now only reruns `COPY . .`: a build of a few seconds instead of minutes.
+
+Other cache tips:
+
+- `RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*` in **one** RUN: a separate `apt-get update` layer gets cached and goes stale
+- `.dockerignore` stops changes in `.git`, logs or `__pycache__` from breaking the `COPY . .` cache
+- `docker build --no-cache` forces everything to rebuild
+- In CI, use cache from the registry (`--cache-from`, or BuildKit cache in GitHub Actions) so fresh runners are fast too
+- `docker history shop-api:1.0` lists the layers and their sizes
+
+## Code example
+
+```bash
+cd ~/app
+docker build -t shop-api .     # first build: every step runs
+docker build -t shop-api .     # nothing changed: all cached
+echo "# new route" >> app.py
+docker build -t shop-api .     # only the steps from COPY . . run
+```
+
+```output
+ => [4/7] RUN pip install -r requirements.txt          38.2s
+ ...
+ => CACHED [3/7] COPY requirements.txt .
+ => CACHED [4/7] RUN pip install -r requirements.txt
+ => CACHED [5/7] COPY . .
+ ...
+ => CACHED [3/7] COPY requirements.txt .
+ => CACHED [4/7] RUN pip install -r requirements.txt
+ => [5/7] COPY . .                                       0.1s
+```
+
+<Playground kind="terminal">
+
+```bash
+cd ~/app
+docker build -t shop-api .
+docker build -t shop-api .
+echo "# new route" >> app.py
+docker build -t shop-api .
+echo "requests" >> requirements.txt
+docker build -t shop-api .
+```
+
+</Playground>
+
+Watch the `CACHED` labels: the app.py edit breaks the cache only at `COPY . .`; the requirements.txt edit breaks it at step 3, so pip install runs again.
+
+<Mistakes>
+
+<Mistake title="COPY . . at the top">
+
+<Wrong>
+
+```dockerfile
+FROM python:3.12-slim
+COPY . .
+RUN pip install -r requirements.txt
+```
+
+</Wrong>
+
+<Right>
+
+```dockerfile
+FROM python:3.12-slim
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+```
+
+</Right>
+
+Any file change invalidates `COPY . .`, so in the wrong order every build reinstalls all packages.
+
+</Mistake>
+
+<Mistake title="Deleting files in a later layer to save space">
+
+<Wrong>
+
+```dockerfile
+RUN curl -o /tmp/big.tar.gz https://example.com/big.tar.gz
+RUN tar xzf /tmp/big.tar.gz && rm /tmp/big.tar.gz    # the 500 MB file is still in the layer above
+```
+
+</Wrong>
+
+<Right>
+
+```dockerfile
+RUN curl -o /tmp/big.tar.gz https://example.com/big.tar.gz \
+ && tar xzf /tmp/big.tar.gz && rm /tmp/big.tar.gz
+```
+
+</Right>
+
+Layers only add. A file removed in a later layer is hidden, not gone. Clean up in the same RUN, or use a multi-stage build.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does the Docker build cache work?">
+
+Each instruction creates a layer keyed by its parent layer and the instruction; for COPY and ADD the checksums of the copied files are included. If the key matches an existing layer, it is reused. As soon as one step misses the cache, all following steps are executed again, so stable steps should come first and frequently changing ones (copying source) last.
+
+</QA>
+
+<QA q="How do you speed up Docker builds?">
+
+Order instructions for caching (dependencies before source), use .dockerignore, combine related RUN commands, use slim bases, use BuildKit features such as cache mounts for pip, reuse remote cache in CI with --cache-from or the GitHub Actions cache, and use multi-stage builds so heavy build tools are not in the final image.
+
+</QA>
+
+<QA q="Why do images get big even if you delete files?">
+
+Layers are immutable and additive. Deleting a file in a later layer only marks it hidden, while the earlier layer still contains it. Clean up within the same RUN instruction or copy only the needed artefacts into a fresh stage with a multi-stage build.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Step 3 of 7 changes. Which steps run again?',
+      options: ['Only 3', '3 to 7', '1 to 3', 'All 7'],
+      answer: 1,
+      why: 'After a cache miss, every later step reruns.',
+    },
+    {
+      q: 'Why copy requirements.txt before the source code?',
+      options: ['It is required', 'So pip install stays cached when only code changes', 'Smaller files', 'Security'],
+      answer: 1,
+      why: 'Code changes often; dependencies rarely.',
+    },
+    {
+      q: 'Which flag ignores the cache?',
+      options: ['--fresh', '--no-cache', '--rm', '--pull-only'],
+      answer: 1,
+      why: 'docker build --no-cache rebuilds everything.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Rule | Why |
+| --- | --- |
+| Rarely changing steps first | cache them |
+| `COPY requirements.txt` → `RUN pip install` → `COPY . .` | code edits skip the install |
+| Combine `apt-get update && install && clean` | no stale or wasted layers |
+| `.dockerignore` | junk files do not break the cache |
+| `--no-cache` | force a full rebuild |
+| `docker history image` | see layers and sizes |
+
+</CheatSheet>

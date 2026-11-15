@@ -1,0 +1,194 @@
+---
+id: git-status-log-diff
+title: status, log and diff
+summary: git status shows what changed and where it is, git log shows the history of commits, and git diff shows the exact lines that changed.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Three questions you ask about a document shared in an office:
+
+- "What is the state of things right now?" → **git status**
+- "What happened before, and who did it?" → **git log**
+- "What exactly was changed, line by line?" → **git diff**
+
+</Analogy>
+
+## Simple explanation
+
+**git status**: the most used command. It shows your branch, staged changes, unstaged changes and untracked files, with hints for what to do next. `git status -s` is the short version (`M ` staged, ` M` unstaged, `??` untracked, `UU` conflict).
+
+**git log**: the history, newest first.
+
+- `git log --oneline` one line per commit
+- `git log --oneline --graph --all` draws branches and merges
+- `git log -n 5` last five
+- `git log --author="Asha"`, `--since="2 weeks ago"`, `--grep="login"` filter
+- `git log -- app.py` only commits that touched a file
+- `git log -p app.py` with the changes of each commit
+- `git show <id>` one commit with its diff
+
+**git diff**: line-level changes. `-` lines were removed, `+` lines were added.
+
+- `git diff` working directory vs staging area (what you have not staged)
+- `git diff --staged` staging area vs last commit (what you are about to commit)
+- `git diff main..feature` between two branches
+- `git diff HEAD~3 -- app.py` a file compared with three commits ago
+- `git diff --stat` only a summary of files and line counts
+
+Also handy: `git blame app.py` shows which commit and author last changed each line.
+
+## Code example
+
+```bash
+echo "price = 100" > shop.py
+git add shop.py && git commit -m "Add price"
+echo "price = 120" > shop.py
+git status -s
+git diff
+git log --oneline
+```
+
+```output
+[main 2f4a6b8] Add price
+ 1 file changed
+ M shop.py
+diff --git a/shop.py b/shop.py
+--- a/shop.py
++++ b/shop.py
+-price = 100
++price = 120
+2f4a6b8 (HEAD -> main) Add price
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "price = 100" > shop.py
+git add .
+git commit -m "Add price"
+echo "price = 120" > shop.py
+echo "tax = 18" > tax.py
+git status
+git status -s
+git diff
+git add shop.py
+git diff --staged
+git commit -m "Raise price"
+git log --oneline
+git show HEAD
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Expecting git diff to show staged changes">
+
+<Wrong>
+
+```bash
+git add shop.py
+git diff            # shows nothing: "where did my change go?"
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git diff --staged   # staged changes, the next commit
+```
+
+</Right>
+
+Plain `git diff` compares the working directory with the staging area; after `git add` they are the same.
+
+</Mistake>
+
+<Mistake title="Reading a long log without filters">
+
+<Wrong>
+
+```bash
+git log            # 4,000 commits, scrolling for the one you need
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git log --oneline --grep="invoice" --since="1 month ago" -- billing/
+```
+
+</Right>
+
+Filter by message, date, author and path to find the commit quickly.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you see what changed in the last commit?">
+
+`git show` (or `git show HEAD`) shows the last commit's metadata and diff; `git show --stat` shows only the files changed. `git diff HEAD~1 HEAD` gives the same diff.
+
+</QA>
+
+<QA q="How do you find who changed a particular line and why?">
+
+`git blame <file>` shows the commit, author and date for every line; then `git show <commit>` shows the full change and message. `git log -L 10,20:file` shows the history of a line range.
+
+</QA>
+
+<QA q="How do you see the history as a graph of branches?">
+
+`git log --oneline --graph --all --decorate` draws commits with branch and merge lines and shows branch and tag names.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which shows changes you have NOT staged yet?',
+      options: ['git diff', 'git diff --staged', 'git log', 'git show'],
+      answer: 0,
+      why: 'Plain diff = working directory vs staging area.',
+    },
+    {
+      q: 'Which shows only commits that touched app.py?',
+      options: ['git log app', 'git log -- app.py', 'git diff app.py', 'git status app.py'],
+      answer: 1,
+      why: 'A path after -- filters the history.',
+    },
+    {
+      q: 'In a diff, a line starting with + was...',
+      options: ['Removed', 'Added', 'Unchanged', 'Conflicted'],
+      answer: 1,
+      why: '+ added, - removed.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| State now | `git status` / `git status -s` |
+| History | `git log --oneline` |
+| History as graph | `git log --oneline --graph --all` |
+| Filter history | `--author`, `--since`, `--grep`, `-- <path>` |
+| One commit | `git show <id>` |
+| Unstaged lines | `git diff` |
+| Staged lines | `git diff --staged` |
+| Between branches | `git diff main..feature` |
+| Who changed a line | `git blame <file>` |
+
+</CheatSheet>

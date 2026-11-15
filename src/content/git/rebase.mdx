@@ -1,0 +1,207 @@
+---
+id: git-rebase
+title: Rebase
+summary: git rebase moves your branch's commits so they start from the tip of another branch, replaying each one as a new commit, which gives a straight, linear history.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+You started writing your chapter on Monday's copy of a book. By Thursday, others have added three chapters. Instead of noting "my chapter was written against Monday's copy", you **re-type your chapter at the end of Thursday's copy**, as if you had started today.
+
+That is **rebase**: your work is replayed on top of the latest version.
+
+</Analogy>
+
+## Simple explanation
+
+Situation: you branched `feature` from `main`, made two commits, and meanwhile `main` got new commits.
+
+```bash
+git switch feature
+git rebase main
+```
+
+What Git does:
+
+1. Finds the commits on `feature` that are not on `main`
+2. Temporarily sets them aside
+3. Moves `feature` to the tip of `main`
+4. **Replays** each saved commit one by one, creating **new commits with new ids** (same changes and messages)
+
+Result: `feature` now starts from the latest `main`, and merging it into main is a **fast-forward**: history is one straight line, no merge commit.
+
+If a replayed commit conflicts, Git stops:
+
+- fix the file, `git add` it, then `git rebase --continue`
+- or `git rebase --skip` to drop that commit, or `git rebase --abort` to go back to how it was
+
+**Interactive rebase** tidies your own commits before sharing: `git rebase -i HEAD~3` opens a list where you can **reorder**, **squash** (combine), **reword** (change messages) or **drop** commits.
+
+The golden rule: **do not rebase commits that other people already have** (pushed to a shared branch). Rebase creates new ids, so their copies no longer match, and they get confusing duplicates. Rebasing your **own unpushed or personal** branch is fine; after rebasing a branch you had pushed, you must `git push --force-with-lease`.
+
+`git pull --rebase` fetches and rebases your local commits on top of the remote ones, avoiding "Merge branch 'main' of origin" commits.
+
+## Code example
+
+```bash
+git switch -c feature
+echo "f1" > f1.txt && git add . && git commit -m "Feature part 1"
+echo "f2" > f2.txt && git add . && git commit -m "Feature part 2"
+git switch main
+echo "m" > m.txt && git add . && git commit -m "Hotfix on main"
+git switch feature
+git rebase main
+git log --oneline --graph --all
+```
+
+```output
+Successfully rebased and updated refs/heads/feature.
+* a71c3e9 (HEAD -> feature) Feature part 2
+* 0d5b2f4 Feature part 1
+* 6e8f1a2 (main) Hotfix on main
+* 3a1f0c2 Initial commit
+```
+
+The two feature commits now sit on top of the hotfix, with new ids.
+
+<Playground kind="git">
+
+```bash
+git init
+echo "base" > app.txt
+git add .
+git commit -m "Base"
+git switch -c feature
+echo "f1" > f1.txt
+git add .
+git commit -m "Feature part 1"
+echo "f2" > f2.txt
+git add .
+git commit -m "Feature part 2"
+git switch main
+echo "fix" > fix.txt
+git add .
+git commit -m "Hotfix on main"
+git switch feature
+git rebase main
+git switch main
+git merge feature
+git log --oneline
+```
+
+</Playground>
+
+Before the rebase the graph has two rows; after it, feature's commits move (with new ids) on top of the hotfix, and the final merge is a fast-forward.
+
+<Mistakes>
+
+<Mistake title="Rebasing a shared branch">
+
+<Wrong>
+
+```bash
+git switch main
+git rebase feature          # rewrites main, which everyone has
+git push --force            # teammates' main no longer matches
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git switch feature          # rebase YOUR branch onto main
+git rebase main
+git push --force-with-lease # only your branch, and only if nobody else pushed to it
+```
+
+</Right>
+
+Rewrite only history that nobody else has built on.
+
+</Mistake>
+
+<Mistake title="Using --force instead of --force-with-lease">
+
+<Wrong>
+
+```bash
+git push --force            # overwrites a teammate's new commits on the branch without warning
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git push --force-with-lease # refuses if the remote branch has commits you have not seen
+```
+
+</Right>
+
+`--force-with-lease` is the safe force push.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What does git rebase do?">
+
+It moves a sequence of commits to a new base commit: Git finds the commits on the current branch that are not in the target, resets the branch to the target, and re-applies the commits one by one as new commits with new hashes. The result is a linear history.
+
+</QA>
+
+<QA q="What is interactive rebase used for?">
+
+`git rebase -i <base>` lets you rewrite a series of your own commits before sharing: reorder, squash or fixup several commits into one, reword messages, edit a commit's content, or drop commits, producing a clean, reviewable history.
+
+</QA>
+
+<QA q="What is the golden rule of rebasing?">
+
+Never rebase commits that exist outside your repository and that others may have based work on, such as commits on a shared main branch. Rebasing rewrites their ids and forces everyone else to reconcile duplicated history.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'After a rebase, the replayed commits have...',
+      options: ['The same ids', 'New ids', 'No ids', 'The ids of main'],
+      answer: 1,
+      why: 'They are new commits with a new parent, so new hashes.',
+    },
+    {
+      q: 'A rebase stops on a conflict. After fixing and git add, you run:',
+      options: ['git commit', 'git rebase --continue', 'git merge', 'git push'],
+      answer: 1,
+      why: 'Continue replays the remaining commits.',
+    },
+    {
+      q: 'Which force push is safer?',
+      options: ['--force', '--force-with-lease', 'Both the same', 'Neither works'],
+      answer: 1,
+      why: 'It refuses if someone else pushed in the meantime.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Update my branch with main | `git switch feature` then `git rebase main` |
+| After fixing a conflict | `git add <f>` then `git rebase --continue` |
+| Skip / cancel | `git rebase --skip` / `git rebase --abort` |
+| Clean up last 3 commits | `git rebase -i HEAD~3` (pick, squash, reword, drop) |
+| Pull without merge commits | `git pull --rebase` |
+| Push a rebased branch | `git push --force-with-lease` |
+
+Golden rule: never rebase commits others already have.
+
+</CheatSheet>

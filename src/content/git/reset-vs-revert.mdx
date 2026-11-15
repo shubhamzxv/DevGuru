@@ -1,0 +1,209 @@
+---
+id: git-reset-vs-revert
+title: Reset vs revert
+summary: Reset moves the branch back and removes commits from history, while revert adds a new commit that undoes one; use reset for local work and revert for anything shared.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+You posted a wrong message in a group chat.
+
+- **Reset** is like deleting the message before anyone has read it. Fine if nobody saw it; confusing if people already replied to it
+- **Revert** is like posting "Correction: please ignore the previous message". Everyone stays in sync, and the history is honest
+
+</Analogy>
+
+## Simple explanation
+
+| | `git reset` | `git revert` |
+| --- | --- | --- |
+| How it undoes | moves the branch pointer back | adds a new opposite commit |
+| History | rewritten: commits leave the branch | kept: only moves forward |
+| Commit ids | later commits are dropped | unchanged |
+| After pushing | needs force push, breaks others' clones | normal push |
+| Scope | everything after the target | exactly the chosen commit(s) |
+| Undo the undo | `git reflog` + reset | revert the revert |
+| Use for | **local, unpushed** commits, personal branches | **pushed, shared** branches (main, develop) |
+
+Decision in one question: **has anyone else got this commit?**
+
+- **No** (only on your laptop, or on your own feature branch nobody else uses): **reset** is fine and keeps history tidy
+- **Yes** (pushed to a shared branch): **revert**
+
+Also:
+
+- To undo an **old** commit in the middle of history while keeping later ones: only **revert** can do this cleanly. Reset would also remove everything after it
+- To **squash** or tidy your own commits: reset `--soft` (or interactive rebase)
+- `git restore` is the third tool: it undoes **uncommitted** changes only
+
+## Code example
+
+Same starting point, two ways to undo the "Bug" commit:
+
+```bash
+git log --oneline
+```
+
+```output
+c3c3c3c (HEAD -> main) Add footer
+b2b2b2b Bug
+a1a1a1a Initial commit
+```
+
+```bash
+git reset --hard HEAD~2      # removes "Bug" AND "Add footer"
+git log --oneline
+```
+
+```output
+HEAD is now at a1a1a1a Initial commit
+a1a1a1a (HEAD -> main) Initial commit
+```
+
+```bash
+git revert b2b2b2b --no-edit # removes only the bug, keeps the footer
+git log --oneline
+```
+
+```output
+[main d4d4d4d] Revert "Bug"
+d4d4d4d (HEAD -> main) Revert "Bug"
+c3c3c3c Add footer
+b2b2b2b Bug
+a1a1a1a Initial commit
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "base" > app.py
+git add .
+git commit -m "Initial commit"
+echo "bug" > bug.py
+git add .
+git commit -m "Bug"
+echo "footer" > footer.html
+git add .
+git commit -m "Add footer"
+git switch -c try-revert
+git revert HEAD~1
+ls
+git switch main
+git reset --hard HEAD~2
+ls
+git log --oneline --all
+```
+
+</Playground>
+
+On `try-revert`, only the bug is gone and the footer stays. On `main`, reset removed both commits.
+
+<Mistakes>
+
+<Mistake title="Using reset to undo one old commit">
+
+<Wrong>
+
+```bash
+git reset --hard <commit-before-the-bug>   # also throws away every good commit after it
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git revert <bug-commit>                     # undo exactly that one
+```
+
+</Right>
+
+Reset cuts the branch; revert removes a single change.
+
+</Mistake>
+
+<Mistake title="Force-pushing after reset on main">
+
+<Wrong>
+
+```bash
+git reset --hard HEAD~1 && git push --force origin main
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git revert HEAD && git push origin main
+```
+
+</Right>
+
+Teams usually protect main against force pushes for exactly this reason.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between git reset and git revert?">
+
+Reset moves the branch pointer to an earlier commit, removing later commits from the branch (rewriting history), with soft, mixed or hard handling of the changes. Revert creates a new commit that applies the inverse of a specific commit, preserving history. Reset is for local or private history; revert is for undoing commits that are already shared.
+
+</QA>
+
+<QA q="A bad commit is in production on main. What do you do?">
+
+Revert it: `git revert <commit>` (with `-m 1` if it is a merge), push through the normal pipeline, and deploy. This is fast, safe for everyone's clones, and keeps an audit trail. Then work on a proper fix.
+
+</QA>
+
+<QA q="How do you undo a commit in the middle of history but keep the later ones?">
+
+`git revert <that-commit>`. Reset cannot do this without also removing the later commits (interactive rebase can drop it, but that rewrites history and is only suitable for unshared branches).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'The commit is pushed to main and others pulled it. Use:',
+      options: ['git reset --hard', 'git revert', 'git commit --amend', 'git stash'],
+      answer: 1,
+      why: 'Revert does not rewrite shared history.',
+    },
+    {
+      q: 'Which removes commits from the branch history?',
+      options: ['revert', 'reset', 'both', 'neither'],
+      answer: 1,
+      why: 'Reset moves the branch back.',
+    },
+    {
+      q: 'You want to undo commit 2 of 5 and keep 3, 4 and 5. Use:',
+      options: ['git reset --hard HEAD~4', 'git revert <commit 2>', 'git reset --soft', 'git restore'],
+      answer: 1,
+      why: 'Revert undoes exactly that commit.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Situation | Tool |
+| --- | --- |
+| Uncommitted change | `git restore` |
+| Last local commit, keep work | `git reset --soft HEAD~1` |
+| Local commits, throw away | `git reset --hard <id>` |
+| Pushed commit on a shared branch | `git revert <id>` |
+| Old commit in the middle | `git revert <id>` |
+| Merged feature in production | `git revert -m 1 <merge-id>` |
+
+Ask: has anyone else got this commit? No → reset. Yes → revert.
+
+</CheatSheet>

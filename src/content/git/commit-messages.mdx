@@ -1,0 +1,209 @@
+---
+id: git-commit-messages
+title: Good commit messages
+summary: A good commit message has a short imperative summary line, a blank line, and a body explaining why the change was made, so the history can be understood later.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Labels on boxes in a storeroom. "Stuff" helps nobody. "Diwali lights, tested 2026" tells you what is inside and why it is there, without opening the box.
+
+A **commit message** is the label on a change. You (and your team) will read it months later, often while fixing a bug at night.
+
+</Analogy>
+
+## Simple explanation
+
+The shape:
+
+```text
+Fix 500 error when the cart is empty           <- summary: imperative, about 50 chars
+
+The total() function divided by the number of   <- body: what and WHY, wrapped at ~72
+items to show the average, so an empty cart
+raised ZeroDivisionError. Return 0 for an empty
+cart instead.
+
+Closes #128                                      <- footer: issue links, co-authors
+```
+
+Rules that most teams follow:
+
+1. **Summary line** short (about 50 characters, maximum ~72), no full stop at the end
+2. **Imperative mood**, as if giving a command: "Add", "Fix", "Remove", "Rename" (not "Added", "Fixes", "Adding"). Test: "If applied, this commit will ... **Fix 500 error when the cart is empty**"
+3. **Blank line** between summary and body
+4. **Body explains why**, and anything surprising. The diff already shows what changed
+5. **One logical change per commit**, so one clear message is possible
+6. Reference issues and tickets: `Closes #128`, `Refs PAY-342`
+
+**Conventional Commits**, used by many teams and release tools, adds a type prefix:
+
+| Type | Use |
+| --- | --- |
+| `feat:` | a new feature (→ MINOR version) |
+| `fix:` | a bug fix (→ PATCH) |
+| `docs:` | documentation only |
+| `refactor:` | code change without behaviour change |
+| `test:` | tests only |
+| `chore:` | build, tooling, dependencies |
+| `perf:` | performance |
+| `feat!:` or `BREAKING CHANGE:` | breaking change (→ MAJOR) |
+
+Example: `feat(orders): add cancellation endpoint`. Tools such as semantic-release can then create versions and changelogs automatically.
+
+## Code example
+
+```bash
+git commit -m "fix(cart): return 0 total for an empty cart" \
+           -m "total() divided by len(items) and crashed with ZeroDivisionError." \
+           -m "Closes #128"
+git log -1
+```
+
+```output
+commit 3f2a1b0c (HEAD -> main)
+Author: Shubham Kumar <you@example.com>
+
+    fix(cart): return 0 total for an empty cart
+
+    total() divided by len(items) and crashed with ZeroDivisionError.
+
+    Closes #128
+```
+
+Each `-m` becomes a paragraph. For longer messages just run `git commit` and write in your editor.
+
+<Playground kind="git">
+
+```bash
+git init
+echo "def total(items): return sum(items) / len(items)" > cart.py
+git add .
+git commit -m "feat(cart): add cart total"
+echo "def total(items): return sum(items) / len(items) if items else 0" > cart.py
+git commit -am "fix(cart): return 0 total for an empty cart"
+echo "# docs" > README.md
+git add .
+git commit -m "docs: explain how totals are calculated"
+git log --oneline
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Messages that say nothing">
+
+<Wrong>
+
+```text
+update
+fix
+wip
+changes as discussed
+final fix 2
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Fix rounding of GST in invoice totals
+Add retry with backoff to the SMS client
+Remove unused Celery queue "reports-old"
+```
+
+</Right>
+
+A good summary lets you find a change with `git log --oneline` in seconds.
+
+</Mistake>
+
+<Mistake title="Describing the code instead of the reason">
+
+<Wrong>
+
+```text
+Change timeout from 5 to 30
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Raise payment gateway timeout to 30s
+
+The gateway's 3-D Secure step takes up to 20 seconds for some banks,
+so 5s caused false "payment failed" errors.
+```
+
+</Right>
+
+The diff shows 5 → 30; only the message can say why.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What makes a good commit message?">
+
+A concise summary line in the imperative mood (about 50 characters), a blank line, and a body explaining why the change was needed and any important context or side effects, plus references to issues. Each commit should contain one logical change so the message can describe it precisely.
+
+</QA>
+
+<QA q="What are Conventional Commits?">
+
+A convention of prefixing commit summaries with a type and optional scope, such as `feat(api):`, `fix:`, `docs:`, `refactor:`, `chore:`, with `!` or a BREAKING CHANGE footer for breaking changes. It makes history scannable and lets tools generate changelogs and semantic version bumps automatically.
+
+</QA>
+
+<QA q="Why write commit messages in the imperative mood?">
+
+It matches Git's own messages ("Merge branch", "Revert ...") and reads as what the commit does when applied: "If applied, this commit will fix the login redirect." It keeps history consistent.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which summary follows the conventions?',
+      options: ['fixed the bug.', 'Fix crash when the cart is empty', 'Fixing stuff', 'changes'],
+      answer: 1,
+      why: 'Imperative, specific, short, no full stop.',
+    },
+    {
+      q: 'What should the body mostly explain?',
+      options: ['Which lines changed', 'Why the change was made', 'Your lunch', 'The file names'],
+      answer: 1,
+      why: 'The diff shows what; the message explains why.',
+    },
+    {
+      q: 'In Conventional Commits, a bug fix uses the prefix...',
+      options: ['feat:', 'fix:', 'chore:', 'docs:'],
+      answer: 1,
+      why: 'fix: maps to a PATCH version.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Part | Rule |
+| --- | --- |
+| Summary | imperative, ~50 chars, no full stop |
+| Blank line | always, before the body |
+| Body | why, context, side effects; wrap at ~72 |
+| Footer | `Closes #128`, `Co-authored-by: Name <email>` |
+| Types | `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `feat!` |
+| Size | one logical change per commit |
+
+Test: "If applied, this commit will ___".
+
+</CheatSheet>

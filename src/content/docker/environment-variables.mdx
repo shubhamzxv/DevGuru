@@ -1,0 +1,219 @@
+---
+id: docker-environment-variables
+title: Environment variables
+summary: Environment variables pass configuration such as database URLs and debug flags into a container at run time with -e or --env-file, so the same image works in every environment; secrets should come from a secrets store, not be baked into the image.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A delivery van (the image) is the same van for every route. The **route sheet** given to the driver each morning (environment variables) says where to go today. You do not build a new van for every route; you hand over a different sheet.
+
+</Analogy>
+
+## Simple explanation
+
+**Build once, configure per environment.** The image is identical in dev, staging and production; only the variables differ (the **twelve-factor app** idea).
+
+Ways to set them:
+
+| Where | Syntax | When |
+| --- | --- | --- |
+| Command line | `docker run -e DEBUG=false -e PORT=8000 app` | quick, few values |
+| From your shell | `docker run -e AWS_REGION app` (no `=`: copies the host's value) | pass-through |
+| A file | `docker run --env-file .env app` | many values in dev |
+| Dockerfile `ENV` | `ENV PYTHONUNBUFFERED=1` | **non-secret defaults** baked in |
+| Dockerfile `ARG` | `ARG APP_VERSION` + `docker build --build-arg APP_VERSION=1.4` | **build time only** |
+| Compose | `environment:` or `env_file:` | multi-container setups |
+
+`.env` file format, one `KEY=value` per line, no quotes needed, no `export`:
+
+```text
+DEBUG=false
+DATABASE_URL=postgresql://shop:secret@db:5432/shop
+REDIS_URL=redis://cache:6379/0
+```
+
+Reading them in Python:
+
+```python
+import os
+
+DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
+DATABASE_URL = os.environ["DATABASE_URL"]       # fail fast if missing
+```
+
+Many official images are configured only by variables: `postgres` needs `POSTGRES_PASSWORD` (and optionally `POSTGRES_USER`, `POSTGRES_DB`), `mysql` needs `MYSQL_ROOT_PASSWORD`.
+
+**Secrets** (passwords, API keys): variables are visible in `docker inspect` and to anything in the container. Better:
+
+- Never put them in `ENV` or `ARG` in a Dockerfile, and keep `.env` out of git and out of the image (`.dockerignore`)
+- In AWS, store them in **Secrets Manager** or **SSM Parameter Store**; ECS injects them into the container at start
+- Docker/Compose **secrets** mount them as files under `/run/secrets/`
+
+## Code example
+
+```bash
+docker run --rm -e GREETING=namaste alpine env
+docker run -d --name db -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=shop postgres:16
+docker exec db env
+```
+
+```output
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+GREETING=namaste
+HOSTNAME=4d5e6f7a8b9c
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+HOSTNAME=4d5e6f7a8b9c
+POSTGRES_PASSWORD=secret
+POSTGRES_DB=shop
+```
+
+`docker exec db env` prints the password in plain text: that is why real secrets need a secrets store.
+
+<Playground kind="terminal">
+
+```bash
+docker run -d --name db postgres:16
+docker logs db
+docker rm db
+docker run -d --name db -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=shop postgres:16
+docker exec db env
+docker run -d --name cache -e REDIS_ARGS="--maxmemory 100mb" redis:7
+docker exec cache printenv
+docker inspect db
+```
+
+</Playground>
+
+The first `db` exits at once because `POSTGRES_PASSWORD` is missing. With it, the database starts; `env` and `inspect` show the variables.
+
+<Mistakes>
+
+<Mistake title="Secrets in the Dockerfile">
+
+<Wrong>
+
+```dockerfile
+ENV STRIPE_SECRET_KEY=sk_live_51H...     # in every copy of the image, forever
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker run -e STRIPE_SECRET_KEY="$STRIPE_SECRET_KEY" shop-api
+# production: ECS task definition "secrets" from AWS Secrets Manager
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Quotes in the .env file">
+
+<Wrong>
+
+```text
+DATABASE_URL="postgresql://shop:secret@db:5432/shop"   # docker run --env-file keeps the quotes as part of the value
+```
+
+</Wrong>
+
+<Right>
+
+```text
+DATABASE_URL=postgresql://shop:secret@db:5432/shop
+```
+
+</Right>
+
+`docker run --env-file` takes everything after `=` literally (Compose's `.env` parsing is more forgiving).
+
+</Mistake>
+
+<Mistake title="Expecting ARG values at run time">
+
+<Wrong>
+
+```dockerfile
+ARG API_URL
+CMD ["sh", "-c", "echo $API_URL"]     # empty when the container runs
+```
+
+</Wrong>
+
+<Right>
+
+```dockerfile
+ARG API_URL
+ENV API_URL=$API_URL                  # copy it into ENV if the app needs it at run time
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you configure a containerised app for different environments?">
+
+Keep one image and pass configuration at run time through environment variables (`-e`, `--env-file`, Compose `environment`, ECS task definitions or Kubernetes ConfigMaps), following twelve-factor principles. Non-secret defaults can be set with ENV; secrets come from a secrets manager.
+
+</QA>
+
+<QA q="What is the difference between ARG and ENV?">
+
+ARG defines a build-time variable available only during `docker build` (set with `--build-arg`) and not present in running containers. ENV sets an environment variable in the image that is available both in later build steps and in every container at run time, and can be overridden with `-e`.
+
+</QA>
+
+<QA q="How do you handle secrets in Docker?">
+
+Never bake them into the image (ENV, ARG, copied .env files). Inject them at run time: from a secrets manager such as AWS Secrets Manager or SSM Parameter Store via the orchestrator, as Docker or Compose secrets mounted under /run/secrets, or as BuildKit secret mounts for build-time needs. Restrict who can inspect containers and keep .env out of git.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which is available only during docker build?',
+      options: ['ENV', 'ARG', '-e', '--env-file'],
+      answer: 1,
+      why: 'ARG disappears after the build.',
+    },
+    {
+      q: 'What does -e AWS_REGION (no =) do?',
+      options: ['Sets it to empty', 'Copies the value from your shell', 'Error', 'Deletes it'],
+      answer: 1,
+      why: 'Pass-through from the host environment.',
+    },
+    {
+      q: 'Best place for a production database password on AWS ECS?',
+      options: ['Dockerfile ENV', 'Git repository', 'Secrets Manager injected by ECS', 'Image label'],
+      answer: 2,
+      why: 'Kept encrypted, injected at start, auditable.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Use |
+| --- | --- |
+| One value | `-e DEBUG=false` |
+| Many values | `--env-file .env` |
+| Default in image | `ENV PYTHONUNBUFFERED=1` |
+| Build-time only | `ARG VERSION` + `--build-arg VERSION=1.4` |
+| Compose | `environment:` / `env_file: .env` |
+| See them | `docker exec name env` · `docker inspect name` |
+| Secrets | Secrets Manager / SSM, `/run/secrets`, never in the image |
+
+Postgres needs `POSTGRES_PASSWORD`; MySQL needs `MYSQL_ROOT_PASSWORD`.
+
+</CheatSheet>

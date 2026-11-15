@@ -1,0 +1,209 @@
+---
+id: git-push-pull-fetch
+title: push, pull and fetch
+summary: git push uploads your commits to a remote, git fetch downloads new commits without changing your branch, and git pull fetches and then merges them into your branch.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+Think of a shared office cupboard of files:
+
+- **push**: you put your new files into the cupboard
+- **fetch**: you look at what others put in the cupboard and make photocopies, but leave your desk as it is
+- **pull**: you take the photocopies and also merge them into the files on your desk
+
+</Analogy>
+
+## Simple explanation
+
+**git push**
+
+- `git push -u origin feature` the first time (sets the upstream), then just `git push`
+- Pushes your local commits and moves the remote branch
+- **Rejected (non-fast-forward)** if the remote has commits you do not have: pull first, then push
+- `git push origin --delete feature` deletes a remote branch; `git push --tags` sends tags
+
+**git fetch**
+
+- Downloads new commits and updates `origin/*` branches
+- **Never changes** your local branches or files: always safe
+- `git fetch --prune` also removes `origin/*` branches that were deleted on the remote
+
+**git pull** = `git fetch` + **merge** (or **rebase**) of the upstream branch into your current branch
+
+- `git pull` merges (may create "Merge branch 'main' of ..." commits)
+- `git pull --rebase` replays your local commits on top instead: cleaner history
+- Set your default once: `git config --global pull.rebase true` (or `false`), or `pull.ff only` to refuse anything except fast-forwards
+- Can produce **merge conflicts**, handled as usual
+
+Daily rhythm on a feature branch:
+
+1. `git switch main && git pull` (get the latest)
+2. `git switch -c feature` ... commit ...
+3. `git fetch && git rebase origin/main` (stay up to date)
+4. `git push -u origin feature`, open a pull request
+
+## Code example
+
+```bash
+git push
+```
+
+```output
+To github.com:you/shop.git
+ ! [rejected]        main -> main (fetch first)
+error: failed to push some refs to 'github.com:you/shop.git'
+hint: Updates were rejected because the remote contains work that you do not have locally.
+```
+
+```bash
+git pull --rebase        # get the teammate's commit, put mine on top
+git push
+git log --oneline -3
+```
+
+```output
+Successfully rebased and updated refs/heads/main.
+To github.com:you/shop.git
+   7a1b2c3..9d8e7f6  main -> main
+9d8e7f6 (HEAD -> main, origin/main) Add discount code
+7a1b2c3 Fix footer link (teammate)
+4b8e1f2 Add app.py
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "shop" > app.py
+git add .
+git commit -m "Start shop"
+git remote add origin https://github.com/you/shop.git
+git push -u origin main
+echo "discount" > discount.py
+git add .
+git commit -m "Add discount code"
+git status
+git push
+git fetch
+git pull
+git log --oneline
+```
+
+</Playground>
+
+In the simulator nobody else pushes, so `fetch` and `pull` find nothing new; the graph shows `origin/main` moving when you push.
+
+<Mistakes>
+
+<Mistake title="Force-pushing to fix a rejected push">
+
+<Wrong>
+
+```bash
+git push --force          # deletes the teammate's commit from the remote
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git pull --rebase
+git push
+```
+
+</Right>
+
+A rejected push means someone else pushed. Integrate their work; never overwrite it.
+
+</Mistake>
+
+<Mistake title="Pulling with uncommitted work in progress">
+
+<Wrong>
+
+```bash
+# half-edited files, then:
+git pull                  # conflicts mixed with unfinished work, or the pull refuses
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git stash
+git pull --rebase
+git stash pop
+```
+
+</Right>
+
+Pull into a clean working directory (or commit first).
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What does git push do?">
+
+It uploads local commits for a branch to a remote and updates the remote branch reference, if the update is a fast-forward (or forced). With `-u` it also sets the upstream so later `git push` and `git pull` need no arguments.
+
+</QA>
+
+<QA q="Why does Git reject a push?">
+
+Because the remote branch has commits that are not in your local branch, so pushing would overwrite them (non-fast-forward). Fetch and integrate them (pull with merge or rebase), then push again. Protected branch rules on GitHub can also reject pushes.
+
+</QA>
+
+<QA q="What does git pull --rebase do?">
+
+It fetches the remote branch, then rebases your local unpushed commits on top of it instead of creating a merge commit, keeping a linear history.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command never changes your local branch or files?',
+      options: ['git pull', 'git fetch', 'git merge', 'git rebase'],
+      answer: 1,
+      why: 'fetch only downloads and updates origin/*.',
+    },
+    {
+      q: 'git pull is...',
+      options: ['push + fetch', 'fetch + merge (or rebase)', 'clone + merge', 'only download'],
+      answer: 1,
+      why: 'It downloads and integrates.',
+    },
+    {
+      q: 'Your push is rejected because the remote has new commits. Best fix?',
+      options: ['git push --force', 'git pull --rebase then git push', 'Delete the remote', 'git reset --hard'],
+      answer: 1,
+      why: 'Integrate the new commits, then push.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| First push of a branch | `git push -u origin <branch>` |
+| Push again | `git push` |
+| Download only | `git fetch` (`--prune` to clean up) |
+| Download + merge | `git pull` |
+| Download + rebase | `git pull --rebase` |
+| Default pull style | `git config --global pull.rebase true` |
+| Delete remote branch | `git push origin --delete <branch>` |
+| Push tags | `git push --tags` |
+| Safe force (own branch) | `git push --force-with-lease` |
+
+</CheatSheet>

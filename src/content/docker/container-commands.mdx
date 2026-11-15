@@ -1,0 +1,216 @@
+---
+id: docker-container-commands
+title: Container commands (ps, stop, rm, logs, exec)
+summary: The everyday container commands are docker ps to list, stop/start/restart to control, rm to delete, logs to read output, exec to run a command inside, and inspect/stats to debug.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+You are the manager of a row of shops. **ps** is walking down the row to see which shops are open. **stop/start** is closing and opening the shutters. **logs** is reading the shop's register. **exec** is stepping inside a shop to check something yourself. **rm** is ending the lease.
+
+</Analogy>
+
+## Simple explanation
+
+| Command | What it does |
+| --- | --- |
+| `docker ps` | running containers |
+| `docker ps -a` | all, including exited ones (with exit code) |
+| `docker stop web` | SIGTERM, then SIGKILL after 10 s (`-t 30` to wait longer) |
+| `docker start web` | start a stopped container again (same settings, same files) |
+| `docker restart web` | stop + start |
+| `docker kill web` | SIGKILL at once |
+| `docker rm web` | delete a stopped container; `-f` stops and deletes |
+| `docker logs web` | stdout and stderr of the main process |
+| `docker logs -f --tail 50 web` | last 50 lines, then keep following |
+| `docker exec web ls /app` | run a command in a **running** container |
+| `docker exec -it web sh` | interactive shell inside (use `bash` if the image has it) |
+| `docker inspect web` | full JSON: IP, mounts, env, restart policy, state |
+| `docker stats` | live CPU and memory per container |
+| `docker top web` | processes inside |
+| `docker cp web:/app/log.txt .` | copy files out (or in) |
+| `docker container prune` | delete all stopped containers |
+
+Containers can be referred to by **name** or by the first few characters of the **ID** (`docker stop 3f8a`).
+
+**Restart policies** decide what happens when a container exits or the machine reboots:
+
+```bash
+docker run -d --restart unless-stopped --name api shop-api
+```
+
+`no` (default), `on-failure[:5]`, `always`, `unless-stopped`.
+
+The debugging routine when a container misbehaves:
+
+1. `docker ps -a`: is it running? What exit code?
+2. `docker logs api`: the error message is almost always here
+3. `docker exec -it api sh`: look inside (files, env, can it reach the database?)
+4. `docker inspect api`: ports, mounts, env, network
+
+Exit codes worth knowing: `0` finished normally, `1` app error, `137` killed by SIGKILL (often **out of memory**), `143` stopped by SIGTERM.
+
+## Code example
+
+```bash
+docker run -d --name cache redis:7
+docker ps
+docker exec cache redis-cli ping
+docker logs --tail 2 cache
+docker stop cache
+docker ps -a
+docker rm cache
+```
+
+```output
+CONTAINER ID   IMAGE     STATUS          PORTS      NAMES
+7d6e5f4a3b2c   redis:7   Up 3 seconds    6379/tcp   cache
+PONG
+1:M 15 Nov 2026 09:00:01.123 * Server initialized
+1:M 15 Nov 2026 09:00:01.124 * Ready to accept connections tcp
+cache
+CONTAINER ID   IMAGE     STATUS                     PORTS   NAMES
+7d6e5f4a3b2c   redis:7   Exited (0) 2 seconds ago           cache
+cache
+```
+
+<Playground kind="terminal">
+
+```bash
+docker run -d --name cache redis:7
+docker run -d --name db postgres:16
+docker ps
+docker ps -a
+docker logs db
+docker exec cache redis-cli ping
+docker exec cache redis-cli set greeting hello
+docker exec cache env
+docker stats
+docker stop cache
+docker exec cache redis-cli ping
+docker start cache
+docker logs --tail 2 cache
+docker rm -f cache db
+docker ps -a
+```
+
+</Playground>
+
+Two errors on purpose: `db` exits at once (its logs say why: no `POSTGRES_PASSWORD`), and `exec` fails on a stopped container.
+
+<Mistakes>
+
+<Mistake title="exec on a container that is not running">
+
+<Wrong>
+
+```bash
+docker exec -it api sh
+# Error response from daemon: container ... is not running
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker ps -a           # Exited (1)
+docker logs api        # read why it crashed
+docker run --rm -it --entrypoint sh shop-api    # or open a shell in a fresh container from the image
+```
+
+</Right>
+
+</Mistake>
+
+<Mistake title="Letting stopped containers pile up">
+
+<Wrong>
+
+```bash
+docker run python:3.12-slim python script.py     # every run leaves an Exited container behind
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+docker run --rm python:3.12-slim python script.py
+docker container prune                            # clean the old ones
+```
+
+</Right>
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you debug a container that keeps exiting?">
+
+Check `docker ps -a` for the exit code, read `docker logs <container>` for the error, inspect configuration with `docker inspect` (env, mounts, command), and if needed start a shell from the same image with an overridden entrypoint to test by hand. Exit code 137 usually means it was killed for memory; check limits and `docker stats`.
+
+</QA>
+
+<QA q="What is the difference between docker stop and docker kill?">
+
+`docker stop` sends SIGTERM so the app can finish requests and clean up, then SIGKILL after a grace period (10 seconds by default). `docker kill` sends SIGKILL (or a chosen signal) immediately with no chance to clean up.
+
+</QA>
+
+<QA q="What is the difference between docker exec and docker run?">
+
+`docker run` creates and starts a new container from an image. `docker exec` runs an extra process inside an already running container, sharing its filesystem, network and environment, which is ideal for debugging.
+
+</QA>
+
+<QA q="What restart policies are there?">
+
+`no`, `on-failure` (optionally with a maximum retry count), `always`, and `unless-stopped`. They control whether the daemon restarts the container when it exits or when Docker starts; unless-stopped is common for single-host services.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A container shows Exited (137). Most likely?',
+      options: ['Finished OK', 'Killed with SIGKILL, often out of memory', 'Syntax error', 'Port clash'],
+      answer: 1,
+      why: '137 = 128 + 9 (SIGKILL).',
+    },
+    {
+      q: 'Which command opens a shell in a running container?',
+      options: ['docker run -it web sh', 'docker exec -it web sh', 'docker attach sh', 'docker logs -it web'],
+      answer: 1,
+      why: 'exec runs inside an existing container.',
+    },
+    {
+      q: 'How do you avoid leftover stopped containers for one-off jobs?',
+      options: ['-d', '--rm', '--restart always', '-p'],
+      answer: 1,
+      why: '--rm removes the container when it exits.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Command |
+| --- | --- |
+| List | `docker ps` / `docker ps -a` |
+| Control | `docker stop` · `start` · `restart` · `kill` |
+| Delete | `docker rm name` · `rm -f` · `container prune` |
+| Output | `docker logs -f --tail 100 name` |
+| Inside | `docker exec -it name sh` |
+| Details | `docker inspect name` · `docker stats` · `docker top name` |
+| Copy | `docker cp name:/path ./local` |
+| Auto-restart | `--restart unless-stopped` |
+
+Exit codes: 0 ok · 1 app error · 137 SIGKILL/OOM · 143 SIGTERM
+
+</CheatSheet>

@@ -1,0 +1,203 @@
+---
+id: git-reset
+title: Reset
+summary: git reset moves the current branch back to an earlier commit, and --soft, --mixed or --hard decide what happens to the changes from the commits you undo.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+You wrote three diary pages and decide the last two should go. You can:
+
+- **--soft**: tear out the pages but keep them in your hand, ready to rewrite as one page
+- **--mixed**: tear them out and put them on the desk; you choose later what to rewrite
+- **--hard**: tear them out and throw them in the bin
+
+</Analogy>
+
+## Simple explanation
+
+`git reset <commit>` moves the **branch pointer** (and HEAD) back to `<commit>`. The commits after it are no longer on the branch. The mode decides what happens to their changes:
+
+| Mode | Branch moves | Staging area | Working files | Use it to |
+| --- | --- | --- | --- | --- |
+| `--soft` | yes | **keeps** the changes staged | unchanged | squash the last few commits into one |
+| `--mixed` (default) | yes | reset | **keeps** the changes as unstaged edits | redo the commits differently |
+| `--hard` | yes | reset | **reset: changes thrown away** | get rid of the work completely |
+
+Ways to name the target: `HEAD~1` (one before), `HEAD~3`, a commit id, a branch such as `origin/main`.
+
+Common uses:
+
+- Undo the last commit but keep the work: `git reset --soft HEAD~1`
+- Combine the last 3 commits: `git reset --soft HEAD~3` then `git commit -m "One clean commit"`
+- Throw away local commits and match the remote: `git fetch` then `git reset --hard origin/main`
+- Unstage a file: `git reset app.py` (same as `git restore --staged app.py`)
+
+**Warnings**
+
+- `--hard` deletes uncommitted changes for good
+- Reset **rewrites history**: do not reset commits that are already pushed to a shared branch. Use **revert** there
+- If you reset too far, the commits are not gone yet: **git reflog** shows them and `git reset --hard HEAD@{1}` brings them back
+
+## Code example
+
+```bash
+git log --oneline
+git reset --soft HEAD~2          # undo the last two commits, keep their changes staged
+git status -s
+git commit -m "Add search with filters"
+git log --oneline
+```
+
+```output
+c3d4e5f (HEAD -> main) Add filters
+b2c3d4e Add search box
+a1b2c3d Initial commit
+A  filters.py
+A  search.py
+[main f6a7b8c] Add search with filters
+f6a7b8c (HEAD -> main) Add search with filters
+a1b2c3d Initial commit
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "v1" > app.py
+git add .
+git commit -m "v1"
+echo "search" > search.py
+git add .
+git commit -m "Add search box"
+echo "filters" > filters.py
+git add .
+git commit -m "Add filters"
+git reset --soft HEAD~2
+git status -s
+git commit -m "Add search with filters"
+echo "oops" > app.py
+git commit -am "Bad change"
+git reset --hard HEAD~1
+cat app.py
+git log --oneline
+```
+
+</Playground>
+
+Watch the graph: after `--soft HEAD~2` the two commits leave the branch, and the new commit holds both changes.
+
+<Mistakes>
+
+<Mistake title="reset --hard with work you wanted">
+
+<Wrong>
+
+```bash
+git reset --hard HEAD~1     # also throws away today's uncommitted edits
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git status                  # check for uncommitted work first
+git stash                   # keep it safe
+git reset --hard HEAD~1
+git stash pop
+```
+
+</Right>
+
+Committed work can be recovered with reflog; uncommitted edits cannot.
+
+</Mistake>
+
+<Mistake title="Resetting a pushed shared branch">
+
+<Wrong>
+
+```bash
+git reset --hard HEAD~3
+git push --force origin main      # deletes commits from everyone's main
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+git revert HEAD~2..HEAD           # new commits that undo the changes
+git push
+```
+
+</Right>
+
+On shared branches, undo with revert so history only moves forward.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain git reset --soft, --mixed and --hard.">
+
+All three move the current branch to the given commit. `--soft` keeps the changes from the undone commits staged. `--mixed` (default) also resets the staging area but keeps the changes in the working directory. `--hard` resets the staging area and the working directory, discarding the changes.
+
+</QA>
+
+<QA q="How do you undo the last commit but keep the changes?">
+
+`git reset --soft HEAD~1` keeps them staged; `git reset HEAD~1` keeps them as unstaged edits. If it was already pushed to a shared branch, use `git revert HEAD` instead.
+
+</QA>
+
+<QA q="How do you make your local branch exactly match the remote?">
+
+`git fetch origin` then `git reset --hard origin/main`. This discards local commits and uncommitted changes on that branch, so stash or branch off anything you need first.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which mode keeps the undone changes staged?',
+      options: ['--soft', '--mixed', '--hard', 'None'],
+      answer: 0,
+      why: '--soft only moves the branch.',
+    },
+    {
+      q: 'Default mode of git reset?',
+      options: ['--soft', '--mixed', '--hard', '--keep'],
+      answer: 1,
+      why: 'Mixed: branch and staging area reset, files kept.',
+    },
+    {
+      q: 'You reset too far by mistake. What helps?',
+      options: ['Nothing', 'git reflog, then reset to the old position', 'git stash', 'git clean'],
+      answer: 1,
+      why: 'The reflog remembers where HEAD was.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| What you want | Command |
+| --- | --- |
+| Undo last commit, keep staged | `git reset --soft HEAD~1` |
+| Undo last commit, keep as edits | `git reset HEAD~1` |
+| Undo and discard | `git reset --hard HEAD~1` |
+| Squash last 3 | `git reset --soft HEAD~3` then commit |
+| Match the remote | `git fetch` then `git reset --hard origin/main` |
+| Unstage a file | `git reset <file>` |
+| Went too far | `git reflog` then `git reset --hard HEAD@{1}` |
+
+Never reset pushed commits on a shared branch; revert instead.
+
+</CheatSheet>

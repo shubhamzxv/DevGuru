@@ -1,0 +1,235 @@
+---
+id: git-github-actions
+title: GitHub Actions basics
+summary: GitHub Actions runs automated workflows, written as YAML files in .github/workflows, when events such as a push or pull request happen, for example to test, build and deploy your code.
+updated: "2026-11-15"
+---
+
+<Analogy>
+
+A factory has a quality-check line: every product that comes off the machine automatically passes through checks, and only good ones go to the truck.
+
+**GitHub Actions** is that line for code: every push or pull request automatically gets tested, and only green code is merged and deployed.
+
+</Analogy>
+
+## Simple explanation
+
+A **workflow** is a YAML file in `.github/workflows/`. Its parts:
+
+- **on**: the trigger, such as `push`, `pull_request`, `schedule` (cron), `workflow_dispatch` (a manual button), or pushing a tag
+- **jobs**: one or more jobs; they run in **parallel** unless one `needs` another
+- **runs-on**: the machine, a GitHub-hosted **runner** such as `ubuntu-latest` (or your own self-hosted runner)
+- **steps**: run in order inside a job. Each step either:
+  - `uses:` a ready-made **action** from the Marketplace, such as `actions/checkout@v4` or `actions/setup-python@v5`
+  - `run:` shell commands
+
+Other key features:
+
+- **Secrets**: Settings → Secrets → used as `${{ secrets.AWS_ROLE_ARN }}`, hidden in logs. Never put keys in the YAML
+- **Matrix**: run the same job on several versions, such as Python 3.11, 3.12, 3.13
+- **Caching**: `actions/setup-python` with `cache: pip` reuses downloaded packages
+- **Artifacts**: upload build output or test reports from a job
+- **Environments**: `production` with required reviewers before deploy jobs run
+- **OIDC to AWS**: `aws-actions/configure-aws-credentials` with a role, instead of storing long-lived keys
+
+A typical CI/CD setup:
+
+1. On every pull request: install, lint, test (required check in branch protection)
+2. On merge to main: build a Docker image, push it, deploy to staging
+3. On a version tag: deploy to production
+
+Free for public repositories; private repositories get a monthly quota of minutes.
+
+## Code example
+
+`.github/workflows/ci.yml` for a FastAPI project:
+
+```yaml
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: ruff check .
+      - run: pytest -q
+
+  deploy:
+    needs: test                      # only after tests pass
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write                # for OIDC login to AWS
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-south-1
+      - run: ./scripts/deploy.sh
+```
+
+```output
+✓ test (3.12)   1m02s
+✓ test (3.13)   58s
+✓ deploy        2m31s
+```
+
+<Playground kind="git">
+
+```bash
+git init
+echo "def add(a, b): return a + b" > app.py
+echo "name: CI" > ci.yml
+git add .
+git commit -m "ci: add test workflow"
+git remote add origin https://github.com/you/shop.git
+git push -u origin main
+git switch -c fix/add
+echo "def add(a, b): return int(a) + int(b)" > app.py
+git commit -am "fix: accept numeric strings in add"
+git push -u origin fix/add
+git log --oneline --all
+```
+
+</Playground>
+
+The simulator has no CI runner. On GitHub, each of these pushes would start the workflow, and the pull request for `fix/add` would show the test results before merging.
+
+<Mistakes>
+
+<Mistake title="Secrets written in the workflow file">
+
+<Wrong>
+
+```yaml
+env:
+  AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCY   # now in git history, visible to all readers
+```
+
+</Wrong>
+
+<Right>
+
+```yaml
+permissions:
+  id-token: write
+steps:
+  - uses: aws-actions/configure-aws-credentials@v4
+    with:
+      role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+      aws-region: ap-south-1
+```
+
+</Right>
+
+Store secrets in repository or environment secrets, and prefer short-lived OIDC credentials over stored keys.
+
+</Mistake>
+
+<Mistake title="Deploying without waiting for tests">
+
+<Wrong>
+
+```yaml
+jobs:
+  test: ...
+  deploy: ...          # runs in parallel with test: broken code can ship
+```
+
+</Wrong>
+
+<Right>
+
+```yaml
+jobs:
+  test: ...
+  deploy:
+    needs: test        # starts only if test succeeded
+```
+
+</Right>
+
+Jobs run in parallel by default; `needs` creates the order.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is GitHub Actions?">
+
+GitHub's built-in CI/CD and automation service. Workflows defined in YAML under `.github/workflows` run jobs on runners when repository events occur (push, pull request, schedule, manual dispatch, tags), using shell steps and reusable actions from the Marketplace.
+
+</QA>
+
+<QA q="Explain workflow, job, step, runner and action.">
+
+A workflow is the YAML automation triggered by events. It contains jobs, which run on runners (virtual machines or self-hosted machines), in parallel unless ordered with `needs`. A job has steps executed in sequence; a step runs a shell command or uses an action, a reusable unit such as actions/checkout.
+
+</QA>
+
+<QA q="How do you handle secrets and cloud credentials in GitHub Actions?">
+
+Store them as encrypted repository, environment or organisation secrets and reference them with `${{ secrets.NAME }}`; they are masked in logs. For AWS, Azure or GCP, prefer OIDC federation: the workflow requests a short-lived token and assumes a role, so no long-lived keys are stored. Limit `permissions` and use protected environments for production.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where do workflow files live?',
+      options: ['/workflows', '.github/workflows/', '.git/hooks/', 'actions/'],
+      answer: 1,
+      why: 'GitHub reads YAML files from .github/workflows.',
+    },
+    {
+      q: 'How do you make deploy wait for test?',
+      options: ['Put it lower in the file', 'needs: test', 'if: test', 'It always waits'],
+      answer: 1,
+      why: 'Jobs are parallel unless linked with needs.',
+    },
+    {
+      q: 'What does uses: actions/checkout@v4 do?',
+      options: ['Deploys the app', 'Checks out the repository code on the runner', 'Creates a branch', 'Runs tests'],
+      answer: 1,
+      why: 'Most jobs start by fetching the code.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Part | Example |
+| --- | --- |
+| File | `.github/workflows/ci.yml` |
+| Trigger | `on: [push, pull_request]`, `schedule`, `workflow_dispatch`, tags |
+| Machine | `runs-on: ubuntu-latest` |
+| Reuse | `uses: actions/setup-python@v5` |
+| Command | `run: pytest -q` |
+| Order jobs | `needs: test` |
+| Versions | `strategy.matrix.python-version` |
+| Secrets | `${{ secrets.NAME }}` |
+| AWS without keys | OIDC + `aws-actions/configure-aws-credentials` |
+
+</CheatSheet>
