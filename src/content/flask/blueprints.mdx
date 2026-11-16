@@ -1,0 +1,276 @@
+---
+id: flask-blueprints
+title: Blueprints
+summary: "A Blueprint is a group of routes, templates and hooks for one feature (auth, blog, API) that you register on the app with a URL prefix."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+A big office building has **departments**: HR on floor 2, Accounts on floor 3. Each department has its own rooms and rules, but they are all in one building. A **Blueprint** is a department: `auth`, `blog`, `api`. The app is the building that holds them.
+
+</Analogy>
+
+## Simple explanation
+
+As an app grows, one `app.py` with 80 routes becomes hard to manage. **Blueprints** split it by feature:
+
+```python
+bp = Blueprint("auth", __name__, url_prefix="/auth")
+
+@bp.route("/login")
+def login(): ...
+```
+
+Then register it on the app: `app.register_blueprint(bp)`.
+
+What a Blueprint can have:
+
+- **Routes** with a shared **`url_prefix`** (`/auth/login`, `/auth/logout`)
+- Its own **templates** and **static** folders (`template_folder="templates"`)
+- **Hooks** for only its routes: `@bp.before_request`, `@bp.errorhandler`
+- App-wide hooks from inside the Blueprint: `@bp.before_app_request`, `@bp.app_errorhandler`
+
+**Endpoint names get the Blueprint name**: the `login` view in the `auth` Blueprint is `auth.login`. So `url_for("auth.login")`. Inside the same Blueprint, `url_for(".login")` is a shortcut.
+
+You can register the same Blueprint twice with different prefixes and `name=...` (for example `api v1` and `v2`), and nest Blueprints (Flask 2.0+): `api.register_blueprint(users_bp)`.
+
+A typical layout:
+
+```text
+myapp/
+  __init__.py       create_app() registers the blueprints
+  auth/routes.py    bp = Blueprint("auth", ...)
+  blog/routes.py    bp = Blueprint("blog", ...)
+  api/routes.py     bp = Blueprint("api", ..., url_prefix="/api")
+```
+
+## Code example
+
+Two Blueprints, prefixes, endpoint names and a Blueprint-only hook:
+
+```python
+from flask import Blueprint, Flask, url_for
+
+auth = Blueprint("auth", __name__, url_prefix="/auth")
+
+@auth.route("/login")
+def login():
+    return "login page"
+
+@auth.route("/logout")
+def logout():
+    return f"bye, go to {url_for('.login')}"     # "." means this blueprint
+
+api = Blueprint("api", __name__, url_prefix="/api")
+
+@api.before_request                              # runs only for /api routes
+def check_key():
+    print("  api hook ran")
+
+@api.get("/books")
+def books():
+    return {"books": ["Clean Code"]}
+
+app = Flask(__name__)
+app.register_blueprint(auth)
+app.register_blueprint(api)
+
+for rule in sorted(app.url_map.iter_rules(), key=lambda r: r.rule):
+    if rule.endpoint != "static":
+        print(f"{rule.rule:<14} {rule.endpoint}")
+
+c = app.test_client()
+print(c.get("/auth/logout").get_data(as_text=True))
+print("GET /api/books"); print(c.get("/api/books").json)
+print("GET /auth/login"); print(c.get("/auth/login").get_data(as_text=True))
+```
+
+```output
+/api/books     api.books
+/auth/login    auth.login
+/auth/logout   auth.logout
+bye, go to /auth/login
+GET /api/books
+  api hook ran
+{'books': ['Clean Code']}
+GET /auth/login
+login page
+```
+
+One Blueprint registered twice for API versions, and nested Blueprints:
+
+```python
+from flask import Blueprint, Flask, url_for
+
+users = Blueprint("users", __name__, url_prefix="/users")
+
+@users.get("/")
+def list_users():
+    return ["asha", "ravi"]
+
+api = Blueprint("api", __name__, url_prefix="/api")
+api.register_blueprint(users)                  # nested: /api/users/
+
+app = Flask(__name__)
+app.register_blueprint(api, url_prefix="/api/v1", name="v1")
+app.register_blueprint(api, url_prefix="/api/v2", name="v2")
+
+c = app.test_client()
+print(c.get("/api/v1/users/").json, c.get("/api/v2/users/").status_code)
+with app.test_request_context():
+    print(url_for("v1.users.list_users"), url_for("v2.users.list_users"))
+```
+
+```output
+['asha', 'ravi'] 200
+/api/v1/users/ /api/v2/users/
+```
+
+<Playground kind="none">
+
+```python
+# Project layout:
+#   app.py
+#   blog/__init__.py   (empty)
+#   blog/routes.py
+#
+# blog/routes.py
+from flask import Blueprint
+
+bp = Blueprint("blog", __name__, url_prefix="/blog", template_folder="templates")
+
+@bp.get("/")
+def index():
+    return "All posts"
+
+@bp.get("/<int:post_id>")
+def post(post_id):
+    return f"Post {post_id}"
+
+# app.py
+# from flask import Flask
+# from blog.routes import bp as blog_bp
+#
+# app = Flask(__name__)
+# app.register_blueprint(blog_bp)
+#
+# flask --app app run --debug   then open /blog/ and /blog/3
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="url_for without the Blueprint name">
+
+<Wrong>
+
+```python
+url_for("login")         # BuildError: Could not build url for endpoint 'login'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+url_for("auth.login")    # or url_for(".login") inside the auth blueprint
+```
+
+</Right>
+
+Views in a Blueprint are registered as `blueprint_name.function_name`.
+
+</Mistake>
+
+<Mistake title="Adding routes after registering">
+
+<Wrong>
+
+```python
+app.register_blueprint(bp)
+
+@bp.route("/late")            # error: blueprint already registered
+def late(): ...
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@bp.route("/late")
+def late(): ...
+
+app.register_blueprint(bp)    # register after all routes are defined
+```
+
+</Right>
+
+Define everything on the Blueprint first (import its routes module), then register it.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a Blueprint in Flask and why use it?">
+
+A Blueprint is a reusable collection of routes, templates, static files and hooks that is registered on an app. It splits a large app into features (auth, admin, api), gives URL prefixes, avoids one huge file and works naturally with the app factory.
+
+</QA>
+
+<QA q="How do endpoint names work with Blueprints?">
+
+The endpoint is `blueprint_name.view_name`, for example `auth.login`. Use it in `url_for("auth.login")`, or `url_for(".login")` from within the same Blueprint.
+
+</QA>
+
+<QA q="What is the difference between bp.before_request and bp.before_app_request?">
+
+`bp.before_request` runs only for requests handled by that Blueprint. `bp.before_app_request` registers a hook for every request of the app. The same pattern applies to `errorhandler` and `app_errorhandler`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Blueprint "shop" with url_prefix="/shop" has route "/cart". The URL is?',
+      options: ['/cart', '/shop/cart', '/shop.cart', '/cart/shop'],
+      answer: 1,
+      why: 'The prefix is added in front of every route of the Blueprint.',
+    },
+    {
+      q: 'The endpoint of view "cart" in Blueprint "shop" is?',
+      options: ['cart', 'shop.cart', 'shop/cart', 'shop_cart'],
+      answer: 1,
+      why: 'Blueprint name, a dot, then the view name.',
+    },
+    {
+      q: 'How do you attach a Blueprint to the app?',
+      options: ['app.add(bp)', 'app.register_blueprint(bp)', 'bp.run(app)', 'Blueprint(app)'],
+      answer: 1,
+      why: 'register_blueprint adds its routes, hooks and folders to the app.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Create | `bp = Blueprint("auth", __name__, url_prefix="/auth")` |
+| Route | `@bp.route("/login")`, `@bp.get(...)` |
+| Register | `app.register_blueprint(bp)` |
+| Different prefix | `app.register_blueprint(bp, url_prefix="/v2", name="v2")` |
+| Link | `url_for("auth.login")` / `url_for(".login")` |
+| Own templates | `Blueprint(..., template_folder="templates")` |
+| Hook for bp only | `@bp.before_request`, `@bp.errorhandler(404)` |
+| Hook for whole app | `@bp.before_app_request`, `@bp.app_errorhandler(404)` |
+| Nest | `parent.register_blueprint(child)` |
+
+</CheatSheet>

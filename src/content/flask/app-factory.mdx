@@ -1,0 +1,302 @@
+---
+id: flask-app-factory
+title: Application factory and config
+summary: "create_app() builds and returns a configured app, so you can make different apps for development, testing and production; config comes from classes and environment variables."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+A **car factory** can build the same model in different variants: petrol, diesel, CNG. The design is one; the settings change. An **application factory** is a function that builds your Flask app with the settings you choose: development, testing or production.
+
+</Analogy>
+
+## Simple explanation
+
+Instead of a global `app = Flask(__name__)`, write a function:
+
+```python
+def create_app(config_class=Config):
+    app = Flask(__name__)
+    app.config.from_object(config_class)
+    db.init_app(app)               # extensions
+    app.register_blueprint(auth)   # blueprints
+    return app
+```
+
+Why it is the recommended structure for real projects:
+
+- **Testing**: each test can create a fresh app with test settings (a separate database)
+- **No circular imports**: Blueprints use `current_app`, not `from app import app`
+- **Several configs**: development, testing, production from the same code
+
+**Extensions in a factory**: create them **without** an app at module level, then bind them inside the factory with **`init_app(app)`**:
+
+```python
+db = SQLAlchemy()      # extensions.py
+db.init_app(app)       # inside create_app
+```
+
+**Config sources** (later ones override earlier ones):
+
+| Method | Use |
+| --- | --- |
+| `app.config.from_object(Config)` | defaults from a class |
+| `app.config.from_prefixed_env()` | every `FLASK_*` environment variable, e.g. `FLASK_SECRET_KEY` |
+| `app.config.from_file("config.json", load=json.load)` | a file |
+| `app.config.from_pyfile("config.py", silent=True)` | a Python file, often in `instance/` |
+| `app.config.update(TESTING=True)` | direct values, e.g. in tests |
+
+Keep secrets (SECRET_KEY, DB password) in **environment variables** or a `.env` file that is **not committed**. `pip install python-dotenv` makes the Flask CLI load `.env` automatically.
+
+The CLI finds a factory by itself: `flask --app myapp run` calls `create_app()` from the `myapp` package. You can also add **custom CLI commands** with `@app.cli.command()`.
+
+## Code example
+
+A factory with config classes:
+
+```python
+from flask import Blueprint, Flask, current_app
+
+class Config:
+    SECRET_KEY = "change-me"
+    DATABASE_URL = "sqlite:///dev.db"
+    DEBUG = False
+
+class TestingConfig(Config):
+    TESTING = True
+    DATABASE_URL = "sqlite:///:memory:"
+
+class ProductionConfig(Config):
+    DATABASE_URL = "postgresql://user@db/app"
+
+main = Blueprint("main", __name__)
+
+@main.get("/info")
+def info():
+    return {"db": current_app.config["DATABASE_URL"],
+            "testing": current_app.config["TESTING"]}
+
+def create_app(config_class=Config):
+    app = Flask(__name__)
+    app.config.from_object(config_class)
+    app.register_blueprint(main)
+    return app
+
+for cfg in (Config, TestingConfig, ProductionConfig):
+    app = create_app(cfg)
+    print(cfg.__name__, app.test_client().get("/info").json)
+```
+
+```output
+Config {'db': 'sqlite:///dev.db', 'testing': False}
+TestingConfig {'db': 'sqlite:///:memory:', 'testing': True}
+ProductionConfig {'db': 'postgresql://user@db/app', 'testing': False}
+```
+
+Environment variables override defaults with `from_prefixed_env`:
+
+```python
+import os
+from flask import Flask
+
+os.environ["FLASK_SECRET_KEY"] = "from-env-1234"
+os.environ["FLASK_MAX_ITEMS"] = "50"            # JSON-parsed -> int
+
+def create_app():
+    app = Flask(__name__)
+    app.config.from_mapping(SECRET_KEY="dev", MAX_ITEMS=10)   # defaults
+    app.config.from_prefixed_env()                           # FLASK_* wins
+    return app
+
+app = create_app()
+print(app.config["SECRET_KEY"], app.config["MAX_ITEMS"], type(app.config["MAX_ITEMS"]).__name__)
+```
+
+```output
+from-env-1234 50 int
+```
+
+The `init_app` pattern and a custom CLI command:
+
+```python
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+
+db = SQLAlchemy()                              # no app yet
+
+def create_app():
+    app = Flask(__name__)
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+    db.init_app(app)                           # bind the extension here
+
+    @app.cli.command("hello")
+    def hello():
+        """Say hello (run: flask hello)."""
+        print("Hello from a custom command")
+
+    return app
+
+app = create_app()
+print("db bound:", "sqlalchemy" in app.extensions)
+result = app.test_cli_runner().invoke(args=["hello"])
+print(result.output.strip())
+```
+
+```output
+db bound: True
+Hello from a custom command
+```
+
+<Playground kind="none">
+
+```python
+# Layout:
+#   myapp/__init__.py      <- this file
+#   myapp/extensions.py    db = SQLAlchemy()
+#   myapp/main/routes.py   bp = Blueprint("main", __name__)
+#   .env                   FLASK_SECRET_KEY=... (not committed)
+#
+# pip install flask flask-sqlalchemy python-dotenv
+# flask --app myapp run --debug
+from flask import Flask
+
+class Config:
+    SECRET_KEY = "dev"
+    SQLALCHEMY_DATABASE_URI = "sqlite:///app.db"
+
+def create_app(config_class=Config):
+    app = Flask(__name__, instance_relative_config=True)
+    app.config.from_object(config_class)
+    app.config.from_prefixed_env()           # FLASK_SECRET_KEY etc. override
+
+    from .extensions import db
+    db.init_app(app)
+
+    from .main.routes import bp as main_bp   # import inside: no circular imports
+    app.register_blueprint(main_bp)
+
+    return app
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Binding extensions at import time">
+
+<Wrong>
+
+```python
+from app import app
+db = SQLAlchemy(app)          # ties db to one global app; tests cannot make a new one
+```
+
+</Wrong>
+
+<Right>
+
+```python
+db = SQLAlchemy()             # extensions.py
+
+def create_app():
+    app = Flask(__name__)
+    db.init_app(app)
+    return app
+```
+
+</Right>
+
+`init_app` lets one extension object work with any app the factory creates.
+
+</Mistake>
+
+<Mistake title="Committing secrets in config.py">
+
+<Wrong>
+
+```python
+class Config:
+    SECRET_KEY = "my-real-production-key"
+    SQLALCHEMY_DATABASE_URI = "postgresql://admin:P@ss@prod-db/app"
+```
+
+</Wrong>
+
+<Right>
+
+```python
+class Config:
+    SECRET_KEY = os.environ["SECRET_KEY"]
+    SQLALCHEMY_DATABASE_URI = os.environ["DATABASE_URL"]
+```
+
+</Right>
+
+Secrets in Git stay in the history forever. Use environment variables or a secrets manager.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the application factory pattern?">
+
+A function, usually `create_app()`, that creates the Flask app, loads config, initializes extensions with `init_app` and registers Blueprints, then returns the app. It allows several app instances with different settings, makes testing easy and avoids circular imports.
+
+</QA>
+
+<QA q="Why do Flask extensions have an init_app method?">
+
+So the extension object can be created at module level without an app and bound later to any app created by the factory. Its state is stored on `app.extensions`, and code uses `current_app` to find it.
+
+</QA>
+
+<QA q="How do you manage configuration for different environments?">
+
+Config classes (`Config`, `DevelopmentConfig`, `TestingConfig`, `ProductionConfig`) passed to `create_app`, with secrets from environment variables (`from_prefixed_env`, `os.environ`) or a `.env` file loaded by python-dotenv, and instance config files that are not committed.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does create_app() return?',
+      options: ['A Blueprint', 'A configured Flask app', 'A config dict', 'A WSGI server'],
+      answer: 1,
+      why: 'The factory builds, configures and returns the app object.',
+    },
+    {
+      q: 'Which method binds an extension to an app created later?',
+      options: ['bind()', 'init_app(app)', 'register(app)', 'attach(app)'],
+      answer: 1,
+      why: 'Extensions follow the init_app(app) convention.',
+    },
+    {
+      q: 'from_prefixed_env() reads which variables by default?',
+      options: ['APP_*', 'FLASK_*', 'All variables', 'Only SECRET_KEY'],
+      answer: 1,
+      why: 'It loads FLASK_* variables, removing the prefix, so FLASK_SECRET_KEY sets SECRET_KEY.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Factory | `def create_app(config_class=Config): ... return app` |
+| Load class | `app.config.from_object(Config)` |
+| Env vars | `app.config.from_prefixed_env()` (`FLASK_SECRET_KEY`) |
+| Python file | `app.config.from_pyfile("config.py", silent=True)` |
+| Direct | `app.config.update(TESTING=True)` |
+| Extension | `db = SQLAlchemy()` then `db.init_app(app)` |
+| .env support | `pip install python-dotenv` |
+| Run factory | `flask --app myapp run` (finds `create_app`) |
+| CLI command | `@app.cli.command("seed")` |
+| Read config | `current_app.config["KEY"]` |
+
+</CheatSheet>

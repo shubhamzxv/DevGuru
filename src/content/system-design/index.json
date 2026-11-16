@@ -2,7 +2,7 @@
   "name": "System Design Basics",
   "icon": "🏗️",
   "tagline": "Microservices, caching, queues, scaling",
-  "order": 11,
+  "order": 12,
   "playground": "diagram",
   "modules": [
     {

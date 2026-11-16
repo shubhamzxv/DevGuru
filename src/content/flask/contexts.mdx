@@ -1,0 +1,263 @@
+---
+id: flask-contexts
+title: Application and request context (current_app, g)
+summary: "Flask keeps the current app and the current request in contexts, so request, session, current_app and g work like globals but are safe per request."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+Think of a **token counter at a bank**. Each customer gets a token, and while it is their turn, the clerk's desk holds **only their papers**. When they leave, the desk is cleared for the next token. A **request context** is that desk: `request`, `session` and `g` always mean "the customer being served right now".
+
+</Analogy>
+
+## Simple explanation
+
+Flask has two contexts:
+
+| Context | Gives you | Pushed when |
+| --- | --- | --- |
+| **Application context** | `current_app`, `g` | for each request, CLI command, or `with app.app_context():` |
+| **Request context** | `request`, `session` | for each request, or `with app.test_request_context():` |
+
+A request context always pushes an app context too.
+
+**Why contexts?** In a view you write `request.args`, not `request_for_thread_7.args`. `request` is a **proxy**: it points to the request of the current context. Flask uses Python's **contextvars**, so it is safe with threads and with async views.
+
+**`current_app`**: the app handling the current work. Use it inside Blueprints and extensions, where importing `app` directly would cause circular imports or break the **app factory** pattern. Example: `current_app.config["API_KEY"]`, `current_app.logger.info(...)`.
+
+**`g`**: a scratch space for **one request**. Store things once and reuse them: the database connection, the logged-in user. It is **emptied after every request**. It is not for data that must survive between requests (use the session or a database).
+
+**Teardown**: `@app.teardown_appcontext` runs when the app context ends, even after an error. That is where you close what you stored in `g`.
+
+**Common error**: `RuntimeError: Working outside of application context`. It means code used `current_app`, `g` or the database outside a request, for example in a script. Fix: wrap it in `with app.app_context():`.
+
+## Code example
+
+`g` lives for one request; `current_app` gives the app:
+
+```python
+from flask import Flask, current_app, g
+
+app = Flask(__name__)
+app.config["SITE"] = "DevGuru"
+
+def get_db():
+    if "db" not in g:                           # create once per request
+        print("  opening connection")
+        g.db = {"connected": True}
+    return g.db
+
+@app.teardown_appcontext
+def close_db(error):
+    if g.pop("db", None) is not None:
+        print("  closing connection")
+
+@app.get("/")
+def index():
+    get_db(); get_db()                          # second call reuses g.db
+    return f"{current_app.config['SITE']} ok"
+
+c = app.test_client()
+print("request 1"); print(c.get("/").get_data(as_text=True))
+print("request 2"); print(c.get("/").get_data(as_text=True))
+```
+
+```output
+request 1
+  opening connection
+  closing connection
+DevGuru ok
+request 2
+  opening connection
+  closing connection
+DevGuru ok
+```
+
+Working outside a context, and the fix:
+
+```python
+from flask import Flask, current_app, request
+
+app = Flask(__name__)
+app.config["API_KEY"] = "abc"
+
+try:
+    print(current_app.config["API_KEY"])
+except RuntimeError as e:
+    print("Error:", str(e).splitlines()[0])
+
+with app.app_context():                         # for scripts, CLI jobs, tests
+    print("Inside app context:", current_app.config["API_KEY"])
+
+with app.test_request_context("/search?q=flask"):   # fake request for tests
+    print("Path:", request.path, "q =", request.args["q"])
+```
+
+```output
+Error: Working outside of application context.
+Inside app context: abc
+Path: /search q = flask
+```
+
+<Playground kind="none">
+
+```python
+# app.py  ->  flask --app app run --debug
+# A real per-request DB connection with sqlite3 and g.
+import sqlite3
+from flask import Flask, g
+
+app = Flask(__name__)
+DATABASE = "app.db"
+
+def get_db():
+    if "db" not in g:
+        g.db = sqlite3.connect(DATABASE)
+        g.db.row_factory = sqlite3.Row
+    return g.db
+
+@app.teardown_appcontext
+def close_db(exc):
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
+
+@app.get("/")
+def index():
+    db = get_db()
+    db.execute("CREATE TABLE IF NOT EXISTS visits (id INTEGER PRIMARY KEY)")
+    db.execute("INSERT INTO visits DEFAULT VALUES")
+    db.commit()
+    count = db.execute("SELECT COUNT(*) FROM visits").fetchone()[0]
+    return f"Visits: {count}"
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using g to keep data between requests">
+
+<Wrong>
+
+```python
+@app.post("/cart")
+def add():
+    g.cart = ["pen"]           # gone after this request
+
+@app.get("/cart")
+def show():
+    return g.get("cart", [])   # always []
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.post("/cart")
+def add():
+    session["cart"] = ["pen"]  # or save to the database
+```
+
+</Right>
+
+`g` is reset for every request. Use the session, a database or a cache for data that must last.
+
+</Mistake>
+
+<Mistake title="Importing app inside a Blueprint">
+
+<Wrong>
+
+```python
+# views/users.py
+from app import app            # circular import, breaks the app factory
+key = app.config["API_KEY"]
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from flask import current_app
+
+def handler():
+    key = current_app.config["API_KEY"]
+```
+
+</Right>
+
+`current_app` works in any module, as long as it is used during a request or inside `app.app_context()`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between the application context and the request context?">
+
+The application context holds app-level data: `current_app` and `g`. The request context holds request data: `request` and `session`. During a request both are active; a CLI command or script can push only the app context with `app.app_context()`.
+
+</QA>
+
+<QA q="What is g in Flask?">
+
+A namespace object for storing data during one application context, typically one request, such as a DB connection or the current user. It is cleared at the end of the context.
+
+</QA>
+
+<QA q="How can request be global and still thread-safe?">
+
+`request` is a proxy (Werkzeug `LocalProxy`) that looks up the current request from a context variable. Each thread or async task has its own context, so each sees its own request.
+
+</QA>
+
+<QA q="When do you get 'Working outside of application context'?">
+
+When code uses `current_app`, `g` or an extension such as Flask-SQLAlchemy outside a request, for example in a script or at import time. Push a context with `with app.app_context():`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which object is cleared after every request?',
+      options: ['session', 'g', 'app.config', 'current_app'],
+      answer: 1,
+      why: 'g lives only for the current app context.',
+    },
+    {
+      q: 'Why use current_app in a Blueprint?',
+      options: ['It is faster', 'To avoid importing app (circular imports, app factory)', 'It creates a new app', 'It is required by Jinja'],
+      answer: 1,
+      why: 'current_app points to whichever app is handling the request.',
+    },
+    {
+      q: 'How do you run DB code in a standalone script?',
+      options: ['with app.app_context():', 'app.run()', 'flask routes', 'import g'],
+      answer: 0,
+      why: 'Pushing an app context makes current_app and extensions work.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Current app | `from flask import current_app` |
+| Read config anywhere | `current_app.config["KEY"]` |
+| Per-request storage | `g.user = user`, `g.get("user")` |
+| Clean up | `@app.teardown_appcontext` + `g.pop("db", None)` |
+| Script / CLI | `with app.app_context(): ...` |
+| Fake request | `with app.test_request_context("/x?q=1"): ...` |
+| Request context gives | `request`, `session` |
+| App context gives | `current_app`, `g` |
+
+</CheatSheet>

@@ -1,0 +1,251 @@
+---
+id: flask-request-object
+title: The request object
+summary: "request holds everything the client sent: query string (args), form fields (form), JSON body (get_json), headers, cookies and uploaded files."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+The `request` object is like the **envelope of a courier parcel**. The address label is the URL and **query string**, the stickers are the **headers**, the letter inside is the **body** (form or JSON), and any extra package is an **uploaded file**. Flask opens the envelope and hands you each part.
+
+</Analogy>
+
+## Simple explanation
+
+`from flask import request` gives you the **current request**. It looks like a global, but Flask makes it point to the right request for each thread (this is the **request context**, covered later).
+
+| Part | Attribute | Example |
+| --- | --- | --- |
+| Query string `?q=flask&page=2` | `request.args` | `request.args.get("page", 1, type=int)` |
+| HTML form fields | `request.form` | `request.form["email"]` |
+| JSON body | `request.get_json()` or `request.json` | `data["title"]` |
+| Headers | `request.headers` | `request.headers.get("User-Agent")` |
+| Cookies | `request.cookies` | `request.cookies.get("theme")` |
+| Uploaded files | `request.files` | `request.files["photo"]` |
+| Method, path, URL | `request.method`, `.path`, `.url` | `"POST"`, `"/search"` |
+| Client IP | `request.remote_addr` | `"127.0.0.1"` |
+
+`args`, `form` and `files` are **MultiDicts**: a key can have many values. `.get(key)` gives the first; `.getlist(key)` gives all.
+
+**`[]` versus `.get()`**:
+
+- `request.form["email"]`: if missing, Flask returns **400 Bad Request** automatically
+- `request.form.get("email")`: returns `None` (or your default) instead
+
+**`.get(key, default, type=int)`** converts the value and falls back to the default if conversion fails.
+
+For JSON, `request.get_json()` needs the header `Content-Type: application/json`. Without it Flask returns **415 Unsupported Media Type**. Use `request.get_json(silent=True)` to get `None` instead.
+
+## Code example
+
+Query string, form, JSON and headers:
+
+```python
+from flask import Flask, request
+
+app = Flask(__name__)
+
+@app.get("/search")
+def search():
+    q = request.args.get("q", "")
+    page = request.args.get("page", 1, type=int)
+    tags = request.args.getlist("tag")
+    return {"q": q, "page": page, "tags": tags}
+
+@app.post("/signup")
+def signup():
+    return {"email": request.form["email"], "city": request.form.get("city", "unknown")}
+
+@app.post("/api/notes")
+def add_note():
+    data = request.get_json()
+    return {"title": data["title"], "agent": request.headers.get("User-Agent")}
+
+c = app.test_client()
+print(c.get("/search?q=flask&page=2&tag=web&tag=python").json)
+print(c.get("/search?page=abc").json)                    # bad int -> default
+print(c.post("/signup", data={"email": "a@b.in"}).json)
+print(c.post("/signup", data={}).status_code)             # form["email"] missing -> 400
+print(c.post("/api/notes", json={"title": "Hi"}, headers={"User-Agent": "curl/8"}).json)
+print(c.post("/api/notes", data="title=Hi").status_code)  # not JSON -> 415
+```
+
+```output
+{'page': 2, 'q': 'flask', 'tags': ['web', 'python']}
+{'page': 1, 'q': '', 'tags': []}
+{'city': 'unknown', 'email': 'a@b.in'}
+400
+{'agent': 'curl/8', 'title': 'Hi'}
+415
+```
+
+File upload with `request.files`:
+
+```python
+import io
+from flask import Flask, request
+from werkzeug.utils import secure_filename
+
+app = Flask(__name__)
+
+@app.post("/upload")
+def upload():
+    f = request.files.get("photo")
+    if f is None or f.filename == "":
+        return {"error": "no file"}, 400
+    name = secure_filename(f.filename)              # removes ../ and odd characters
+    size = len(f.read())                            # real code: f.save(os.path.join(folder, name))
+    return {"saved_as": name, "bytes": size, "type": f.mimetype}
+
+c = app.test_client()
+r = c.post("/upload", data={"photo": (io.BytesIO(b"fake image"), "../../my photo.png")},
+           content_type="multipart/form-data")
+print(r.json)
+print(c.post("/upload", data={}, content_type="multipart/form-data").status_code)
+```
+
+```output
+{'bytes': 10, 'saved_as': 'my_photo.png', 'type': 'image/png'}
+400
+```
+
+<Playground kind="none">
+
+```python
+# app.py  ->  flask --app app run --debug
+# Try:
+#   http://127.0.0.1:5000/echo?name=Guru&lang=hi
+#   curl -X POST http://127.0.0.1:5000/echo -H "Content-Type: application/json" -d "{\"x\": 1}"
+from flask import Flask, request
+
+app = Flask(__name__)
+
+@app.route("/echo", methods=["GET", "POST"])
+def echo():
+    return {
+        "method": request.method,
+        "args": request.args.to_dict(),
+        "json": request.get_json(silent=True),
+        "user_agent": request.headers.get("User-Agent"),
+    }
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Reading JSON with request.form">
+
+<Wrong>
+
+```python
+title = request.form["title"]     # client sent JSON -> 400 Bad Request
+```
+
+</Wrong>
+
+<Right>
+
+```python
+data = request.get_json()
+title = data["title"]
+```
+
+</Right>
+
+`request.form` is only for HTML forms (`application/x-www-form-urlencoded` or `multipart/form-data`).
+
+</Mistake>
+
+<Mistake title="Saving uploads with the client's file name">
+
+<Wrong>
+
+```python
+f.save("uploads/" + f.filename)      # "../../app.py" overwrites your code
+```
+
+</Wrong>
+
+<Right>
+
+```python
+f.save(os.path.join("uploads", secure_filename(f.filename)))
+```
+
+</Right>
+
+Never trust the file name from the client. Also limit size with `app.config["MAX_CONTENT_LENGTH"]`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you read query parameters, form data and JSON in Flask?">
+
+`request.args` for the query string, `request.form` for form fields, `request.get_json()` for a JSON body, `request.files` for uploads. Use `.get(key, default, type=...)` for optional values.
+
+</QA>
+
+<QA q="request looks like a global variable. How is it thread-safe?">
+
+It is a proxy to the request of the current context. Flask stores the active request in a context variable (`contextvars`), so each thread or async task sees its own request.
+
+</QA>
+
+<QA q="What happens if request.form['key'] is missing?">
+
+Flask raises `BadRequestKeyError`, which becomes a 400 Bad Request response. Use `.get()` when the field is optional.
+
+</QA>
+
+<QA q="How do you limit upload size?">
+
+Set `app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024` (16 MB). Larger requests get 413 Request Entity Too Large.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where do you read ?page=2 from?',
+      options: ['request.form', 'request.args', 'request.json', 'request.page'],
+      answer: 1,
+      why: 'The query string is in request.args.',
+    },
+    {
+      q: 'request.args.get("page", 1, type=int) with ?page=abc returns?',
+      options: ['"abc"', 'Error 400', '1', 'None'],
+      answer: 2,
+      why: 'When conversion fails, the default is returned.',
+    },
+    {
+      q: 'How do you get all values of ?tag=a&tag=b?',
+      options: ['request.args["tag"]', 'request.args.getlist("tag")', 'request.args.all("tag")', 'request.tags'],
+      answer: 1,
+      why: 'args is a MultiDict; getlist returns every value.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Query param | `request.args.get("q", "")` |
+| Typed query param | `request.args.get("page", 1, type=int)` |
+| Many values | `request.args.getlist("tag")` |
+| Form field | `request.form["email"]` / `.get("city")` |
+| JSON body | `request.get_json()` (`silent=True` for no error) |
+| Header | `request.headers.get("Authorization")` |
+| Cookie | `request.cookies.get("theme")` |
+| File | `request.files["photo"]` + `secure_filename` |
+| Method / path | `request.method`, `request.path` |
+| Upload limit | `app.config["MAX_CONTENT_LENGTH"]` |
+
+</CheatSheet>

@@ -1,8 +1,8 @@
 # DevGuru
 
-**Learn backend and cloud tech the simple way.** DevGuru explains Python, SQL, Django, FastAPI, REST, AWS, Git, Docker, Linux, DSA and System Design in simple English, with real-life analogies and **code you can run in your browser** — no server, no install.
+**Learn backend and cloud tech the simple way.** DevGuru explains Python, SQL, Django, FastAPI, Flask, REST, AWS, Git, Docker, Linux, DSA and System Design in simple English, with real-life analogies and **code you can run in your browser** — no server, no install.
 
-- **365 topics** in 11 tracks. Every topic: analogy → simple explanation → code with real output → "Try it yourself" playground → common mistakes → interview questions → quiz → cheat sheet.
+- **390 topics** in 12 tracks. Every topic: analogy → simple explanation → code with real output → "Try it yourself" playground → common mistakes → interview questions → quiz → cheat sheet.
 - **Runs in the browser**: Python (Pyodide), SQL (SQLite via sql.js), and simulators for Git, a Linux/Docker terminal, REST APIs and AWS architecture diagrams.
 - **Works offline** after the first visit (PWA), on phones first.
 - **No account needed.** Progress is saved in the browser. Optional login with a phone number or username keeps it on every device ([docs/login.md](docs/login.md)).
@@ -14,6 +14,7 @@
 | 🗄️ SQL              | 58     | SQLite with a sample database + JOIN visualizer               |
 | 🎸 Django           | 37     | code + diagrams (needs a real server)                         |
 | ⚡ FastAPI          | 23     | code + diagrams                                               |
+| 🧪 Flask            | 25     | code with real output (run it on your computer)               |
 | 🌐 REST APIs & HTTP | 28     | request builder with a mock API                               |
 | ☁️ AWS              | 31     | clickable architecture diagrams                               |
 | 🌿 Git & GitHub     | 29     | Git simulator with a live commit graph                        |

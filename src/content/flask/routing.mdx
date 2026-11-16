@@ -1,0 +1,278 @@
+---
+id: flask-routing
+title: Routes and URL rules
+summary: "Map URLs to functions with @app.route, read parts of the URL with variable rules and converters, and build URLs safely with url_for."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+A **route** is like the **list of platforms** at a railway station. "Trains to Mumbai: platform 3". In Flask: "requests to `/users/7`: the `get_user` function". **Variable rules** are like "any train number 12xxx goes to platform 5": one rule handles many URLs.
+
+</Analogy>
+
+## Simple explanation
+
+`@app.route("/path")` connects a URL to a **view function**. The function's name becomes the **endpoint** name by default.
+
+**Variable rules** capture parts of the URL: `/users/<user_id>` passes `user_id` to the function.
+
+**Converters** check and convert the value:
+
+| Converter | Matches | Example |
+| --- | --- | --- |
+| `string` (default) | text without `/` | `<name>` |
+| `int` | whole numbers | `<int:user_id>` |
+| `float` | decimal numbers | `<float:price>` |
+| `path` | text **with** `/` | `<path:filepath>` |
+| `uuid` | UUID strings | `<uuid:token>` |
+
+If the converter does not match (for example `/users/abc` for `<int:user_id>`), Flask returns **404** and your function never runs.
+
+**Trailing slash rules**:
+
+- `@app.route("/projects/")`: visiting `/projects` **redirects** to `/projects/` (like a folder)
+- `@app.route("/about")`: visiting `/about/` gives **404** (like a file)
+
+**url_for(endpoint, **values)** builds a URL from the endpoint name. Use it instead of hard-coding paths: if you change the URL rule later, every link still works. Extra values become **query parameters**.
+
+## Code example
+
+Variable rules with converters:
+
+```python
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/users/<int:user_id>")
+def get_user(user_id):
+    return f"User {user_id}, type {type(user_id).__name__}"
+
+@app.route("/files/<path:filepath>")
+def get_file(filepath):
+    return f"File: {filepath}"
+
+@app.route("/greet/<name>")
+def greet(name):
+    return f"Hello, {name}"
+
+c = app.test_client()
+print(c.get("/users/42").get_data(as_text=True))
+print(c.get("/users/abc").status_code)            # not an int -> 404
+print(c.get("/files/docs/2026/report.pdf").get_data(as_text=True))
+print(c.get("/greet/Shubham").get_data(as_text=True))
+```
+
+```output
+User 42, type int
+404
+File: docs/2026/report.pdf
+Hello, Shubham
+```
+
+Trailing slashes and `url_for`:
+
+```python
+from flask import Flask, url_for
+
+app = Flask(__name__)
+
+@app.route("/projects/")
+def projects():
+    return "projects"
+
+@app.route("/about")
+def about():
+    return "about"
+
+@app.route("/users/<int:user_id>")
+def get_user(user_id):
+    return str(user_id)
+
+c = app.test_client()
+r = c.get("/projects")
+print(r.status_code, r.headers["Location"])        # redirect to the slash version
+print(c.get("/about/").status_code)
+
+with app.test_request_context():                 # url_for needs a context
+    print(url_for("get_user", user_id=7))
+    print(url_for("get_user", user_id=7, tab="orders"))   # extra -> query string
+    print(url_for("about", _external=True))
+```
+
+```output
+308 http://localhost/projects/
+404
+/users/7
+/users/7?tab=orders
+http://localhost/about
+```
+
+Several URLs for one view, and a custom endpoint name:
+
+```python
+from flask import Flask, url_for
+
+app = Flask(__name__)
+
+@app.route("/")
+@app.route("/home")
+def index():
+    return "index"
+
+@app.route("/dashboard", endpoint="dash")
+def show_dashboard():
+    return "dashboard"
+
+c = app.test_client()
+print(c.get("/").get_data(as_text=True), c.get("/home").get_data(as_text=True))
+with app.test_request_context():
+    print(url_for("dash"))
+```
+
+```output
+index index
+/dashboard
+```
+
+<Playground kind="none">
+
+```python
+# app.py  ->  flask --app app run --debug
+from flask import Flask, url_for
+
+app = Flask(__name__)
+
+@app.route("/")
+def index():
+    links = [url_for("product", product_id=i) for i in (1, 2, 3)]
+    return "<br>".join(f'<a href="{u}">{u}</a>' for u in links)
+
+@app.route("/products/<int:product_id>")
+def product(product_id):
+    return f"Product number {product_id}"
+
+# Try: /products/2  and  /products/two (404)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Hard-coding URLs in links">
+
+<Wrong>
+
+```python
+return f'<a href="/users/{user.id}">Profile</a>'
+```
+
+</Wrong>
+
+<Right>
+
+```python
+return f'<a href="{url_for("get_user", user_id=user.id)}">Profile</a>'
+```
+
+</Right>
+
+With `url_for`, changing `/users/` to `/members/` in the route updates every link automatically.
+
+</Mistake>
+
+<Mistake title="Function argument name does not match the rule">
+
+<Wrong>
+
+```python
+@app.route("/users/<int:user_id>")
+def get_user(id):            # TypeError: unexpected keyword argument 'user_id'
+    ...
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.route("/users/<int:user_id>")
+def get_user(user_id):
+    ...
+```
+
+</Right>
+
+Flask passes variables as keyword arguments, so the names must match exactly.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are converters in Flask routes?">
+
+Converters such as `int`, `float`, `path`, `uuid` and the default `string` validate and convert a URL part before it reaches the view. `<int:id>` passes an `int`; a non-number gives 404 without calling the view. You can write custom converters by subclassing `werkzeug.routing.BaseConverter`.
+
+</QA>
+
+<QA q="Why use url_for instead of hard-coded URLs?">
+
+It builds URLs from endpoint names, so changing a rule does not break links. It escapes values correctly, adds extra arguments as a query string, handles Blueprint prefixes, and can build absolute URLs with `_external=True`.
+
+</QA>
+
+<QA q="What is the difference between /projects/ and /about in route rules?">
+
+A rule with a trailing slash acts like a folder: a request without the slash is redirected to it. A rule without a trailing slash acts like a file: a request with a slash returns 404. This keeps URLs unique for search engines.
+
+</QA>
+
+<QA q="What is an endpoint in Flask?">
+
+The internal name of a route, used by `url_for`. By default it is the view function's name; Blueprints prefix it, for example `auth.login`. You can set it with `endpoint="..."`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Route /items/<int:item_id>. What does GET /items/pen return?',
+      options: ['200 with item_id="pen"', '404 Not Found', '500 error', '400 Bad Request'],
+      answer: 1,
+      why: 'The int converter does not match "pen", so no rule matches and Flask returns 404.',
+    },
+    {
+      q: 'Which converter accepts slashes?',
+      options: ['string', 'int', 'path', 'uuid'],
+      answer: 2,
+      why: 'path is like string but also accepts "/".',
+    },
+    {
+      q: 'url_for("get_user", user_id=7, tab="orders") gives?',
+      options: ['/users/7/orders', '/users/7?tab=orders', '/get_user/7', '/users?user_id=7'],
+      answer: 1,
+      why: 'Values the rule does not use are added as query parameters.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Basic route | `@app.route("/about")` |
+| Variable | `@app.route("/u/<name>")` |
+| Integer | `<int:user_id>` |
+| Slashes allowed | `<path:filepath>` |
+| Two URLs, one view | stack two `@app.route(...)` |
+| Custom endpoint | `@app.route("/d", endpoint="dash")` |
+| Build URL | `url_for("get_user", user_id=7)` |
+| Absolute URL | `url_for("about", _external=True)` |
+| List routes | `flask routes` or `app.url_map` |
+
+</CheatSheet>

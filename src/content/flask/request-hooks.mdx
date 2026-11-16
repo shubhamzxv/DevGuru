@@ -1,0 +1,293 @@
+---
+id: flask-request-hooks
+title: Request hooks and middleware
+summary: "before_request, after_request and teardown_request run code around every request: authentication, timing, headers, cleanup. WSGI middleware wraps the whole app."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+At an airport: **security check** before you board (`before_request`), a **stamp on your passport** when you leave (`after_request`), and the **cleaning crew** after every flight, whatever happened (`teardown_request`). The flight itself is your view function.
+
+</Analogy>
+
+## Simple explanation
+
+| Hook | Runs | Typical use |
+| --- | --- | --- |
+| `@app.before_request` | before every view | load user, check API key, start timer |
+| `@app.after_request` | after the view, gets the **response** | add headers, log status |
+| `@app.teardown_request` | at the very end, **even after errors** | close resources |
+| `@app.teardown_appcontext` | when the app context ends | close DB connection from `g` |
+| `@app.url_value_preprocessor` | before the view, can read URL values | pull `lang` from `/<lang>/...` |
+
+Rules:
+
+- If a `before_request` function **returns a value**, Flask uses it as the response and **skips the view** (and the other before hooks). Return `None` to continue.
+- `after_request` must **return the response** (changed or not). It does **not** run when an unhandled exception happens.
+- `teardown_*` functions get the error (or `None`); their return value is ignored.
+
+**Order**: before hooks run in the order they were registered; after hooks run in **reverse** order.
+
+**WSGI middleware** wraps the whole app at the WSGI level, before Flask sees the request. Example: `ProxyFix` from Werkzeug makes Flask trust `X-Forwarded-For` and `X-Forwarded-Proto` from Nginx or a load balancer, so `request.remote_addr` and `url_for(_external=True)` are correct.
+
+```python
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+```
+
+**Signals** (`request_started`, `request_finished`, `got_request_exception`) let you observe events without changing the response, for example for metrics.
+
+## Code example
+
+Timing, an API key check and a security header:
+
+```python
+import time
+from flask import Flask, g, request
+
+app = Flask(__name__)
+API_KEYS = {"key-123"}
+
+@app.before_request
+def start_timer():
+    g.start = time.perf_counter()
+
+@app.before_request
+def require_api_key():
+    if request.path.startswith("/api") and request.headers.get("X-API-Key") not in API_KEYS:
+        return {"error": "missing or wrong API key"}, 401     # view is skipped
+
+@app.after_request
+def add_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    ms = (time.perf_counter() - g.start) * 1000
+    response.headers["X-Response-Time"] = f"{ms:.1f}ms"
+    return response                                           # must return it
+
+@app.teardown_request
+def cleanup(error):
+    print(f"  teardown for {request.path}, error={error}")
+
+@app.get("/api/data")
+def data():
+    return {"data": [1, 2, 3]}
+
+c = app.test_client()
+r = c.get("/api/data")
+print(r.status_code, r.json)
+r = c.get("/api/data", headers={"X-API-Key": "key-123"})
+print(r.status_code, r.json, r.headers["X-Content-Type-Options"])
+print("timing header:", r.headers["X-Response-Time"].endswith("ms"))
+```
+
+```output
+  teardown for /api/data, error=None
+401 {'error': 'missing or wrong API key'}
+  teardown for /api/data, error=None
+200 {'data': [1, 2, 3]} nosniff
+timing header: True
+```
+
+Order of hooks:
+
+```python
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.before_request
+def b1(): print("before 1")
+
+@app.before_request
+def b2(): print("before 2")
+
+@app.after_request
+def a1(resp): print("after 1"); return resp
+
+@app.after_request
+def a2(resp): print("after 2"); return resp
+
+@app.get("/")
+def index():
+    print("view"); return "ok"
+
+app.test_client().get("/")
+```
+
+```output
+before 1
+before 2
+view
+after 2
+after 1
+```
+
+ProxyFix behind a load balancer:
+
+```python
+from flask import Flask, request, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+app = Flask(__name__)
+
+@app.get("/where")
+def where():
+    return {"ip": request.remote_addr, "scheme": request.scheme,
+            "link": url_for("where", _external=True)}
+
+headers = {"X-Forwarded-For": "49.36.10.5", "X-Forwarded-Proto": "https"}
+print("before:", app.test_client().get("/where", headers=headers).json)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+print("after: ", app.test_client().get("/where", headers=headers).json)
+```
+
+```output
+before: {'ip': '127.0.0.1', 'link': 'http://localhost/where', 'scheme': 'http'}
+after:  {'ip': '49.36.10.5', 'link': 'https://localhost/where', 'scheme': 'https'}
+```
+
+<Playground kind="none">
+
+```python
+# app.py  ->  flask --app app run --debug
+# A tiny request logger for every request.
+import time
+from flask import Flask, g, request
+
+app = Flask(__name__)
+
+@app.before_request
+def start():
+    g.t0 = time.perf_counter()
+
+@app.after_request
+def log(response):
+    ms = (time.perf_counter() - g.t0) * 1000
+    app.logger.info("%s %s -> %s in %.1f ms", request.method, request.path, response.status_code, ms)
+    return response
+
+@app.get("/")
+def home():
+    return "Check the terminal for the log line"
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="after_request that does not return the response">
+
+<Wrong>
+
+```python
+@app.after_request
+def add_header(response):
+    response.headers["X-App"] = "devguru"      # returns None -> error
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.after_request
+def add_header(response):
+    response.headers["X-App"] = "devguru"
+    return response
+```
+
+</Right>
+
+Flask uses the return value of each after hook as the new response.
+
+</Mistake>
+
+<Mistake title="Closing resources in after_request">
+
+<Wrong>
+
+```python
+@app.after_request
+def close(resp):
+    g.db.close()            # skipped when the view raises an exception
+    return resp
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.teardown_appcontext
+def close(error):
+    db = g.pop("db", None)
+    if db is not None:
+        db.close()
+```
+
+</Right>
+
+Teardown functions always run, even after errors, so connections are never leaked.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What happens if a before_request function returns a value?">
+
+Flask treats it as the response: the remaining before hooks and the view are skipped, but after_request hooks still run. This is how auth checks or maintenance mode return early.
+
+</QA>
+
+<QA q="What is the difference between after_request and teardown_request?">
+
+`after_request` receives the response, can modify it and must return it; it does not run if an unhandled exception occurs. `teardown_request` always runs at the end of the request, receives the exception if any, and is for cleanup.
+
+</QA>
+
+<QA q="What is ProxyFix and when do you need it?">
+
+Werkzeug middleware that reads `X-Forwarded-*` headers set by a trusted proxy (Nginx, AWS ALB). Without it Flask sees the proxy's IP and `http` scheme, so client IPs, HTTPS redirects and external URLs are wrong. Set `x_for` and `x_proto` to the number of proxies you trust.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which hook always runs, even after an exception?',
+      options: ['before_request', 'after_request', 'teardown_request', 'url_value_preprocessor'],
+      answer: 2,
+      why: 'Teardown hooks run at the end of every request, error or not.',
+    },
+    {
+      q: 'Two after_request hooks A then B are registered. Run order?',
+      options: ['A then B', 'B then A', 'Random', 'Only the last one'],
+      answer: 1,
+      why: 'After hooks run in reverse order of registration.',
+    },
+    {
+      q: 'A before_request returns ("Forbidden", 403). The view?',
+      options: ['Runs anyway', 'Is skipped', 'Runs after the response', 'Gets the 403 as argument'],
+      answer: 1,
+      why: 'A non-None return value becomes the response and the view is skipped.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Before every request | `@app.before_request` |
+| Stop early | `return {"error": "..."}, 401` from a before hook |
+| Change response | `@app.after_request def f(resp): ...; return resp` |
+| Always clean up | `@app.teardown_request` / `@app.teardown_appcontext` |
+| Blueprint only | `@bp.before_request`, `@bp.after_request` |
+| Trust proxy headers | `app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)` |
+| Order | before: registration order · after: reverse |
+
+</CheatSheet>

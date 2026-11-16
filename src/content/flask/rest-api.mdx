@@ -1,0 +1,331 @@
+---
+id: flask-rest-api
+title: Building a REST API (and CORS)
+summary: "Build a JSON CRUD API with proper status codes, input validation and JSON errors, organise it with MethodView, and allow browser apps on other domains with Flask-CORS."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+A REST API is like a **restaurant's order counter** with a fixed menu card: `GET /dishes` shows the menu, `POST /orders` places an order, `DELETE /orders/7` cancels it. Every reply has a clear **token status**: ready (200), created (201), not on the menu (404), wrong order slip (400).
+
+</Analogy>
+
+## Simple explanation
+
+A good Flask JSON API:
+
+| Rule | How in Flask |
+| --- | --- |
+| Nouns in URLs, methods for actions | `GET/POST /books`, `GET/PUT/PATCH/DELETE /books/<id>` |
+| JSON in and out | `request.get_json()`, return dicts or lists |
+| Right status codes | 200, **201** + `Location` on create, **204** on delete, 400/404/422 on errors |
+| Validate every input | check required fields and types before saving |
+| JSON errors everywhere | `@app.errorhandler(HTTPException)` |
+| Versioning | Blueprint with `url_prefix="/api/v1"` |
+| Pagination for lists | `?page=2&per_page=20` |
+
+**Validation**: Flask has no built-in schema system (FastAPI has Pydantic). Common choices: write checks by hand for small APIs, or use **Marshmallow**, **Pydantic** or **flask-smorest** / **APIFlask** (these also generate OpenAPI/Swagger docs).
+
+**MethodView**: a class-based view where each HTTP method is a method of the class (`get`, `post`, `put`, `delete`). Handy when one URL supports many methods.
+
+**CORS** (Cross-Origin Resource Sharing): a browser blocks JavaScript on `https://myshop.in` from reading responses from `https://api.myshop.in` unless the API sends **`Access-Control-Allow-Origin`**. For non-simple requests (JSON body, custom headers, PUT/DELETE) the browser first sends an **OPTIONS preflight**.
+
+`pip install flask-cors`, then `CORS(app, origins=["https://myshop.in"])`. Allow only the origins you trust; avoid `"*"` with cookies or credentials.
+
+CORS is a **browser** rule. It does not protect the API from curl or other servers; you still need authentication.
+
+## Code example
+
+A complete CRUD API with validation and JSON errors:
+
+```python
+from flask import Flask, abort, request, url_for
+from werkzeug.exceptions import HTTPException
+
+app = Flask(__name__)
+BOOKS = {1: {"id": 1, "title": "Clean Code", "price": 450}}
+NEXT_ID = {"value": 2}
+
+@app.errorhandler(HTTPException)
+def json_error(e):
+    return {"error": e.description}, e.code
+
+def validate(data, partial=False):
+    if not isinstance(data, dict):
+        abort(400, description="Body must be a JSON object")
+    errors = {}
+    if not partial or "title" in data:
+        if not isinstance(data.get("title"), str) or not data["title"].strip():
+            errors["title"] = "required, non-empty string"
+    if not partial or "price" in data:
+        if not isinstance(data.get("price"), (int, float)) or data["price"] < 0:
+            errors["price"] = "required, number >= 0"
+    if errors:
+        abort(422, description=errors)
+
+@app.get("/api/books")
+def list_books():
+    return list(BOOKS.values())
+
+@app.get("/api/books/<int:book_id>")
+def get_book(book_id):
+    return BOOKS.get(book_id) or abort(404, description="Book not found")
+
+@app.post("/api/books")
+def create_book():
+    data = request.get_json(silent=True)
+    validate(data)
+    book = {"id": NEXT_ID["value"], "title": data["title"].strip(), "price": data["price"]}
+    BOOKS[book["id"]] = book; NEXT_ID["value"] += 1
+    return book, 201, {"Location": url_for("get_book", book_id=book["id"])}
+
+@app.patch("/api/books/<int:book_id>")
+def update_book(book_id):
+    book = BOOKS.get(book_id) or abort(404, description="Book not found")
+    data = request.get_json(silent=True)
+    validate(data, partial=True)
+    book.update({k: data[k] for k in ("title", "price") if k in data})
+    return book
+
+@app.delete("/api/books/<int:book_id>")
+def delete_book(book_id):
+    BOOKS.pop(book_id, None) or abort(404, description="Book not found")
+    return "", 204
+
+c = app.test_client()
+r = c.post("/api/books", json={"title": "Fluent Python", "price": 899})
+print(r.status_code, r.headers["Location"], r.json)
+print(c.post("/api/books", json={"title": "", "price": -5}).json)
+print(c.post("/api/books", data="not json").json)
+print(c.patch("/api/books/2", json={"price": 799}).json)
+print(c.delete("/api/books/1").status_code, c.get("/api/books/1").json)
+print(c.get("/api/books").json)
+```
+
+```output
+201 /api/books/2 {'id': 2, 'price': 899, 'title': 'Fluent Python'}
+{'error': {'price': 'required, number >= 0', 'title': 'required, non-empty string'}}
+{'error': 'Body must be a JSON object'}
+{'id': 2, 'price': 799, 'title': 'Fluent Python'}
+204 {'error': 'Book not found'}
+[{'id': 2, 'price': 799, 'title': 'Fluent Python'}]
+```
+
+The same resource as a **MethodView** class:
+
+```python
+from flask import Flask, request
+from flask.views import MethodView
+
+app = Flask(__name__)
+TASKS = {1: "Learn Blueprints"}
+
+class TaskAPI(MethodView):
+    def get(self, task_id):
+        return {"id": task_id, "title": TASKS[task_id]}
+
+    def put(self, task_id):
+        TASKS[task_id] = request.json["title"]
+        return {"id": task_id, "title": TASKS[task_id]}
+
+    def delete(self, task_id):
+        TASKS.pop(task_id)
+        return "", 204
+
+app.add_url_rule("/tasks/<int:task_id>", view_func=TaskAPI.as_view("task"))
+
+c = app.test_client()
+print(c.get("/tasks/1").json)
+print(c.put("/tasks/1", json={"title": "Learn MethodView"}).json)
+print(c.delete("/tasks/1").status_code, TASKS)
+```
+
+```output
+{'id': 1, 'title': 'Learn Blueprints'}
+{'id': 1, 'title': 'Learn MethodView'}
+204 {}
+```
+
+CORS with Flask-CORS: allowed and blocked origins, and the preflight:
+
+```python
+from flask import Flask
+from flask_cors import CORS
+
+app = Flask(__name__)
+CORS(app, resources={r"/api/*": {"origins": ["https://devguru.in"]}})
+
+@app.route("/api/data", methods=["GET", "PUT"])
+def data():
+    return {"ok": True}
+
+c = app.test_client()
+ok = c.get("/api/data", headers={"Origin": "https://devguru.in"})
+print("allowed:", ok.headers.get("Access-Control-Allow-Origin"))
+bad = c.get("/api/data", headers={"Origin": "https://evil.example"})
+print("other site:", bad.headers.get("Access-Control-Allow-Origin"))
+pre = c.options("/api/data", headers={"Origin": "https://devguru.in",
+                                      "Access-Control-Request-Method": "PUT",
+                                      "Access-Control-Request-Headers": "Content-Type"})
+print("preflight:", pre.status_code, pre.headers.get("Access-Control-Allow-Methods"))
+```
+
+```output
+allowed: https://devguru.in
+other site: None
+preflight: 200 DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT
+```
+
+<Playground kind="none">
+
+```python
+# pip install flask flask-cors
+# flask --app app run --debug
+#   curl http://127.0.0.1:5000/api/v1/todos
+#   curl -X POST http://127.0.0.1:5000/api/v1/todos -H "Content-Type: application/json" -d "{\"title\": \"Ship it\"}"
+from flask import Blueprint, Flask, abort, request
+from flask_cors import CORS
+
+api = Blueprint("api", __name__, url_prefix="/api/v1")
+TODOS = []
+
+@api.get("/todos")
+def list_todos():
+    return TODOS
+
+@api.post("/todos")
+def add_todo():
+    data = request.get_json(silent=True) or {}
+    if not data.get("title"):
+        abort(422, description="title is required")
+    todo = {"id": len(TODOS) + 1, "title": data["title"], "done": False}
+    TODOS.append(todo)
+    return todo, 201
+
+app = Flask(__name__)
+app.register_blueprint(api)
+CORS(app, origins=["http://localhost:5173"])     # your frontend dev server
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Allowing every origin with credentials">
+
+<Wrong>
+
+```python
+CORS(app, origins="*", supports_credentials=True)   # any site can call with the user's cookies
+```
+
+</Wrong>
+
+<Right>
+
+```python
+CORS(app, origins=["https://myshop.in"], supports_credentials=True)
+```
+
+</Right>
+
+List exact origins. Browsers reject `*` with credentials anyway, and a reflected wildcard is a security hole.
+
+</Mistake>
+
+<Mistake title="Saving the JSON body without validation">
+
+<Wrong>
+
+```python
+book = request.get_json()
+BOOKS.append(book)            # any fields, any types, even {"is_admin": true}
+```
+
+</Wrong>
+
+<Right>
+
+```python
+data = request.get_json(silent=True)
+validate(data)                # required fields, types, ranges
+book = {"title": data["title"], "price": data["price"]}   # copy only allowed fields
+```
+
+</Right>
+
+Never trust client data. Validate, and copy only the fields you allow (this also prevents mass assignment).
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you build a REST API in Flask?">
+
+Routes per resource with HTTP method decorators (or MethodView), `request.get_json()` for input, dicts/lists for JSON output, correct status codes, input validation (by hand or Marshmallow/Pydantic), JSON error handlers, a versioned Blueprint, and authentication such as JWT. Extensions like flask-smorest or APIFlask add OpenAPI docs.
+
+</QA>
+
+<QA q="What is CORS and how do you enable it in Flask?">
+
+A browser security rule that blocks pages from reading responses from another origin unless the server allows it with `Access-Control-Allow-*` headers. Use Flask-CORS: `CORS(app, origins=[...])` or per-resource settings. Preflight OPTIONS requests are answered automatically.
+
+</QA>
+
+<QA q="400 versus 422 for invalid input?">
+
+400 Bad Request means the request itself is broken (invalid JSON, wrong content type). 422 Unprocessable Content means the JSON is valid but the values fail validation (missing title, negative price). Many APIs use 400 for both; be consistent.
+
+</QA>
+
+<QA q="What is MethodView?">
+
+A class-based view in `flask.views` where methods named `get`, `post`, `put`, `patch`, `delete` handle those HTTP methods. Register it with `app.add_url_rule(rule, view_func=MyView.as_view("name"))`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which status should a successful POST that creates a resource return?',
+      options: ['200', '201', '204', '302'],
+      answer: 1,
+      why: '201 Created, ideally with a Location header for the new resource.',
+    },
+    {
+      q: 'Who enforces CORS?',
+      options: ['The Flask server', 'The browser', 'The database', 'Nginx always'],
+      answer: 1,
+      why: 'The browser checks CORS headers; tools like curl ignore them.',
+    },
+    {
+      q: 'Before a cross-origin PUT with a JSON body, the browser sends?',
+      options: ['A HEAD request', 'An OPTIONS preflight', 'Nothing extra', 'A GET request'],
+      answer: 1,
+      why: 'Non-simple requests trigger an OPTIONS preflight to check permissions.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Read JSON | `data = request.get_json(silent=True)` |
+| Created | `return obj, 201, {"Location": url_for(...)}` |
+| Deleted | `return "", 204` |
+| Not found | `abort(404, description="...")` |
+| Invalid | `abort(422, description=errors)` |
+| JSON errors | `@app.errorhandler(HTTPException)` |
+| Versioning | `Blueprint("api", __name__, url_prefix="/api/v1")` |
+| Class view | `class V(MethodView): def get(self): ...` + `add_url_rule(..., view_func=V.as_view("v"))` |
+| CORS | `pip install flask-cors` · `CORS(app, origins=["https://site.in"])` |
+| Per route | `CORS(app, resources={r"/api/*": {"origins": [...]}})` |
+| Schemas + docs | Marshmallow, Pydantic, flask-smorest, APIFlask |
+
+</CheatSheet>

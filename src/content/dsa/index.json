@@ -2,7 +2,7 @@
   "name": "DSA in Python",
   "icon": "🧩",
   "tagline": "Big-O, patterns, interview prep",
-  "order": 10,
+  "order": 11,
   "playground": "python",
   "modules": [
     {

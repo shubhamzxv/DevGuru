@@ -1,0 +1,174 @@
+{
+  "name": "Flask",
+  "icon": "🧪",
+  "tagline": "Small, flexible Python web framework",
+  "order": 5,
+  "playground": "none",
+  "modules": [
+    {
+      "title": "Basics",
+      "topics": [
+        {
+          "id": "flask-what-is-flask",
+          "slug": "what-is-flask",
+          "title": "What is Flask?"
+        },
+        {
+          "id": "flask-first-app",
+          "slug": "first-app",
+          "title": "First app and the dev server"
+        },
+        {
+          "id": "flask-routing",
+          "slug": "routing",
+          "title": "Routes and URL rules"
+        },
+        {
+          "id": "flask-http-methods",
+          "slug": "http-methods",
+          "title": "HTTP methods"
+        },
+        {
+          "id": "flask-request-object",
+          "slug": "request-object",
+          "title": "The request object"
+        },
+        {
+          "id": "flask-responses",
+          "slug": "responses",
+          "title": "Responses, JSON, redirects and abort"
+        }
+      ]
+    },
+    {
+      "title": "Templates and forms",
+      "topics": [
+        {
+          "id": "flask-jinja-templates",
+          "slug": "jinja-templates",
+          "title": "Jinja2 templates"
+        },
+        {
+          "id": "flask-template-inheritance",
+          "slug": "template-inheritance",
+          "title": "Template inheritance and static files"
+        },
+        {
+          "id": "flask-forms",
+          "slug": "forms",
+          "title": "Forms and validation (Flask-WTF)"
+        }
+      ]
+    },
+    {
+      "title": "Contexts and state",
+      "topics": [
+        {
+          "id": "flask-contexts",
+          "slug": "contexts",
+          "title": "Application and request context (current_app, g)"
+        },
+        {
+          "id": "flask-sessions-cookies",
+          "slug": "sessions-cookies",
+          "title": "Cookies, sessions and flash messages"
+        }
+      ]
+    },
+    {
+      "title": "Structure",
+      "topics": [
+        {
+          "id": "flask-blueprints",
+          "slug": "blueprints",
+          "title": "Blueprints"
+        },
+        {
+          "id": "flask-app-factory",
+          "slug": "app-factory",
+          "title": "Application factory and config"
+        },
+        {
+          "id": "flask-error-handling",
+          "slug": "error-handling",
+          "title": "Error handlers"
+        },
+        {
+          "id": "flask-request-hooks",
+          "slug": "request-hooks",
+          "title": "Request hooks and middleware"
+        }
+      ]
+    },
+    {
+      "title": "Database",
+      "topics": [
+        {
+          "id": "flask-sqlalchemy",
+          "slug": "sqlalchemy",
+          "title": "Database with Flask-SQLAlchemy"
+        },
+        {
+          "id": "flask-migrations",
+          "slug": "migrations",
+          "title": "Migrations with Flask-Migrate"
+        }
+      ]
+    },
+    {
+      "title": "APIs and security",
+      "topics": [
+        {
+          "id": "flask-rest-api",
+          "slug": "rest-api",
+          "title": "Building a REST API (and CORS)"
+        },
+        {
+          "id": "flask-auth-login",
+          "slug": "auth-login",
+          "title": "Login with Flask-Login"
+        },
+        {
+          "id": "flask-jwt",
+          "slug": "jwt",
+          "title": "JWT auth with Flask-JWT-Extended"
+        }
+      ]
+    },
+    {
+      "title": "Production",
+      "topics": [
+        {
+          "id": "flask-async-and-background",
+          "slug": "async-and-background",
+          "title": "async views and background jobs"
+        },
+        {
+          "id": "flask-testing",
+          "slug": "testing",
+          "title": "Testing with test_client and pytest"
+        },
+        {
+          "id": "flask-deployment",
+          "slug": "deployment",
+          "title": "Deployment with Gunicorn"
+        }
+      ]
+    },
+    {
+      "title": "Revision",
+      "topics": [
+        {
+          "id": "flask-flask-vs-fastapi-vs-django",
+          "slug": "flask-vs-fastapi-vs-django",
+          "title": "Flask vs FastAPI vs Django"
+        },
+        {
+          "id": "flask-interview-revision",
+          "slug": "interview-revision",
+          "title": "Flask interview revision"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,224 @@
+---
+id: flask-http-methods
+title: HTTP methods
+summary: "By default a route accepts only GET. Use methods=[...] or the shortcuts @app.get, @app.post, @app.put, @app.patch and @app.delete."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+One shop counter, different requests: "**show** me the menu" (GET), "**place** an order" (POST), "**change** my order" (PUT/PATCH), "**cancel** it" (DELETE). Same counter (URL), different action (method).
+
+</Analogy>
+
+## Simple explanation
+
+Every HTTP request has a **method**. A Flask route accepts only **GET** (plus HEAD and OPTIONS automatically) unless you say otherwise.
+
+Two ways to allow more methods:
+
+```python
+@app.route("/login", methods=["GET", "POST"])     # one view, check request.method inside
+```
+
+```python
+@app.get("/books")        # Flask 2.0+ shortcuts, one view per method
+@app.post("/books")
+```
+
+| Method | Use | Typical success code |
+| --- | --- | --- |
+| **GET** | read data | 200 |
+| **POST** | create | 201 |
+| **PUT** | replace fully | 200 |
+| **PATCH** | update part | 200 |
+| **DELETE** | remove | 204 |
+
+If a client uses a method the route does not allow, Flask returns **405 Method Not Allowed** with an `Allow` header listing the allowed methods.
+
+**HEAD** is added for every GET route automatically (same as GET without the body). **OPTIONS** is also answered automatically, which matters for CORS preflight requests.
+
+A common HTML pattern is **one view for GET and POST**: GET shows the form, POST processes it.
+
+## Code example
+
+```python
+from flask import Flask, request
+
+app = Flask(__name__)
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        return f"Logging in {request.form['username']}"
+    return "Show the login form"
+
+@app.get("/books")
+def list_books():
+    return "All books"
+
+@app.post("/books")
+def create_book():
+    return "Book created", 201
+
+@app.delete("/books/<int:book_id>")
+def delete_book(book_id):
+    return "", 204
+
+c = app.test_client()
+print(c.get("/login").get_data(as_text=True))
+print(c.post("/login", data={"username": "guru"}).get_data(as_text=True))
+print(c.post("/books").status_code)
+print(c.delete("/books/3").status_code)
+r = c.put("/books")                                   # PUT not allowed
+print(r.status_code, "Allow:", r.headers["Allow"])
+print(c.head("/books").status_code)                   # HEAD added automatically
+```
+
+```output
+Show the login form
+Logging in guru
+201
+204
+405 Allow: OPTIONS, POST, GET, HEAD
+200
+```
+
+<Playground kind="none">
+
+```python
+# app.py  ->  flask --app app run --debug
+# Try with curl:
+#   curl http://127.0.0.1:5000/tasks
+#   curl -X POST http://127.0.0.1:5000/tasks -d "title=Learn Flask"
+#   curl -X PUT http://127.0.0.1:5000/tasks       (405)
+from flask import Flask, request
+
+app = Flask(__name__)
+tasks = []
+
+@app.get("/tasks")
+def list_tasks():
+    return {"tasks": tasks}
+
+@app.post("/tasks")
+def add_task():
+    tasks.append(request.form["title"])
+    return {"added": tasks[-1]}, 201
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting to allow POST">
+
+<Wrong>
+
+```python
+@app.route("/contact")            # GET only
+def contact():
+    if request.method == "POST":  # never true: POST gets 405 first
+        ...
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.route("/contact", methods=["GET", "POST"])
+def contact():
+    ...
+```
+
+</Right>
+
+Without `methods=[...]`, a form submit to this URL fails with 405 Method Not Allowed.
+
+</Mistake>
+
+<Mistake title="Changing data in a GET request">
+
+<Wrong>
+
+```python
+@app.get("/delete/<int:item_id>")     # a link crawler can delete everything
+def delete(item_id): ...
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.delete("/items/<int:item_id>")
+def delete(item_id): ...
+```
+
+</Right>
+
+GET must be safe (read only). Browsers, crawlers and link previews call GET URLs on their own.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Which methods does a Flask route accept by default?">
+
+GET only, plus HEAD and OPTIONS which Flask adds automatically. Use `methods=["GET", "POST"]` or the shortcut decorators (`@app.post` and so on) for others.
+
+</QA>
+
+<QA q="What status code does Flask return for a method that is not allowed?">
+
+405 Method Not Allowed, with an `Allow` header listing the methods the URL supports.
+
+</QA>
+
+<QA q="What is the difference between PUT and PATCH?">
+
+PUT replaces the whole resource with the data sent; PATCH changes only the fields sent. PUT is idempotent; PATCH is usually used for partial updates.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A route has no methods argument. A form POSTs to it. Result?',
+      options: ['200', '405 Method Not Allowed', '404', 'It works like GET'],
+      answer: 1,
+      why: 'Routes accept only GET (and HEAD, OPTIONS) by default.',
+    },
+    {
+      q: 'Which decorator creates a POST-only route in Flask 2+?',
+      options: ['@app.route_post', '@app.post', '@app.create', '@post'],
+      answer: 1,
+      why: '@app.post("/x") is the same as @app.route("/x", methods=["POST"]).',
+    },
+    {
+      q: 'Which method should only read data?',
+      options: ['POST', 'DELETE', 'GET', 'PATCH'],
+      answer: 2,
+      why: 'GET is a safe method and must not change data.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| GET + POST in one view | `@app.route("/x", methods=["GET", "POST"])` |
+| Check method | `if request.method == "POST":` |
+| Shortcuts | `@app.get` `@app.post` `@app.put` `@app.patch` `@app.delete` |
+| Return 201 | `return data, 201` |
+| Return 204 | `return "", 204` |
+| Wrong method | Flask returns **405** + `Allow` header |
+| Auto-added | HEAD (for GET) and OPTIONS |
+
+</CheatSheet>

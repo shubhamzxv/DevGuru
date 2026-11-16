@@ -1,0 +1,263 @@
+---
+id: flask-responses
+title: Responses, JSON, redirects and abort
+summary: "A view can return a string, a dict (JSON), a tuple with a status code and headers, or a Response; use redirect, abort and make_response for the rest."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+A view's return value is like a **reply letter**. The **body** is the letter, the **status code** is the stamp on top ("OK", "Not found"), and the **headers** are notes on the envelope ("this is JSON", "keep for 1 hour"). Flask lets you write just the letter, and it fills the rest.
+
+</Analogy>
+
+## Simple explanation
+
+Flask turns your return value into a **Response**:
+
+| You return | Flask sends |
+| --- | --- |
+| `"text"` | HTML, status 200 |
+| `{"a": 1}` (dict) or a list | **JSON**, status 200 |
+| `("text", 201)` | body + status |
+| `("text", 201, {"X-Id": "9"})` | body + status + headers |
+| `jsonify(...)` | JSON Response object |
+| `make_response(...)` | a Response you can change before returning |
+| `redirect(url)` | 302 redirect (`code=301` for permanent) |
+
+**`abort(404)`** stops the view at once and sends an error response. It raises an `HTTPException`, so code after it does not run.
+
+**`jsonify`** versus returning a dict: both send JSON with `Content-Type: application/json`. Returning a dict or list is the modern, shorter style. `jsonify` is still useful for other values or when you want a Response object.
+
+**`make_response`** is for adding cookies or headers to a response. **`send_file`** and **`send_from_directory`** send files (downloads, PDFs, images).
+
+## Code example
+
+Return types:
+
+```python
+from flask import Flask, jsonify, make_response
+
+app = Flask(__name__)
+
+@app.get("/text")
+def text():
+    return "plain text"
+
+@app.get("/dict")
+def as_dict():
+    return {"name": "DevGuru", "tracks": 12}
+
+@app.get("/list")
+def as_list():
+    return [1, 2, 3]
+
+@app.post("/items")
+def create():
+    return {"id": 9}, 201, {"Location": "/items/9"}
+
+@app.get("/custom")
+def custom():
+    resp = make_response(jsonify(ok=True))
+    resp.headers["Cache-Control"] = "no-store"
+    resp.set_cookie("seen", "yes")
+    return resp
+
+c = app.test_client()
+for path in ["/text", "/dict", "/list"]:
+    r = c.get(path)
+    print(path, r.status_code, r.content_type, r.get_data(as_text=True).strip())
+r = c.post("/items")
+print(r.status_code, r.headers["Location"], r.json)
+r = c.get("/custom")
+print(r.json, r.headers["Cache-Control"], r.headers["Set-Cookie"])
+```
+
+```output
+/text 200 text/html; charset=utf-8 plain text
+/dict 200 application/json {"name":"DevGuru","tracks":12}
+/list 200 application/json [1,2,3]
+201 /items/9 {'id': 9}
+{'ok': True} no-store seen=yes; Path=/
+```
+
+Redirects and `abort`:
+
+```python
+from flask import Flask, abort, redirect, url_for
+
+app = Flask(__name__)
+USERS = {1: "Asha", 2: "Ravi"}
+
+@app.get("/old-profile")
+def old_profile():
+    return redirect(url_for("profile", user_id=1), code=301)
+
+@app.get("/users/<int:user_id>")
+def profile(user_id):
+    if user_id not in USERS:
+        abort(404)                   # stops here
+    return {"user": USERS[user_id]}
+
+@app.get("/admin")
+def admin():
+    abort(403, description="Admins only")
+
+c = app.test_client()
+r = c.get("/old-profile")
+print(r.status_code, r.headers["Location"])
+print(c.get("/old-profile", follow_redirects=True).json)
+print(c.get("/users/5").status_code)
+r = c.get("/admin")
+print(r.status_code, "Admins only" in r.get_data(as_text=True))
+```
+
+```output
+301 /users/1
+{'user': 'Asha'}
+404
+403 True
+```
+
+<Playground kind="none">
+
+```python
+# app.py  ->  flask --app app run --debug
+import io
+from flask import Flask, redirect, send_file, url_for
+
+app = Flask(__name__)
+
+@app.get("/")
+def index():
+    return redirect(url_for("report"))
+
+@app.get("/report")
+def report():
+    data = io.BytesIO(b"name,score\nAsha,91\nRavi,84\n")
+    return send_file(data, mimetype="text/csv", as_attachment=True, download_name="report.csv")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Returning an error dict with status 200">
+
+<Wrong>
+
+```python
+if user is None:
+    return {"error": "not found"}          # status is still 200
+```
+
+</Wrong>
+
+<Right>
+
+```python
+if user is None:
+    return {"error": "not found"}, 404
+```
+
+</Right>
+
+Clients check the status code first. An error with 200 looks like success.
+
+</Mistake>
+
+<Mistake title="Returning None">
+
+<Wrong>
+
+```python
+@app.get("/ping")
+def ping():
+    print("pong")                 # no return -> TypeError: did not return a valid response
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.get("/ping")
+def ping():
+    return "pong"
+```
+
+</Right>
+
+Every view must return something Flask can turn into a response.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What can a Flask view return?">
+
+A string, bytes, a dict or list (sent as JSON), a Response object, a generator (streaming), or a tuple `(body, status)`, `(body, headers)` or `(body, status, headers)`.
+
+</QA>
+
+<QA q="What is the difference between jsonify and returning a dict?">
+
+Both produce a JSON response. Since Flask 1.1 a returned dict is passed through `jsonify` automatically (lists since 2.2). `jsonify` returns a Response object you can modify and also accepts keyword arguments.
+
+</QA>
+
+<QA q="How does abort work?">
+
+`abort(code)` raises an `HTTPException` for that status. Flask catches it and returns the error page, or the result of your `@app.errorhandler(code)` function. Code after `abort` never runs.
+
+</QA>
+
+<QA q="301 versus 302 redirect?">
+
+301 is permanent (browsers and search engines cache it); 302 is temporary. `redirect()` uses 302 unless you pass `code=301`. 307 and 308 keep the request method and body.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'A view returns {"ok": True}. What content type is sent?',
+      options: ['text/html', 'application/json', 'text/plain', 'application/xml'],
+      answer: 1,
+      why: 'Dicts are converted to JSON automatically.',
+    },
+    {
+      q: 'How do you return 201 with a body?',
+      options: ['return 201, body', 'return body, 201', 'return Status(201)', 'abort(201)'],
+      answer: 1,
+      why: 'The tuple order is (body, status, headers).',
+    },
+    {
+      q: 'What does code after abort(404) do?',
+      options: ['Runs normally', 'Never runs', 'Runs after the response', 'Runs only in debug'],
+      answer: 1,
+      why: 'abort raises an exception, so the view stops at that line.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| HTML / text | `return "Hello"` |
+| JSON | `return {"a": 1}` or `jsonify(a=1)` |
+| Status | `return body, 201` |
+| Headers | `return body, 200, {"X-Id": "9"}` |
+| Edit response | `resp = make_response(body)` then `resp.headers[...]` |
+| Cookie | `resp.set_cookie("k", "v", max_age=3600)` |
+| Redirect | `redirect(url_for("home"))`, `code=301` permanent |
+| Stop with error | `abort(404)` / `abort(403, description="...")` |
+| Download | `send_file(path, as_attachment=True)` |
+| Folder file | `send_from_directory("uploads", name)` |
+
+</CheatSheet>

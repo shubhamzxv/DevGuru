@@ -1,0 +1,298 @@
+---
+id: flask-sessions-cookies
+title: Cookies, sessions and flash messages
+summary: "Cookies store small values in the browser; Flask's session is a signed cookie that users can read but not change; flash shows a one-time message on the next page."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+A **cookie** is like a **sticker** the shop puts on your bag. Next time you come, they read it. Flask's **session** is a sticker with a **tamper-proof seal**: you can see what it says, but if you change it, the seal breaks and the shop ignores it.
+
+</Analogy>
+
+## Simple explanation
+
+**Cookies**
+
+- Set: `resp.set_cookie("theme", "dark", max_age=60*60*24*30)`
+- Read: `request.cookies.get("theme")`
+- Delete: `resp.delete_cookie("theme")`
+- Safety options: `httponly=True` (JavaScript cannot read it), `secure=True` (HTTPS only), `samesite="Lax"` (not sent on most cross-site requests)
+
+**Session** (`from flask import session`)
+
+- Works like a dict: `session["user_id"] = 7`
+- Stored **in a cookie**, **signed** with `app.secret_key` (using itsdangerous)
+- The user **can read** it (it is only base64, not encrypted) but **cannot change** it without the key
+- So: never put passwords or secrets in it; store an id
+- `session.permanent = True` keeps it for `PERMANENT_SESSION_LIFETIME` (31 days by default); otherwise it ends when the browser closes
+- `session.clear()` logs the user out
+
+For big or private session data, keep it **on the server** with **Flask-Session** (Redis, database).
+
+**Flash messages**
+
+`flash("Saved!", "success")` stores a message in the session; the next page reads it with `get_flashed_messages()` and it is then removed. Perfect for "Profile updated" after a redirect.
+
+**SECRET_KEY**: a long random string, for example from `python -c "import secrets; print(secrets.token_hex(32))"`. Keep it out of code (environment variable). If it leaks, anyone can forge sessions.
+
+## Code example
+
+A login counter in the session:
+
+```python
+from flask import Flask, session
+
+app = Flask(__name__)
+app.secret_key = "dev-only-secret"
+
+@app.post("/login/<name>")
+def login(name):
+    session["user"] = name
+    session["visits"] = 0
+    return "logged in"
+
+@app.get("/me")
+def me():
+    if "user" not in session:
+        return {"error": "not logged in"}, 401
+    session["visits"] += 1
+    return {"user": session["user"], "visits": session["visits"]}
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return "bye"
+
+c = app.test_client()                 # keeps cookies between calls, like a browser
+print(c.get("/me").status_code)
+c.post("/login/asha")
+print(c.get("/me").json)
+print(c.get("/me").json)
+c.post("/logout")
+print(c.get("/me").status_code)
+```
+
+```output
+401
+{'user': 'asha', 'visits': 1}
+{'user': 'asha', 'visits': 2}
+401
+```
+
+The session cookie is readable but tamper-proof:
+
+```python
+import base64, json
+from flask import Flask, session
+
+app = Flask(__name__)
+app.secret_key = "dev-only-secret"
+
+@app.post("/login")
+def login():
+    session["user_id"] = 7
+    return "ok"
+
+@app.get("/whoami")
+def whoami():
+    return {"user_id": session.get("user_id")}
+
+c = app.test_client()
+c.post("/login")
+cookie = c.get_cookie("session").value
+payload = cookie.split(".")[0]
+print("Anyone can decode:", json.loads(base64.urlsafe_b64decode(payload + "==")))
+
+forged = base64.urlsafe_b64encode(b'{"user_id":1}').decode().rstrip("=")
+c.set_cookie("session", forged + cookie[len(payload):])   # change the data, keep old signature
+print("After tampering:", c.get("/whoami").json)
+```
+
+```output
+Anyone can decode: {'user_id': 7}
+After tampering: {'user_id': None}
+```
+
+Plain cookies and flash messages:
+
+```python
+from flask import Flask, flash, get_flashed_messages, make_response, redirect, request
+
+app = Flask(__name__)
+app.secret_key = "dev-only-secret"
+
+@app.post("/theme/<name>")
+def set_theme(name):
+    resp = make_response(redirect("/"))
+    resp.set_cookie("theme", name, max_age=30 * 24 * 3600, httponly=True, samesite="Lax")
+    flash(f"Theme changed to {name}", "success")
+    return resp
+
+@app.get("/")
+def home():
+    return {"theme": request.cookies.get("theme", "light"),
+            "messages": get_flashed_messages(with_categories=True)}
+
+c = app.test_client()
+print(c.post("/theme/dark").headers["Set-Cookie"].split(";")[0])
+print(c.get("/").json)
+print(c.get("/").json)                      # flash shown only once
+```
+
+```output
+theme=dark
+{'messages': [['success', 'Theme changed to dark']], 'theme': 'dark'}
+{'messages': [], 'theme': 'dark'}
+```
+
+<Playground kind="none">
+
+```python
+# app.py  ->  flask --app app run --debug
+# Open /, add items with /add/pen, /add/book, then /cart and /clear.
+import os
+from flask import Flask, redirect, session, url_for
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-only-secret")
+
+@app.get("/add/<item>")
+def add(item):
+    cart = session.get("cart", [])
+    cart.append(item)
+    session["cart"] = cart            # assign again so Flask saves it
+    return redirect(url_for("cart"))
+
+@app.get("/cart")
+def cart():
+    return {"cart": session.get("cart", [])}
+
+@app.get("/clear")
+def clear():
+    session.pop("cart", None)
+    return redirect(url_for("cart"))
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Storing secrets in the session">
+
+<Wrong>
+
+```python
+session["password"] = form.password.data      # readable by the user
+session["card_number"] = "4111..."
+```
+
+</Wrong>
+
+<Right>
+
+```python
+session["user_id"] = user.id                   # just an id; data stays in the DB
+```
+
+</Right>
+
+Flask's session cookie is signed, not encrypted. Anyone with the cookie can decode it.
+
+</Mistake>
+
+<Mistake title="Changing a list inside the session in place">
+
+<Wrong>
+
+```python
+session["cart"].append("pen")      # Flask does not notice the change
+```
+
+</Wrong>
+
+<Right>
+
+```python
+cart = session.get("cart", [])
+cart.append("pen")
+session["cart"] = cart             # or set session.modified = True
+```
+
+</Right>
+
+Flask saves the session only when it sees an assignment, or when `session.modified = True`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does Flask's default session work?">
+
+It is a client-side session: the data is serialized, signed with the `SECRET_KEY` using itsdangerous, and stored in a cookie named `session`. The server checks the signature on each request. It is not encrypted, so it must not contain secrets.
+
+</QA>
+
+<QA q="What is the difference between a cookie and a session?">
+
+A cookie is any small value stored in the browser. A Flask session is a dict stored in one signed cookie by default; with Flask-Session it can live on the server (Redis or a database) with only an id in the cookie.
+
+</QA>
+
+<QA q="What cookie flags should be set for security?">
+
+`HttpOnly` (no JavaScript access, helps against XSS), `Secure` (only over HTTPS), and `SameSite=Lax` or `Strict` (helps against CSRF). For the session use `SESSION_COOKIE_SECURE`, `SESSION_COOKIE_HTTPONLY` and `SESSION_COOKIE_SAMESITE`.
+
+</QA>
+
+<QA q="What happens if the SECRET_KEY changes?">
+
+All existing session signatures become invalid, so every user is logged out. If it leaks, attackers can forge sessions, so keep it secret and rotate it if exposed.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Can a user read the contents of the default Flask session cookie?',
+      options: ['No, it is encrypted', 'Yes, it is only signed', 'Only in debug mode', 'Only with the SECRET_KEY'],
+      answer: 1,
+      why: 'The data is base64 encoded and signed, not encrypted.',
+    },
+    {
+      q: 'What makes a session cookie tamper-proof?',
+      options: ['HTTPS', 'The signature made with SECRET_KEY', 'HttpOnly', 'max_age'],
+      answer: 1,
+      why: 'Changing the data breaks the signature, so Flask ignores it.',
+    },
+    {
+      q: 'How many times is a flashed message shown?',
+      options: ['Forever', 'Once, on the next read', 'Until logout', 'Twice'],
+      answer: 1,
+      why: 'get_flashed_messages() removes the messages after reading.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Secret key | `app.secret_key = os.environ["SECRET_KEY"]` |
+| Write session | `session["user_id"] = 7` |
+| Read session | `session.get("user_id")` |
+| Logout | `session.clear()` |
+| Long-lived | `session.permanent = True` |
+| Nested change | `session.modified = True` |
+| Set cookie | `resp.set_cookie("k", "v", max_age=3600, httponly=True, secure=True, samesite="Lax")` |
+| Read cookie | `request.cookies.get("k")` |
+| Delete cookie | `resp.delete_cookie("k")` |
+| Flash | `flash("Saved", "success")` → `get_flashed_messages(with_categories=True)` |
+| Server-side sessions | Flask-Session (Redis) |
+
+</CheatSheet>

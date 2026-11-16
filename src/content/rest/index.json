@@ -2,7 +2,7 @@
   "name": "REST APIs & HTTP",
   "icon": "🌐",
   "tagline": "Requests, status codes, auth",
-  "order": 5,
+  "order": 6,
   "playground": "http",
   "modules": [
     {

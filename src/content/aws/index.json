@@ -2,7 +2,7 @@
   "name": "AWS",
   "icon": "☁️",
   "tagline": "IAM, EC2, S3, Lambda and more",
-  "order": 6,
+  "order": 7,
   "playground": "diagram",
   "modules": [
     {

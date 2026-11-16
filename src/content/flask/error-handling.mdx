@@ -1,0 +1,263 @@
+---
+id: flask-error-handling
+title: Error handlers
+summary: "Use @app.errorhandler to return your own page or JSON for 404, 500 or your own exception classes, and log errors instead of showing tracebacks."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+When a train is late, a good station does not show the engine room. It shows a **clear announcement**: "Train 12951 is late by 20 minutes". **Error handlers** are those announcements: the user gets a clear message, and the details go into the **logbook** for the staff.
+
+</Analogy>
+
+## Simple explanation
+
+Errors in Flask:
+
+- **HTTP errors**: `abort(404)`, a missing route, a wrong method (405), `request.form["x"]` missing (400). These are `HTTPException` subclasses from `werkzeug.exceptions`.
+- **Unhandled exceptions**: a bug such as `ZeroDivisionError`. In production Flask turns it into **500 Internal Server Error**; in debug mode it shows the debugger.
+
+Register a handler with **`@app.errorhandler(code_or_exception)`**:
+
+```python
+@app.errorhandler(404)
+def not_found(e):
+    return {"error": "not found"}, 404
+```
+
+- The handler gets the error object and returns a normal response. **Return the status code** too, or it becomes 200.
+- `@app.errorhandler(HTTPException)` catches **every** HTTP error in one place; `e.code`, `e.name` and `e.description` hold the details. Good for JSON APIs.
+- `@app.errorhandler(500)` (or `Exception`) is for unexpected bugs: log it with `app.logger.exception(...)` and show a friendly message.
+- **Custom exceptions**: create `class APIError(Exception)` with a status code and message, raise it anywhere, and handle it once.
+- Flask picks the **most specific** handler: a 404 handler wins over an `HTTPException` handler.
+
+Blueprints can have their own handlers (`@bp.errorhandler`) for errors raised inside their views. 404 for unknown URLs is handled at the app level, because no Blueprint matched.
+
+## Code example
+
+JSON errors for an API, a custom exception and a 500 handler:
+
+```python
+import logging
+from flask import Flask, abort
+from werkzeug.exceptions import HTTPException
+
+app = Flask(__name__)
+logging.getLogger(app.name).disabled = True     # keep the example output short
+
+class InsufficientBalance(Exception):
+    def __init__(self, balance, needed):
+        self.balance, self.needed = balance, needed
+
+@app.errorhandler(HTTPException)
+def http_error(e):
+    return {"error": e.name, "detail": e.description, "status": e.code}, e.code
+
+@app.errorhandler(InsufficientBalance)
+def balance_error(e):
+    return {"error": "Insufficient balance", "balance": e.balance, "needed": e.needed}, 402
+
+@app.errorhandler(500)
+def server_error(e):
+    app.logger.exception("Unhandled error")      # goes to the logs, not to the user
+    return {"error": "Something went wrong. Please try again."}, 500
+
+@app.get("/orders/<int:order_id>")
+def order(order_id):
+    abort(404, description=f"Order {order_id} does not exist")
+
+@app.post("/pay")
+def pay():
+    raise InsufficientBalance(balance=120, needed=499)
+
+@app.get("/bug")
+def bug():
+    return 1 / 0
+
+c = app.test_client()
+print(c.get("/orders/5").json)
+print(c.get("/no-such-page").json)
+print(c.post("/orders/5").json["status"])          # wrong method -> 405
+print(c.post("/pay").status_code, c.post("/pay").json)
+r = c.get("/bug")
+print(r.status_code, r.json)
+```
+
+```output
+{'detail': 'Order 5 does not exist', 'error': 'Not Found', 'status': 404}
+{'detail': 'The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.', 'error': 'Not Found', 'status': 404}
+405
+402 {'balance': 120, 'error': 'Insufficient balance', 'needed': 499}
+500 {'error': 'Something went wrong. Please try again.'}
+```
+
+A custom HTML page for 404:
+
+```python
+from flask import Flask, render_template_string, request
+
+app = Flask(__name__)
+
+@app.errorhandler(404)
+def page_not_found(e):
+    html = "<h1>Page not found</h1><p>No page at {{ path }}. <a href='/'>Go home</a></p>"
+    return render_template_string(html, path=request.path), 404
+
+r = app.test_client().get("/pricing-2030")
+print(r.status_code)
+print(r.get_data(as_text=True))
+```
+
+```output
+404
+<h1>Page not found</h1><p>No page at /pricing-2030. <a href='/'>Go home</a></p>
+```
+
+<Playground kind="none">
+
+```python
+# app.py  ->  flask --app app run
+# (without --debug, so you see your 500 handler instead of the debugger)
+import logging
+from flask import Flask
+
+app = Flask(__name__)
+logging.basicConfig(filename="errors.log", level=logging.ERROR)
+
+@app.errorhandler(404)
+def not_found(e):
+    return "<h1>404</h1><p>We could not find that page.</p>", 404
+
+@app.errorhandler(500)
+def server_error(e):
+    app.logger.exception("Server error")     # full traceback in errors.log
+    return "<h1>500</h1><p>Our fault. We are fixing it.</p>", 500
+
+@app.get("/crash")
+def crash():
+    return {}["missing"]                      # KeyError -> 500
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting the status code in the handler">
+
+<Wrong>
+
+```python
+@app.errorhandler(404)
+def not_found(e):
+    return {"error": "not found"}      # sent as 200 OK
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.errorhandler(404)
+def not_found(e):
+    return {"error": "not found"}, 404
+```
+
+</Right>
+
+The handler's return value is a normal response; without a code it is 200.
+
+</Mistake>
+
+<Mistake title="Catching every exception in each view">
+
+<Wrong>
+
+```python
+@app.get("/report")
+def report():
+    try:
+        ...
+    except Exception:
+        return "error"           # hides bugs, no log, wrong status
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.errorhandler(500)
+def server_error(e):
+    app.logger.exception("Unhandled")
+    return {"error": "Internal error"}, 500
+```
+
+</Right>
+
+Handle expected errors where they happen; let unexpected ones reach one central, logged 500 handler.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you return JSON instead of HTML for errors in a Flask API?">
+
+Register `@app.errorhandler(HTTPException)` and return `{"error": e.name, "detail": e.description}, e.code`. Add handlers for custom exceptions and a 500 handler for unexpected errors.
+
+</QA>
+
+<QA q="What happens to an unhandled exception in production?">
+
+Flask logs the traceback with `app.logger` and returns a 500 Internal Server Error, or the response of your `errorhandler(500)` or `errorhandler(Exception)`. With `PROPAGATE_EXCEPTIONS` (on in testing) it is re-raised instead.
+
+</QA>
+
+<QA q="How does Flask choose which error handler runs?">
+
+It looks for a handler for the exact status code or exception class, then walks up the class hierarchy (most specific first). Blueprint handlers are tried before app handlers for errors raised in that Blueprint's views.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which handler catches every HTTP error (404, 405, 400...) at once?',
+      options: ['@app.errorhandler(Exception)', '@app.errorhandler(HTTPException)', '@app.errorhandler("all")', '@app.after_request'],
+      answer: 1,
+      why: 'All HTTP errors are subclasses of werkzeug HTTPException.',
+    },
+    {
+      q: 'An error handler returns {"error": "x"} with no code. The status is?',
+      options: ['The original error code', '200', '500', '204'],
+      answer: 1,
+      why: 'A handler builds a normal response, so the default 200 is used.',
+    },
+    {
+      q: 'Where should details of an unexpected 500 go?',
+      options: ['The response body', 'The logs', 'A cookie', 'The URL'],
+      answer: 1,
+      why: 'Log tracebacks; show users a friendly message only.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| One status | `@app.errorhandler(404)` |
+| All HTTP errors | `@app.errorhandler(HTTPException)` → `e.code`, `e.name`, `e.description` |
+| Custom exception | `@app.errorhandler(MyError)` |
+| Unexpected bugs | `@app.errorhandler(500)` + `app.logger.exception(...)` |
+| Raise HTTP error | `abort(403, description="...")` |
+| Blueprint only | `@bp.errorhandler(...)` |
+| From Blueprint, app-wide | `@bp.app_errorhandler(404)` |
+| Return | `return body, e.code` (always include the code) |
+| Exceptions module | `from werkzeug.exceptions import NotFound, BadRequest` |
+
+</CheatSheet>

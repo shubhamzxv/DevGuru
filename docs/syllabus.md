@@ -1,7 +1,7 @@
 # DevGuru syllabus
 
 Generated from the index.json files. Topic ids are `<track>-<slug>`.
-11 tracks, 365 topics.
+12 tracks, 390 topics.
 
 ## 1. Python (64 topics)
 
@@ -52,7 +52,18 @@ Generated from the index.json files. Topic ids are `<track>-<slug>`.
 6. **Security**: Authentication basics (OAuth2 password flow); JWT tokens
 7. **Docs, testing and deployment**: OpenAPI docs (Swagger UI); Testing with TestClient; Deployment basics; FastAPI vs Django; FastAPI interview revision
 
-## 5. REST APIs & HTTP (28 topics)
+## 5. Flask (25 topics)
+
+1. **Basics**: What is Flask?; First app and the dev server; Routes and URL rules; HTTP methods; The request object; Responses, JSON, redirects and abort
+2. **Templates and forms**: Jinja2 templates; Template inheritance and static files; Forms and validation (Flask-WTF)
+3. **Contexts and state**: Application and request context (current_app, g); Cookies, sessions and flash messages
+4. **Structure**: Blueprints; Application factory and config; Error handlers; Request hooks and middleware
+5. **Database**: Database with Flask-SQLAlchemy; Migrations with Flask-Migrate
+6. **APIs and security**: Building a REST API (and CORS); Login with Flask-Login; JWT auth with Flask-JWT-Extended
+7. **Production**: async views and background jobs; Testing with test_client and pytest; Deployment with Gunicorn
+8. **Revision**: Flask vs FastAPI vs Django; Flask interview revision
+
+## 6. REST APIs & HTTP (28 topics)
 
 1. **How the web works**: Client and server; HTTP request and response; URLs, endpoints and resources; HTTP vs HTTPS
 2. **HTTP details**: HTTP methods; Status codes; Headers; JSON; Query params vs request body
@@ -60,7 +71,7 @@ Generated from the index.json files. Topic ids are `<track>-<slug>`.
 4. **Security**: API keys; Sessions vs tokens; JWT; OAuth 2.0 basics; CORS; Rate limiting
 5. **Beyond the basics**: HTTP caching (ETag, Cache-Control); Webhooks; REST vs GraphQL vs gRPC; Testing APIs (curl, Postman); REST and HTTP interview revision
 
-## 6. AWS (31 topics)
+## 7. AWS (31 topics)
 
 1. **Cloud basics**: What is cloud computing?; Regions and Availability Zones; Shared responsibility model; Pricing basics and the free tier
 2. **Security and access**: IAM users, groups and policies; IAM roles
@@ -71,7 +82,7 @@ Generated from the index.json files. Topic ids are `<track>-<slug>`.
 7. **Messaging and monitoring**: SQS; SNS; SQS vs SNS vs EventBridge; CloudWatch
 8. **Deploying and architectures**: Amplify Hosting; Infrastructure as code (CloudFormation, CDK); Static site (S3 + CloudFront); Serverless API (API Gateway + Lambda + DynamoDB); Three-tier web app; AWS interview revision
 
-## 7. Git & GitHub (29 topics)
+## 8. Git & GitHub (29 topics)
 
 1. **Basics**: What is Git?; Install and configure; git init; Working directory, staging area, repository; add and commit; status, log and diff; .gitignore
 2. **Branching**: Branches; Merge; Merge conflicts; Rebase; Merge vs rebase; Stash; Cherry-pick
@@ -79,7 +90,7 @@ Generated from the index.json files. Topic ids are `<track>-<slug>`.
 4. **Remotes and GitHub**: Remotes; push, pull and fetch; fetch vs pull; GitHub: repositories, forks and clones; Pull requests; Tags and releases
 5. **Workflows**: Workflows (feature branch, Git Flow, trunk-based); Good commit messages; GitHub Actions basics; Git interview revision
 
-## 8. Docker (20 topics)
+## 9. Docker (20 topics)
 
 1. **Basics**: What is Docker?; Containers vs virtual machines; Your first container (docker run); Images and containers
 2. **Building images**: Dockerfile; Layers and build cache; CMD vs ENTRYPOINT; Multi-stage builds; Docker Hub and registries
@@ -87,7 +98,7 @@ Generated from the index.json files. Topic ids are `<track>-<slug>`.
 4. **Docker Compose**: docker-compose; Compose example: Django + PostgreSQL + Redis
 5. **Production**: Best practices; Smaller, safer images; Docker vs Kubernetes (overview); Docker interview revision
 
-## 9. Linux & Bash (25 topics)
+## 10. Linux & Bash (25 topics)
 
 1. **Basics**: What is Linux?; The file system (/, /home, /etc); Navigation (pwd, ls, cd); Files and folders (touch, mkdir, cp, mv, rm); Viewing files (cat, less, head, tail); Editing files (nano, vim basics)
 2. **Permissions and users**: Permissions (chmod, chown); Users and groups; sudo
@@ -96,7 +107,7 @@ Generated from the index.json files. Topic ids are `<track>-<slug>`.
 5. **Environment and network**: Environment variables; Installing software (apt, yum); Networking (curl, ping, ports); SSH and scp
 6. **Shell scripting**: Your first shell script; Variables, if and loops in Bash; Functions and exit codes; cron jobs; Linux interview revision
 
-## 10. DSA in Python (28 topics)
+## 11. DSA in Python (28 topics)
 
 1. **Foundations**: Big-O notation; Time vs space complexity
 2. **Arrays, strings and hashing**: Arrays and lists; Strings; Hashing (dict and set); Two pointers; Sliding window; Prefix sum
@@ -105,7 +116,7 @@ Generated from the index.json files. Topic ids are `<track>-<slug>`.
 5. **Trees and graphs**: Binary trees; Tree traversals; Binary search trees; Heaps and priority queues; Graphs; Breadth-first search (BFS); Depth-first search (DFS)
 6. **Problem-solving patterns**: Dynamic programming basics; Greedy basics; Common interview patterns; Top interview problems
 
-## 11. System Design Basics (22 topics)
+## 12. System Design Basics (22 topics)
 
 1. **Foundations**: What is system design?; Scalability (vertical vs horizontal); Latency, throughput and availability; Load balancing
 2. **Architecture**: Monolith vs microservices; How microservices communicate (REST, gRPC, queues); API gateway; Message queues (Kafka, RabbitMQ, SQS); Event-driven architecture

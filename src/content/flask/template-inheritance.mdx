@@ -1,0 +1,275 @@
+---
+id: flask-template-inheritance
+title: Template inheritance and static files
+summary: "Write the page layout once in base.html with blocks, extend it in every page, reuse pieces with include and macros, and serve CSS, JS and images from the static folder."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+**Template inheritance** is like a **school notebook with a printed header and margin**. Every page already has the school name and lines. You only write the content of the day. `base.html` is the printed notebook; each page fills in the **blocks**.
+
+</Analogy>
+
+## Simple explanation
+
+**base.html** holds the common layout (head, navbar, footer) and marks **blocks** that child pages can replace:
+
+```html
+<title>{% block title %}DevGuru{% endblock %}</title>
+<main>{% block content %}{% endblock %}</main>
+```
+
+A child page **extends** it and fills the blocks:
+
+```html
+{% extends "base.html" %}
+{% block title %}Profile{% endblock %}
+{% block content %}<h1>Hello</h1>{% endblock %}
+```
+
+- `{% extends %}` must be the **first** tag in the child
+- A block not filled by the child keeps the parent's content
+- `{{ super() }}` inside a block keeps the parent's content **and** adds yours
+
+Other reuse tools:
+
+| Tool | Use |
+| --- | --- |
+| `{% include "navbar.html" %}` | paste another template here |
+| `{% macro %}` | a reusable template function, like a form field |
+| `{% import "forms.html" as f %}` | use macros from another file |
+
+**Static files** (CSS, JS, images) go in the **`static`** folder. Flask serves them at `/static/...`. Link them with:
+
+`{{ url_for('static', filename='css/style.css') }}`
+
+In production, Nginx or a CDN usually serves static files directly, which is faster than Flask.
+
+## Code example
+
+Templates loaded from a dict so the example runs on its own. In a real app these are files in `templates/`:
+
+```python
+from flask import Flask, render_template
+from jinja2 import DictLoader
+
+app = Flask(__name__)
+app.jinja_loader = DictLoader({
+    "base.html": (
+        "<title>{% block title %}DevGuru{% endblock %}</title>\n"
+        "<link href=\"{{ url_for('static', filename='css/style.css') }}\">\n"
+        "<nav>Home | Tracks</nav>\n"
+        "<main>{% block content %}{% endblock %}</main>\n"
+        "<footer>{% block footer %}© DevGuru{% endblock %}</footer>"
+    ),
+    "profile.html": (
+        "{% extends 'base.html' %}\n"
+        "{% block title %}{{ name }} - {{ super() }}{% endblock %}\n"
+        "{% block content %}<h1>Hello {{ name }}</h1>{% endblock %}"
+    ),
+})
+
+@app.get("/profile")
+def profile():
+    return render_template("profile.html", name="Ravi")
+
+print(app.test_client().get("/profile").get_data(as_text=True))
+```
+
+```output
+<title>Ravi - DevGuru</title>
+<link href="/static/css/style.css">
+<nav>Home | Tracks</nav>
+<main><h1>Hello Ravi</h1></main>
+<footer>© DevGuru</footer>
+```
+
+A macro for a repeated form field:
+
+```python
+from flask import Flask, render_template_string
+
+app = Flask(__name__)
+
+TEMPLATE = """{% macro field(name, label, type="text") -%}
+<label>{{ label }} <input name="{{ name }}" type="{{ type }}"></label>
+{%- endmacro %}
+{{ field("email", "Email", type="email") }}
+{{ field("city", "City") }}"""
+
+with app.app_context():
+    print(render_template_string(TEMPLATE).strip())
+```
+
+```output
+<label>Email <input name="email" type="email"></label>
+<label>City <input name="city" type="text"></label>
+```
+
+Flask serves the `static` folder automatically:
+
+```python
+import os, tempfile
+from flask import Flask, url_for
+
+root = tempfile.mkdtemp()
+os.makedirs(os.path.join(root, "static", "css"))
+with open(os.path.join(root, "static", "css", "style.css"), "w") as f:
+    f.write("body { font-family: sans-serif; }")
+
+app = Flask(__name__, root_path=root)
+r = app.test_client().get("/static/css/style.css")
+print(r.status_code, r.mimetype, r.get_data(as_text=True))
+with app.test_request_context():
+    print(url_for("static", filename="css/style.css"))
+```
+
+```output
+200 text/css body { font-family: sans-serif; }
+/static/css/style.css
+```
+
+<Playground kind="none">
+
+```python
+# Folder layout:
+#   app.py
+#   static/css/style.css
+#   templates/base.html     (layout with {% block content %})
+#   templates/home.html     ({% extends "base.html" %})
+#
+# templates/base.html:
+#   <!doctype html>
+#   <html><head>
+#     <title>{% block title %}My site{% endblock %}</title>
+#     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+#   </head><body>
+#     <nav><a href="{{ url_for('home') }}">Home</a></nav>
+#     {% block content %}{% endblock %}
+#   </body></html>
+#
+# templates/home.html:
+#   {% extends "base.html" %}
+#   {% block title %}Home{% endblock %}
+#   {% block content %}<h1>Welcome</h1>{% endblock %}
+from flask import Flask, render_template
+
+app = Flask(__name__)
+
+@app.get("/")
+def home():
+    return render_template("home.html")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Content outside blocks in a child template">
+
+<Wrong>
+
+```html
+{% extends "base.html" %}
+<h1>Hello</h1>                 <!-- outside any block: never shown -->
+```
+
+</Wrong>
+
+<Right>
+
+```html
+{% extends "base.html" %}
+{% block content %}<h1>Hello</h1>{% endblock %}
+```
+
+</Right>
+
+In a child template, only content inside blocks is used.
+
+</Mistake>
+
+<Mistake title="Hard-coding static paths">
+
+<Wrong>
+
+```html
+<link rel="stylesheet" href="/static/style.css">
+```
+
+</Wrong>
+
+<Right>
+
+```html
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+```
+
+</Right>
+
+`url_for` keeps working if the app runs under a prefix such as `/app/` or a Blueprint's static folder.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does template inheritance work in Jinja?">
+
+A base template defines blocks with `{% block name %}`. A child starts with `{% extends "base.html" %}` and overrides blocks. Unfilled blocks keep the parent content, and `{{ super() }}` includes the parent's block content.
+
+</QA>
+
+<QA q="What is the difference between include and extends?">
+
+`extends` makes the current template a child of a layout and fills its blocks. `include` inserts another template's output at that point, like pasting a navbar.
+
+</QA>
+
+<QA q="How are static files served in Flask and in production?">
+
+Flask serves the `static` folder at `/static/` through a built-in route. In production, a web server (Nginx) or a CDN such as S3 + CloudFront usually serves them directly, with long cache headers.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where must {% extends %} appear in a child template?',
+      options: ['Anywhere', 'At the very top', 'At the end', 'Inside a block'],
+      answer: 1,
+      why: 'extends must be the first tag in the template.',
+    },
+    {
+      q: 'How do you keep the parent block content and add more?',
+      options: ['{{ parent() }}', '{{ super() }}', '{% include %}', '{% base %}'],
+      answer: 1,
+      why: 'super() renders the parent block inside the child block.',
+    },
+    {
+      q: 'Which builds the URL of static/css/app.css?',
+      options: ["url_for('css', 'app.css')", "url_for('static', filename='css/app.css')", "static('css/app.css')", "/css/app.css"],
+      answer: 1,
+      why: 'The built-in endpoint "static" takes the filename relative to the static folder.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Jinja |
+| --- | --- |
+| Define block | `{% block content %}{% endblock %}` |
+| Use layout | `{% extends "base.html" %}` (first line) |
+| Keep parent content | `{{ super() }}` |
+| Paste a piece | `{% include "navbar.html" %}` |
+| Macro | `{% macro field(name) %}...{% endmacro %}` |
+| Import macros | `{% import "forms.html" as f %}` then `{{ f.field("x") }}` |
+| Static URL | `{{ url_for('static', filename='css/style.css') }}` |
+| Folders | `templates/` and `static/` next to `app.py` |
+
+</CheatSheet>

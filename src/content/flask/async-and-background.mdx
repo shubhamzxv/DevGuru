@@ -1,0 +1,289 @@
+---
+id: flask-async-and-background
+title: async views and background jobs
+summary: "Flask 2+ runs async def views so you can await several I/O calls at once, but each request still holds a worker; long work goes to a task queue such as Celery or RQ."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+At a **tea stall**, the owner can put three cups on the stove and serve them together instead of one by one: that is **async** inside one order. But if a customer orders 500 cups for a wedding, the owner does not keep everyone waiting at the counter. He writes the order down and his **helpers in the back** (the task queue) make it, while he serves the next customer.
+
+</Analogy>
+
+## Simple explanation
+
+**async views** (Flask 2.0+, install `pip install "flask[async]"`):
+
+```python
+@app.get("/dashboard")
+async def dashboard():
+    weather, news = await asyncio.gather(get_weather(), get_news())
+```
+
+- Useful when one request makes **several slow I/O calls** (APIs, DB): run them **at the same time** with `asyncio.gather`
+- Flask is still a **WSGI** app: each async view runs in an event loop inside a worker thread, and the request **holds that worker** until it finishes
+- So async in Flask makes **one request faster**; it does not let one worker serve thousands of connections like an **ASGI** framework (FastAPI, Quart) does
+- Use async libraries inside (`httpx.AsyncClient`, `asyncpg`); a blocking call like `time.sleep` or `requests.get` blocks the loop anyway
+
+**Background jobs**: work that should not make the user wait: sending emails, generating PDFs or reports, resizing images, calling slow third-party APIs.
+
+| Option | Notes |
+| --- | --- |
+| **Celery** + Redis/RabbitMQ | most popular, retries, scheduling (celery beat), many workers |
+| **RQ** (Redis Queue) | simpler, Redis only |
+| A thread (`threading`, `ThreadPoolExecutor`) | only for tiny jobs; lost if the process restarts, no retries |
+
+Pattern: the view **puts a job in the queue** and returns **202 Accepted** with a job id at once. A separate **worker process** runs the job. The client checks `/jobs/<id>` (polling) or gets a webhook or email.
+
+Background code runs **outside the request**, so `request` is not available there. Pass the plain values it needs (ids, emails), and use `with app.app_context():` for the database. Never pass ORM objects or the request to a task.
+
+## Code example
+
+Three slow I/O calls in one request, one after another versus with `asyncio.gather`:
+
+```python
+import asyncio, time
+from flask import Flask
+
+app = Flask(__name__)
+
+async def fetch(name, seconds):            # stands in for an HTTP or DB call
+    await asyncio.sleep(seconds)
+    return name
+
+@app.get("/sequential")
+async def sequential():
+    return [await fetch("weather", 0.3), await fetch("news", 0.3), await fetch("stocks", 0.3)]
+
+@app.get("/parallel")
+async def parallel():
+    return list(await asyncio.gather(fetch("weather", 0.3), fetch("news", 0.3), fetch("stocks", 0.3)))
+
+c = app.test_client()
+for path in ("/sequential", "/parallel"):
+    t0 = time.perf_counter()
+    data = c.get(path).json
+    print(f"{path:<12} {data}  ~{round(time.perf_counter() - t0, 1)} s")
+```
+
+```output
+/sequential  ['weather', 'news', 'stocks']  ~0.9 s
+/parallel    ['weather', 'news', 'stocks']  ~0.3 s
+```
+
+A job queue in miniature: return **202** at once, a worker does the job, the client polls the status. Real apps use Celery or RQ instead of this thread:
+
+```python
+import queue, threading, time, uuid
+from flask import Flask
+
+app = Flask(__name__)
+jobs = {}
+work = queue.Queue()
+
+def worker():                                     # in real life: a Celery/RQ worker process
+    while True:
+        job_id, email = work.get()
+        jobs[job_id] = "running"
+        time.sleep(0.2)                           # send the email / build the report
+        jobs[job_id] = f"done: report sent to {email}"
+        work.task_done()
+
+threading.Thread(target=worker, daemon=True).start()
+
+@app.post("/reports")
+def create_report():
+    job_id = uuid.uuid4().hex[:8]
+    jobs[job_id] = "queued"
+    work.put((job_id, "asha@example.in"))          # pass plain values, not request
+    return {"job_id": job_id, "status_url": f"/jobs/{job_id}"}, 202
+
+@app.get("/jobs/<job_id>")
+def job_status(job_id):
+    return {"status": jobs.get(job_id, "unknown")}
+
+c = app.test_client()
+r = c.post("/reports")
+print(r.status_code, "status_url" in r.json)
+print("right away:", c.get(r.json["status_url"]).json["status"] in ("queued", "running"))
+work.join()
+print("later:", c.get(r.json["status_url"]).json)
+```
+
+```output
+202 True
+right away: True
+later: {'status': 'done: report sent to asha@example.in'}
+```
+
+<Playground kind="none">
+
+```python
+# Celery with Flask (application factory).
+# pip install flask "celery[redis]"
+# Start Redis, then in two terminals:
+#   flask --app app run --debug
+#   celery -A app.celery_app worker --loglevel=info
+from celery import Celery, Task
+from flask import Flask
+
+def celery_init_app(app: Flask) -> Celery:
+    class FlaskTask(Task):
+        def __call__(self, *args, **kwargs):
+            with app.app_context():                # tasks can use the DB and config
+                return self.run(*args, **kwargs)
+
+    celery = Celery(app.name, task_cls=FlaskTask)
+    celery.config_from_object(app.config["CELERY"])
+    celery.set_default()
+    app.extensions["celery"] = celery
+    return celery
+
+app = Flask(__name__)
+app.config["CELERY"] = {"broker_url": "redis://localhost:6379/0",
+                        "result_backend": "redis://localhost:6379/0"}
+celery_app = celery_init_app(app)
+
+@celery_app.task(bind=True, max_retries=3)
+def send_welcome_email(self, user_email):
+    print(f"Sending welcome email to {user_email}")
+    return "sent"
+
+@app.post("/signup/<email>")
+def signup(email):
+    task = send_welcome_email.delay(email)         # returns immediately
+    return {"task_id": task.id}, 202
+
+@app.get("/tasks/<task_id>")
+def task_status(task_id):
+    result = celery_app.AsyncResult(task_id)
+    return {"state": result.state, "result": result.result if result.ready() else None}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Blocking calls inside an async view">
+
+<Wrong>
+
+```python
+@app.get("/data")
+async def data():
+    r = requests.get("https://api.example.com")   # blocking: no speed-up
+    time.sleep(2)                                 # blocks the event loop
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.get("/data")
+async def data():
+    async with httpx.AsyncClient() as client:
+        r = await client.get("https://api.example.com")
+    await asyncio.sleep(2)
+```
+
+</Right>
+
+async only helps when the slow calls are awaited with async libraries.
+
+</Mistake>
+
+<Mistake title="Doing slow work inside the request">
+
+<Wrong>
+
+```python
+@app.post("/signup")
+def signup():
+    create_user()
+    send_email_to_user()          # 5 seconds, and fails if SMTP is down
+    generate_welcome_pdf()
+    return {"ok": True}
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@app.post("/signup")
+def signup():
+    user = create_user()
+    send_welcome.delay(user.id)   # queued; retried on failure
+    return {"ok": True}, 201
+```
+
+</Right>
+
+Requests should finish fast. Gunicorn kills workers after 30 s by default, and users give up even sooner.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Does async def make Flask as scalable as FastAPI?">
+
+No. Flask stays a WSGI framework: each async view runs in an event loop on a worker thread and holds that worker for the whole request. It speeds up a request that does several I/O calls concurrently, but concurrency across requests still depends on the number of workers. For many long-lived connections use an ASGI framework (FastAPI, Quart).
+
+</QA>
+
+<QA q="How do you run background tasks with Flask?">
+
+With a task queue: Celery (Redis or RabbitMQ broker) or RQ. The view enqueues the task with plain arguments and returns 202 Accepted with a task id; separate worker processes run it with retries; the client polls a status endpoint or is notified.
+
+</QA>
+
+<QA q="Why can't a Celery task use request?">
+
+It runs in another process, after the request has ended. Pass the needed data (ids, emails) as arguments, and push an app context (Flask's Celery integration does it for every task) to use the database and config.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Three awaited calls of 1 s each run with asyncio.gather. Roughly how long?',
+      options: ['3 s', '1 s', '0 s', '2 s'],
+      answer: 1,
+      why: 'gather runs them at the same time, so the total is about the slowest one.',
+    },
+    {
+      q: 'Which status fits "job accepted, still processing"?',
+      options: ['200', '201', '202', '204'],
+      answer: 2,
+      why: '202 Accepted means the request is accepted but not finished.',
+    },
+    {
+      q: 'What do you pass to a background task?',
+      options: ['The request object', 'An ORM object', 'Plain values like user_id', 'The Flask app'],
+      answer: 2,
+      why: 'Tasks run later in another process; pass serializable values and reload data there.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code / tool |
+| --- | --- |
+| async support | `pip install "flask[async]"` |
+| async view | `@app.get("/x") async def x(): ...` |
+| Many calls at once | `await asyncio.gather(a(), b(), c())` |
+| Async HTTP client | `httpx.AsyncClient` |
+| Task queue | Celery + Redis, or RQ |
+| Enqueue | `task.delay(user_id)` → `return {"task_id": t.id}, 202` |
+| Status | `celery_app.AsyncResult(task_id).state` |
+| Scheduled jobs | celery beat / cron |
+| Needs ASGI-level concurrency | FastAPI or Quart |
+
+</CheatSheet>

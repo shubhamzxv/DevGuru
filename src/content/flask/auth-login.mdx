@@ -1,0 +1,285 @@
+---
+id: flask-auth-login
+title: Login with Flask-Login
+summary: "Hash passwords with werkzeug.security, and let Flask-Login keep users logged in through the session with login_user, logout_user, current_user and @login_required."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+Logging in is like getting a **visitor pass at an office**. At the gate you show your ID once (username + password). The guard gives you a **pass** (the session cookie). Inside, every door checks the pass, not your ID again. `@login_required` is the door that says "pass holders only".
+
+</Analogy>
+
+## Simple explanation
+
+**Step 1: store passwords safely.** Never store the real password. Store a **hash**:
+
+- `generate_password_hash("secret")` gives a salted hash like `scrypt:32768:8:1$...`
+- `check_password_hash(stored_hash, "secret")` returns True or False
+- Same password → **different** hash each time (because of the random **salt**), but the check still works
+
+**Step 2: Flask-Login** (`pip install flask-login`) manages the logged-in user in the session:
+
+| Piece | Job |
+| --- | --- |
+| `LoginManager()` + `init_app(app)` | set up |
+| `UserMixin` | adds `is_authenticated`, `get_id()` and friends to your User class |
+| `@login_manager.user_loader` | load a user from the id stored in the session |
+| `login_user(user, remember=True)` | log in (stores the id in the session) |
+| `logout_user()` | log out |
+| `current_user` | the user of this request (an anonymous user if not logged in) |
+| `@login_required` | protect a view |
+| `login_manager.login_view = "login"` | where to send people who are not logged in |
+
+Flask-Login is for **browser sessions** (HTML apps). For **mobile apps and SPAs** calling an API, tokens such as **JWT** are more common (next topic).
+
+Security checklist: HTTPS only (`SESSION_COOKIE_SECURE=True`), a strong `SECRET_KEY`, the same error message for wrong username and wrong password, rate-limit the login route (Flask-Limiter), and only redirect to **safe** `next` URLs on your own site.
+
+## Code example
+
+Password hashing:
+
+```python
+from werkzeug.security import check_password_hash, generate_password_hash
+
+h1 = generate_password_hash("MyPass@123")
+h2 = generate_password_hash("MyPass@123")
+print(h1.split("$")[0])                       # method and cost settings
+print("same hash twice?", h1 == h2)           # no: random salt
+print(check_password_hash(h1, "MyPass@123"))
+print(check_password_hash(h1, "mypass@123"))
+```
+
+```output
+scrypt:32768:8:1
+same hash twice? False
+True
+False
+```
+
+A full login flow with Flask-Login:
+
+```python
+from flask import Flask, redirect, request, url_for
+from flask_login import (LoginManager, UserMixin, current_user, login_required,
+                         login_user, logout_user)
+from werkzeug.security import check_password_hash, generate_password_hash
+
+app = Flask(__name__)
+app.secret_key = "dev-only-secret"
+login_manager = LoginManager(app)
+login_manager.login_view = "login"
+
+class User(UserMixin):
+    def __init__(self, id, username, password):
+        self.id, self.username = id, username
+        self.password_hash = generate_password_hash(password)
+
+USERS = {1: User(1, "asha", "MyPass@123")}
+
+@login_manager.user_loader
+def load_user(user_id):                       # called on every request with the session id
+    return USERS.get(int(user_id))
+
+@app.post("/login")
+def login():
+    user = next((u for u in USERS.values() if u.username == request.form["username"]), None)
+    if user is None or not check_password_hash(user.password_hash, request.form["password"]):
+        return {"error": "Wrong username or password"}, 401   # same message for both cases
+    login_user(user)
+    return {"message": f"Welcome {user.username}"}
+
+@app.get("/dashboard")
+@login_required
+def dashboard():
+    return {"user": current_user.username}
+
+@app.post("/logout")
+@login_required
+def logout():
+    logout_user()
+    return {"message": "Logged out"}
+
+c = app.test_client()
+r = c.get("/dashboard")
+print(r.status_code, r.headers["Location"])                     # sent to the login page
+print(c.post("/login", data={"username": "asha", "password": "wrong"}).json)
+print(c.post("/login", data={"username": "asha", "password": "MyPass@123"}).json)
+print(c.get("/dashboard").json)
+print(c.post("/logout").json)
+print(c.get("/dashboard").status_code)
+```
+
+```output
+302 /login?next=%2Fdashboard
+{'error': 'Wrong username or password'}
+{'message': 'Welcome asha'}
+{'user': 'asha'}
+{'message': 'Logged out'}
+302
+```
+
+<Playground kind="none">
+
+```python
+# pip install flask flask-login flask-sqlalchemy
+# A database-backed User model for Flask-Login.
+from flask import Flask
+from flask_login import LoginManager, UserMixin
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import Mapped, mapped_column
+from werkzeug.security import check_password_hash, generate_password_hash
+
+db = SQLAlchemy()
+login_manager = LoginManager()
+login_manager.login_view = "auth.login"
+
+class User(UserMixin, db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(unique=True)
+    password_hash: Mapped[str]
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+def create_app():
+    app = Flask(__name__)
+    app.config.update(SECRET_KEY="change-me", SQLALCHEMY_DATABASE_URI="sqlite:///users.db",
+                      SESSION_COOKIE_SECURE=False)   # True in production (HTTPS)
+    db.init_app(app)
+    login_manager.init_app(app)
+    return app
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Storing plain or fast-hashed passwords">
+
+<Wrong>
+
+```python
+user.password = request.form["password"]                       # plain text
+user.password = hashlib.md5(password.encode()).hexdigest()     # fast hash, no salt
+```
+
+</Wrong>
+
+<Right>
+
+```python
+user.password_hash = generate_password_hash(password)          # salted scrypt / pbkdf2
+```
+
+</Right>
+
+MD5 and SHA-1 are cracked in seconds with GPUs. Use a slow, salted password hash (scrypt, pbkdf2, bcrypt, argon2).
+
+</Mistake>
+
+<Mistake title="Redirecting to any next URL">
+
+<Wrong>
+
+```python
+return redirect(request.args.get("next"))     # /login?next=https://evil.site
+```
+
+</Wrong>
+
+<Right>
+
+```python
+from urllib.parse import urlsplit
+
+nxt = request.args.get("next", "")
+if not nxt or urlsplit(nxt).netloc or not nxt.startswith("/"):
+    nxt = url_for("dashboard")
+return redirect(nxt)
+```
+
+</Right>
+
+An unchecked `next` is an open redirect, used in phishing. Only allow paths on your own site.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you store passwords in a Flask app?">
+
+Hash them with a slow, salted algorithm, for example `werkzeug.security.generate_password_hash` (scrypt by default in Werkzeug 3) or bcrypt/argon2, and verify with `check_password_hash`. Never store or log the plain password.
+
+</QA>
+
+<QA q="How does Flask-Login know who the current user is?">
+
+`login_user` stores the user's id in the session cookie. On each request Flask-Login reads the id and calls your `user_loader` callback to load the user, available as `current_user`. Without a valid id, `current_user` is an anonymous user.
+
+</QA>
+
+<QA q="What does @login_required do?">
+
+It checks `current_user.is_authenticated`. If false, it redirects to `login_manager.login_view` (with a `next` parameter), or returns 401 if no login view is set.
+
+</QA>
+
+<QA q="Session login or JWT for a Flask backend?">
+
+Sessions (Flask-Login) are simple and secure for server-rendered web apps on one domain. JWTs suit APIs used by mobile apps, SPAs on other domains or many services, because they are sent in the Authorization header and need no server-side session lookup; but they are harder to revoke.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Why do two hashes of the same password differ?',
+      options: ['A bug', 'Each hash uses a random salt', 'The time is included', 'They are encrypted with SECRET_KEY'],
+      answer: 1,
+      why: 'A random salt makes each hash unique, defeating precomputed (rainbow) tables.',
+    },
+    {
+      q: 'Which Flask-Login function do you call after checking the password?',
+      options: ['current_user()', 'login_user(user)', 'user_loader(user)', 'session.login(user)'],
+      answer: 1,
+      why: 'login_user stores the user id in the session.',
+    },
+    {
+      q: 'A logged-out user opens a @login_required page with login_view set. Result?',
+      options: ['500', 'A redirect to the login page', 'The page with empty data', '404'],
+      answer: 1,
+      why: 'Flask-Login redirects to login_view, adding ?next= with the original URL.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Hash | `generate_password_hash(pw)` |
+| Verify | `check_password_hash(hash, pw)` |
+| Install | `pip install flask-login` |
+| Setup | `login_manager = LoginManager(app)` · `login_manager.login_view = "login"` |
+| User class | `class User(UserMixin, db.Model)` |
+| Loader | `@login_manager.user_loader def load_user(id): return db.session.get(User, int(id))` |
+| Log in | `login_user(user, remember=True)` |
+| Log out | `logout_user()` |
+| Who | `current_user.is_authenticated`, `current_user.id` |
+| Protect | `@login_required` (below the route decorator) |
+| Secure cookie | `SESSION_COOKIE_SECURE=True`, `SESSION_COOKIE_HTTPONLY=True` |
+
+</CheatSheet>

@@ -2,7 +2,7 @@
   "name": "Linux & Bash",
   "icon": "🐧",
   "tagline": "Commands, permissions, scripts",
-  "order": 9,
+  "order": 10,
   "playground": "terminal",
   "modules": [
     {

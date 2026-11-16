@@ -2,7 +2,7 @@
   "name": "Git & GitHub",
   "icon": "🌿",
   "tagline": "Commits, branches, merges, PRs",
-  "order": 7,
+  "order": 8,
   "playground": "git",
   "modules": [
     {

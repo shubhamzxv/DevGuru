@@ -1,0 +1,251 @@
+---
+id: flask-flask-vs-fastapi-vs-django
+title: Flask vs FastAPI vs Django
+summary: "Django is batteries-included, FastAPI is a typed async-first API framework, and Flask is a small flexible WSGI core you extend yourself; pick by the project, not by hype."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+Three ways to get a house:
+
+- **Django**: a **ready-made flat** with kitchen, furniture and security already fitted. Move in fast; changing the layout takes effort.
+- **FastAPI**: a **modern, pre-wired smart home** built for speed and automation (async, types, auto docs), but you still pick the furniture (ORM, admin).
+- **Flask**: an **empty plot with good foundations**. You build exactly what you want, room by room, with parts you choose.
+
+</Analogy>
+
+## Simple explanation
+
+| | **Flask** | **FastAPI** | **Django** |
+| --- | --- | --- | --- |
+| Style | micro-framework | API framework | full-stack, batteries included |
+| Standard | WSGI (sync; async views on a thread) | **ASGI**, async-first | WSGI + ASGI |
+| Validation | none built in (Marshmallow, Pydantic, WTForms) | **Pydantic** from type hints | forms, DRF serializers |
+| ORM | choose (Flask-SQLAlchemy usual) | choose (SQLAlchemy, SQLModel) | **Django ORM** built in |
+| Admin panel | Flask-Admin (extension) | none (third-party) | **built in** |
+| Auth | Flask-Login / JWT-Extended | write it with `Depends` + OAuth2 helpers | **built in** (users, groups, permissions) |
+| API docs | via flask-smorest / APIFlask | **automatic** Swagger UI + ReDoc | via DRF / drf-spectacular |
+| Templates | Jinja2 | Jinja2 (optional) | Django templates |
+| Dependency injection | no (use `g`, `current_app`, extensions) | **Depends** | no |
+| Performance | good | **very high** for I/O-bound APIs | good |
+| Learning curve | **easiest** to start | easy if you know type hints | steeper; many conventions |
+| Best for | small/medium apps, microservices, prototypes, full control | high-concurrency JSON APIs, ML model serving, microservices | content sites, admin-heavy products, big teams wanting conventions |
+
+**Same endpoint in each**:
+
+| Framework | "Get one item" |
+| --- | --- |
+| Flask | `@app.get("/items/<int:item_id>")` → `def get_item(item_id):` |
+| FastAPI | `@app.get("/items/{item_id}")` → `def get_item(item_id: int):` |
+| Django | `path("items/<int:item_id>/", views.get_item)` → `def get_item(request, item_id):` |
+
+**How to choose**:
+
+- Need an **admin panel, users, ORM and forms today**: **Django**
+- A **JSON API** with strong validation, auto docs, many concurrent I/O calls: **FastAPI**
+- A **small service, a prototype, a server-rendered app**, or you want to pick every library: **Flask**
+- An **existing codebase** or team skills usually matter more than benchmarks
+
+## Code example
+
+The same "create a book" API in Flask, with the validation FastAPI would give from type hints, done by hand:
+
+```python
+from flask import Flask, request
+
+app = Flask(__name__)
+
+@app.post("/books")
+def create_book():
+    data = request.get_json(silent=True) or {}
+    errors = []
+    if not isinstance(data.get("title"), str):
+        errors.append("title: must be a string")
+    if not isinstance(data.get("price"), (int, float)):
+        errors.append("price: must be a number")
+    if errors:
+        return {"detail": errors}, 422
+    return {"title": data["title"], "price": data["price"]}, 201
+
+c = app.test_client()
+print(c.post("/books", json={"title": "Flask Web Development", "price": 650}).json)
+print(c.post("/books", json={"title": 42}).json)
+```
+
+```output
+{'price': 650, 'title': 'Flask Web Development'}
+{'detail': ['title: must be a string', 'price: must be a number']}
+```
+
+In FastAPI the same checks come from a Pydantic model:
+
+```text
+class Book(BaseModel):
+    title: str
+    price: float
+
+@app.post("/books", status_code=201)
+def create_book(book: Book):
+    return book
+```
+
+A Flask app is a plain WSGI callable; an ASGI app is an async callable with a different signature:
+
+```python
+import inspect
+from flask import Flask
+
+app = Flask(__name__)
+print("Flask WSGI signature:", inspect.signature(app.wsgi_app))
+
+async def asgi_app(scope, receive, send):        # what FastAPI/Starlette apps look like
+    ...
+print("ASGI app is async:", inspect.iscoroutinefunction(asgi_app), inspect.signature(asgi_app))
+```
+
+```output
+Flask WSGI signature: (environ: 'WSGIEnvironment', start_response: 'StartResponse') -> 'cabc.Iterable[bytes]'
+ASGI app is async: True (scope, receive, send)
+```
+
+<Playground kind="none">
+
+```python
+# The same tiny API, three ways. Try each to feel the difference.
+
+# ---- Flask:  pip install flask   ->  flask --app app run
+from flask import Flask
+flask_app = Flask(__name__)
+
+@flask_app.get("/hello/<name>")
+def hello_flask(name):
+    return {"message": f"Hello {name} from Flask"}
+
+# ---- FastAPI: pip install fastapi uvicorn  ->  uvicorn app:fastapi_app --reload
+# from fastapi import FastAPI
+# fastapi_app = FastAPI()
+#
+# @fastapi_app.get("/hello/{name}")
+# def hello_fastapi(name: str):
+#     return {"message": f"Hello {name} from FastAPI"}
+
+# ---- Django: django-admin startproject site; in views.py:
+# from django.http import JsonResponse
+# def hello(request, name):
+#     return JsonResponse({"message": f"Hello {name} from Django"})
+# urls.py: path("hello/<str:name>/", hello)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Choosing only by benchmarks">
+
+<Wrong>
+
+```text
+"FastAPI is faster, so we will rewrite our Django admin product in FastAPI."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"The product needs admin, auth and an ORM now: stay on Django. Put the new
+high-traffic JSON service in FastAPI, and the small internal tool in Flask."
+```
+
+</Right>
+
+Most apps wait on the database, not the framework. Fit the tool to the features and the team.
+
+</Mistake>
+
+<Mistake title="Saying Flask cannot do async">
+
+<Wrong>
+
+```text
+"Flask has no async support."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Flask 2+ supports async def views, but it stays WSGI: each request still uses a
+worker. For true ASGI concurrency or WebSockets, use FastAPI or Quart."
+```
+
+</Right>
+
+Interviewers like this precise answer: async views exist, but the server model is still WSGI.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Flask vs Django: when would you use each?">
+
+Django when you want a full product quickly with built-in ORM, admin, auth, forms and strong conventions, especially with larger teams. Flask when you want a small core and full control over libraries, for microservices, prototypes or apps that do not fit Django's structure.
+
+</QA>
+
+<QA q="Flask vs FastAPI for a new REST API?">
+
+FastAPI gives automatic validation and serialization from type hints, OpenAPI docs and ASGI async concurrency out of the box, which suits new JSON APIs. Flask is mature, simple and has a huge extension ecosystem; it suits teams that already know it, server-rendered pages, or simpler services.
+
+</QA>
+
+<QA q="Which is the fastest and does it matter?">
+
+For I/O-bound APIs FastAPI (on Uvicorn) usually handles the most concurrent requests. In practice database queries, caching and architecture matter more than the framework, and all three serve large production systems.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which framework has a built-in admin panel?',
+      options: ['Flask', 'FastAPI', 'Django', 'None'],
+      answer: 2,
+      why: 'django.contrib.admin is part of Django.',
+    },
+    {
+      q: 'Which one validates request bodies from type hints with Pydantic?',
+      options: ['Flask', 'FastAPI', 'Django', 'All three'],
+      answer: 1,
+      why: 'FastAPI builds validation and docs from Pydantic models and type hints.',
+    },
+    {
+      q: 'Flask apps follow which interface standard?',
+      options: ['ASGI', 'WSGI', 'CGI', 'gRPC'],
+      answer: 1,
+      why: 'Flask is a WSGI framework; Quart is its ASGI sibling.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Question | Flask | FastAPI | Django |
+| --- | --- | --- | --- |
+| Interface | WSGI | ASGI | WSGI/ASGI |
+| URL variable | `<int:id>` | `{id}` + `id: int` | `<int:id>` in `path()` |
+| Validation | extensions | Pydantic | forms / DRF |
+| ORM | Flask-SQLAlchemy | SQLAlchemy / SQLModel | Django ORM |
+| Admin | Flask-Admin | — | built in |
+| Docs | flask-smorest / APIFlask | auto `/docs` | DRF + spectacular |
+| Run dev | `flask run --debug` | `uvicorn main:app --reload` | `python manage.py runserver` |
+| Run prod | Gunicorn | Uvicorn / Gunicorn + Uvicorn workers | Gunicorn / Uvicorn |
+| Pick when | small, flexible | typed async APIs | full product, fast |
+
+</CheatSheet>

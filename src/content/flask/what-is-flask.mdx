@@ -1,0 +1,225 @@
+---
+id: flask-what-is-flask
+title: What is Flask?
+summary: "Flask is a small Python web framework: it gives you routing, requests, responses and templates, and you add everything else as you need it."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+Think of a **thali** versus **ordering à la carte**.
+
+Django is the full thali: dal, sabzi, rice, roti, sweet, all on one plate, whether you wanted them or not. Flask is à la carte: you get a plate and the basics, and you **order only what you need**, like a database, login or forms.
+
+</Analogy>
+
+## Simple explanation
+
+**Flask** is a **micro-framework** for building web apps and APIs in Python. "Micro" does not mean small apps only. It means the **core is small**:
+
+- **Routing**: which function runs for which URL
+- **Request and response** objects
+- **Jinja2 templates** for HTML
+- A **development server** and a **debugger**
+- **Sessions** (signed cookies) and a **test client**
+
+Everything else comes from **extensions** you choose yourself:
+
+| Need | Common extension |
+| --- | --- |
+| Database (ORM) | **Flask-SQLAlchemy** |
+| Database migrations | **Flask-Migrate** (Alembic) |
+| User login | **Flask-Login** |
+| JWT for APIs | **Flask-JWT-Extended** |
+| Forms with CSRF | **Flask-WTF** |
+| CORS | **Flask-CORS** |
+
+Flask is built on two libraries by the same team (Pallets):
+
+- **Werkzeug**: the **WSGI** toolkit (requests, responses, routing, dev server)
+- **Jinja2**: the template engine
+
+**WSGI** (Web Server Gateway Interface) is the standard way a Python web app talks to a web server such as **Gunicorn**. A Flask app is a WSGI app.
+
+**When to choose Flask**: small to medium services, APIs, microservices, prototypes, and projects where you want to pick your own tools. Companies such as Netflix, Reddit, Lyft and LinkedIn have used Flask for services.
+
+**Flask 2.0+** also supports `async def` views, and the shortcut decorators `@app.get` and `@app.post`.
+
+## Code example
+
+A complete Flask app. `app.test_client()` lets us send requests **without starting a server**, which is how the examples on this track show real output:
+
+```python
+from flask import Flask
+
+app = Flask(__name__)            # __name__ tells Flask where to find templates and static files
+
+@app.route("/")                  # the URL rule
+def home():                      # the view function
+    return "Hello from Flask!"   # a string becomes an HTML response
+
+client = app.test_client()       # a fake browser for trying the app
+response = client.get("/")
+print(response.status_code)
+print(response.get_data(as_text=True))
+print(response.content_type)
+```
+
+```output
+200
+Hello from Flask!
+text/html; charset=utf-8
+```
+
+Flask is a WSGI app: a callable that takes `environ` and `start_response`.
+
+```python
+from flask import Flask
+
+app = Flask(__name__)
+print(callable(app))             # True: Gunicorn calls app(environ, start_response)
+print(type(app.wsgi_app).__name__)
+```
+
+```output
+True
+method
+```
+
+<Playground kind="none">
+
+```python
+# Save as app.py, then run:
+#   pip install flask
+#   flask --app app run --debug
+# Open http://127.0.0.1:5000 and http://127.0.0.1:5000/hello/Guru
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Hello from Flask!"
+
+@app.route("/hello/<name>")
+def hello(name):
+    return f"Namaste, {name}!"
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Thinking micro means only for tiny apps">
+
+<Wrong>
+
+```text
+"Flask is micro, so it cannot run a big production API."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Flask has a small core. Big apps add Blueprints, an app factory and extensions."
+```
+
+</Right>
+
+Large Flask apps are common. You add structure (Blueprints, app factory) and extensions as the app grows.
+
+</Mistake>
+
+<Mistake title="Naming your file flask.py">
+
+<Wrong>
+
+```python
+# file: flask.py
+from flask import Flask      # imports YOUR file, not the library -> ImportError
+```
+
+</Wrong>
+
+<Right>
+
+```python
+# file: app.py
+from flask import Flask
+```
+
+</Right>
+
+A file called `flask.py` hides the real library. Use `app.py` or any other name.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Flask and why is it called a micro-framework?">
+
+Flask is a lightweight Python WSGI web framework. It is "micro" because the core keeps only the essentials (routing, request/response, templates, sessions, dev server) and leaves choices such as the database, forms and authentication to extensions.
+
+</QA>
+
+<QA q="What are Werkzeug and Jinja2?">
+
+Werkzeug is the WSGI utility library Flask is built on: request and response objects, URL routing, the development server and debugger. Jinja2 is the template engine used by `render_template`.
+
+</QA>
+
+<QA q="What is WSGI?">
+
+WSGI is the Python standard (PEP 3333) between web servers and web apps. The server calls the app as `app(environ, start_response)`. Flask apps are WSGI apps, so they run on WSGI servers such as Gunicorn, uWSGI or Waitress.
+
+</QA>
+
+<QA q="When would you pick Flask over Django?">
+
+When you want a small API or microservice, full control over the libraries, or a quick prototype. Pick Django when you want the built-in admin, ORM, auth and many conventions out of the box.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does "micro" in micro-framework mean for Flask?',
+      options: ['It can only serve 10 users', 'It has a small core and you add extensions', 'It has no routing', 'It runs only on one CPU'],
+      answer: 1,
+      why: 'The core is small and focused; the database, login, forms and so on come from extensions.',
+    },
+    {
+      q: 'Which library gives Flask its request, response and routing tools?',
+      options: ['Jinja2', 'Werkzeug', 'SQLAlchemy', 'Uvicorn'],
+      answer: 1,
+      why: 'Werkzeug is the WSGI toolkit under Flask. Jinja2 is only for templates.',
+    },
+    {
+      q: 'Which extension adds an ORM to Flask?',
+      options: ['Flask-Login', 'Flask-CORS', 'Flask-SQLAlchemy', 'Flask-WTF'],
+      answer: 2,
+      why: 'Flask-SQLAlchemy integrates the SQLAlchemy ORM with the Flask app.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Meaning |
+| --- | --- |
+| Install | `pip install flask` |
+| Create app | `app = Flask(__name__)` |
+| Route | `@app.route("/")` above a function |
+| Run (dev) | `flask --app app run --debug` |
+| Built on | **Werkzeug** (WSGI) + **Jinja2** (templates) |
+| Production server | `gunicorn app:app` |
+| Try without a server | `app.test_client().get("/")` |
+| Add features | extensions: SQLAlchemy, Migrate, Login, JWT-Extended, WTF, CORS |
+
+</CheatSheet>

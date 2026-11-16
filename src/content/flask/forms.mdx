@@ -1,0 +1,258 @@
+---
+id: flask-forms
+title: Forms and validation (Flask-WTF)
+summary: "Handle HTML forms by hand with request.form, or use Flask-WTF for form classes, validators and automatic CSRF protection."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+A form is like a **bank deposit slip**. The clerk checks it before accepting: is the account number filled, is the amount a number, is it signed? **Validation** is that check. **CSRF protection** is like the bank checking the slip came from its **own counter**, not one a stranger slipped into your bag.
+
+</Analogy>
+
+## Simple explanation
+
+**Plain Flask**: read fields from `request.form`, check them yourself, show errors, and use the **Post/Redirect/Get** pattern: after a successful POST, **redirect** so a browser refresh does not submit the form again.
+
+**Flask-WTF** (`pip install flask-wtf`) wraps WTForms:
+
+- A **form class** with typed fields: `StringField`, `PasswordField`, `IntegerField`, `BooleanField`, `SelectField`, `FileField`…
+- **Validators**: `DataRequired()`, `Length(min=3)`, `Email()` (needs `email-validator`), `NumberRange()`, `EqualTo("password")`
+- `form.validate_on_submit()`: True only for a **POST** that passes every validator
+- `form.errors`: the error messages per field
+- **CSRF protection** out of the box: each form gets a hidden token, `{{ form.hidden_tag() }}` in the template
+
+**CSRF** (Cross-Site Request Forgery): another website makes your logged-in browser submit a form to your site. The secret token proves the form came from your page. CSRF needs a **`SECRET_KEY`**.
+
+For JSON APIs that use tokens in headers (not cookies), CSRF forms are not needed; validate JSON with a schema library (Marshmallow, Pydantic) instead.
+
+## Code example
+
+Validation by hand with Post/Redirect/Get:
+
+```python
+from flask import Flask, redirect, request, url_for
+
+app = Flask(__name__)
+SIGNUPS = []
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    errors = {}
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        age = request.form.get("age", type=int)
+        if len(name) < 2:
+            errors["name"] = "Name must have at least 2 letters"
+        if age is None or not 13 <= age <= 120:
+            errors["age"] = "Age must be a number from 13 to 120"
+        if not errors:
+            SIGNUPS.append(name)
+            return redirect(url_for("thanks"))    # Post/Redirect/Get
+    return {"form": "signup", "errors": errors}, 400 if errors else 200
+
+@app.get("/thanks")
+def thanks():
+    return "Thanks for signing up!"
+
+c = app.test_client()
+print(c.post("/signup", data={"name": "A", "age": "ten"}).json)
+r = c.post("/signup", data={"name": "Asha", "age": "24"})
+print(r.status_code, r.headers["Location"], SIGNUPS)
+```
+
+```output
+{'errors': {'age': 'Age must be a number from 13 to 120', 'name': 'Name must have at least 2 letters'}, 'form': 'signup'}
+302 /thanks ['Asha']
+```
+
+Flask-WTF form class, validators and CSRF:
+
+```python
+from flask import Flask
+from flask_wtf import FlaskForm
+from wtforms import IntegerField, PasswordField, StringField
+from wtforms.validators import DataRequired, EqualTo, Length, NumberRange
+
+app = Flask(__name__)
+app.config["SECRET_KEY"] = "dev-secret"           # needed for CSRF tokens
+
+class RegisterForm(FlaskForm):
+    username = StringField("Username", validators=[DataRequired(), Length(min=3, max=20)])
+    age = IntegerField("Age", validators=[DataRequired(), NumberRange(min=13)])
+    password = PasswordField("Password", validators=[DataRequired(), Length(min=8)])
+    confirm = PasswordField("Confirm", validators=[EqualTo("password", message="Passwords must match")])
+
+@app.post("/register")
+def register():
+    form = RegisterForm()
+    if form.validate_on_submit():
+        return {"ok": True, "user": form.username.data}
+    return {"ok": False, "errors": form.errors}, 400
+
+c = app.test_client()
+print(c.post("/register", data={"username": "guru", "age": 25,
+                                "password": "secret123", "confirm": "secret123"}).json)   # no token
+
+app.config["WTF_CSRF_ENABLED"] = False            # like in tests
+print(c.post("/register", data={"username": "gu", "age": 10,
+                                "password": "123", "confirm": "1234"}).json)
+print(c.post("/register", data={"username": "guru", "age": 25,
+                                "password": "secret123", "confirm": "secret123"}).json)
+```
+
+```output
+{'errors': {'csrf_token': ['The CSRF token is missing.']}, 'ok': False}
+{'errors': {'age': ['Number must be at least 13.'], 'confirm': ['Passwords must match'], 'password': ['Field must be at least 8 characters long.'], 'username': ['Field must be between 3 and 20 characters long.']}, 'ok': False}
+{'ok': True, 'user': 'guru'}
+```
+
+<Playground kind="none">
+
+```python
+# pip install flask flask-wtf
+# templates/contact.html:
+#   <form method="post">
+#     {{ form.hidden_tag() }}                      <!-- CSRF token -->
+#     {{ form.email.label }} {{ form.email() }}
+#     {% for e in form.email.errors %}<small>{{ e }}</small>{% endfor %}
+#     {{ form.message.label }} {{ form.message() }}
+#     <button>Send</button>
+#   </form>
+from flask import Flask, flash, redirect, render_template, url_for
+from flask_wtf import FlaskForm
+from wtforms import StringField, TextAreaField
+from wtforms.validators import DataRequired, Length
+
+app = Flask(__name__)
+app.config["SECRET_KEY"] = "change-me"
+
+class ContactForm(FlaskForm):
+    email = StringField("Email", validators=[DataRequired()])
+    message = TextAreaField("Message", validators=[DataRequired(), Length(max=500)])
+
+@app.route("/contact", methods=["GET", "POST"])
+def contact():
+    form = ContactForm()
+    if form.validate_on_submit():
+        flash("Message sent!")
+        return redirect(url_for("contact"))
+    return render_template("contact.html", form=form)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Trusting only browser-side validation">
+
+<Wrong>
+
+```html
+<input name="age" type="number" min="13" required>   <!-- and no server check -->
+```
+
+</Wrong>
+
+<Right>
+
+```python
+age = IntegerField("Age", validators=[DataRequired(), NumberRange(min=13)])
+```
+
+</Right>
+
+Anyone can send a request with curl or edit the HTML. Always validate on the server too.
+
+</Mistake>
+
+<Mistake title="Forgetting the CSRF token in the template">
+
+<Wrong>
+
+```html
+<form method="post">
+  {{ form.email() }}         <!-- no token: validate_on_submit() is always False -->
+</form>
+```
+
+</Wrong>
+
+<Right>
+
+```html
+<form method="post">
+  {{ form.hidden_tag() }}
+  {{ form.email() }}
+</form>
+```
+
+</Right>
+
+Without the hidden token, Flask-WTF rejects every POST with "The CSRF token is missing".
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is CSRF and how does Flask-WTF prevent it?">
+
+Cross-Site Request Forgery tricks a logged-in user's browser into sending a request to your site from another site. Flask-WTF puts a signed, secret token in each form (and the session) and rejects POSTs whose token is missing or wrong.
+
+</QA>
+
+<QA q="What does validate_on_submit() do?">
+
+It returns True only when the request is a submit method (POST, PUT, PATCH, DELETE) and all validators, including the CSRF check, pass. On GET it returns False, so the same view can show and process the form.
+
+</QA>
+
+<QA q="What is the Post/Redirect/Get pattern?">
+
+After a successful POST, the server redirects to a GET page. Refreshing then repeats the harmless GET, not the form submission, so there are no duplicate orders or sign-ups.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does Flask-WTF need to create CSRF tokens?',
+      options: ['A database', 'SECRET_KEY', 'Redis', 'DEBUG=True'],
+      answer: 1,
+      why: 'Tokens are signed with the app SECRET_KEY.',
+    },
+    {
+      q: 'On a GET request, validate_on_submit() returns?',
+      options: ['True', 'False', 'None', 'An error'],
+      answer: 1,
+      why: 'It only validates submitted forms (POST and similar).',
+    },
+    {
+      q: 'Why redirect after a successful POST?',
+      options: ['It is faster', 'Refreshing will not resubmit the form', 'Flask requires it', 'To clear cookies'],
+      answer: 1,
+      why: 'Post/Redirect/Get stops duplicate submissions on refresh.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Install | `pip install flask-wtf` |
+| Form class | `class F(FlaskForm): name = StringField("Name", validators=[DataRequired()])` |
+| Validators | `DataRequired`, `Length`, `Email`, `NumberRange`, `EqualTo` |
+| In the view | `form = F()` then `if form.validate_on_submit():` |
+| Field value | `form.name.data` |
+| Errors | `form.errors` / `form.name.errors` |
+| CSRF in template | `{{ form.hidden_tag() }}` |
+| Turn off CSRF in tests | `app.config["WTF_CSRF_ENABLED"] = False` |
+| Avoid double submit | `return redirect(url_for(...))` after POST |
+
+</CheatSheet>

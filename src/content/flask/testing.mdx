@@ -1,0 +1,313 @@
+---
+id: flask-testing
+title: Testing with test_client and pytest
+summary: "Use the app factory with TESTING=True, pytest fixtures for app and client, app.test_client() to send requests, a fresh test database per test, and test_cli_runner for commands."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+Before a new bus goes on the road, the company drives it on a **test track**: same bus, empty seats, cones instead of traffic. `app.test_client()` is that test track. Your real app runs, but requests come from your tests, not from the internet, and the database is a **practice one**.
+
+</Analogy>
+
+## Simple explanation
+
+Flask gives you:
+
+| Tool | Use |
+| --- | --- |
+| `app.test_client()` | send GET/POST/... requests without a server; keeps cookies like a browser |
+| `app.test_cli_runner()` | run `flask` CLI commands in tests |
+| `app.test_request_context()` | run code that needs `request` (helpers, `url_for`) |
+| `TESTING = True` | exceptions reach the test instead of becoming 500 pages |
+
+**pytest fixtures** (`tests/conftest.py`) build what each test needs:
+
+```python
+@pytest.fixture
+def app():
+    app = create_app(TestingConfig)   # in-memory DB
+    with app.app_context():
+        db.create_all()
+        yield app
+        db.drop_all()
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+```
+
+A test function just asks for `client` by name.
+
+What to check in a response: `status_code`, `response.json`, `response.get_data(as_text=True)`, `response.headers`. Send JSON with `client.post(url, json={...})` and forms with `data={...}`.
+
+Good habits:
+
+- **Fresh database per test** (in-memory SQLite or a separate test DB), so tests do not depend on each other
+- Turn off CSRF in tests: `WTF_CSRF_ENABLED = False`
+- **Mock** outside services (payment gateway, email) with `unittest.mock.patch` or `monkeypatch`
+- Test the **unhappy paths** too: 400, 401, 404
+- Measure coverage: `pytest --cov=myapp` (pytest-cov)
+
+## Code example
+
+A small app and its tests in one file, run with pytest:
+
+```python
+import pathlib, subprocess, sys, tempfile, textwrap
+
+test_file = textwrap.dedent('''
+    import pytest
+    from flask import Flask, request
+
+    def create_app(testing=False):
+        app = Flask(__name__)
+        app.config["TESTING"] = testing
+        todos = []
+
+        @app.get("/todos")
+        def list_todos():
+            return todos
+
+        @app.post("/todos")
+        def add_todo():
+            data = request.get_json(silent=True) or {}
+            if not data.get("title"):
+                return {"error": "title is required"}, 400
+            todos.append({"id": len(todos) + 1, "title": data["title"]})
+            return todos[-1], 201
+
+        @app.cli.command("hello")
+        def hello():
+            print("hi from cli")
+
+        return app
+
+    @pytest.fixture
+    def app():
+        return create_app(testing=True)       # a fresh app (and empty list) per test
+
+    @pytest.fixture
+    def client(app):
+        return app.test_client()
+
+    def test_empty_list(client):
+        r = client.get("/todos")
+        assert r.status_code == 200
+        assert r.json == []
+
+    def test_create_todo(client):
+        r = client.post("/todos", json={"title": "Write tests"})
+        assert r.status_code == 201
+        assert r.json == {"id": 1, "title": "Write tests"}
+        assert client.get("/todos").json == [{"id": 1, "title": "Write tests"}]
+
+    def test_title_required(client):
+        r = client.post("/todos", json={})
+        assert r.status_code == 400
+        assert "title" in r.json["error"]
+
+    def test_unknown_url(client):
+        assert client.get("/nope").status_code == 404
+
+    def test_cli_command(app):
+        result = app.test_cli_runner().invoke(args=["hello"])
+        assert "hi from cli" in result.output
+''')
+
+folder = pathlib.Path(tempfile.mkdtemp())
+(folder / "test_todos.py").write_text(test_file)
+out = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(folder)],
+                     capture_output=True, text=True).stdout
+print("\n".join(line for line in out.splitlines() if "passed" in line or "failed" in line).split(" in ")[0])
+```
+
+```output
+5 passed
+```
+
+Mocking an outside service, so tests never call the real payment gateway:
+
+```python
+from unittest.mock import patch
+from flask import Flask
+
+app = Flask(__name__)
+app.config["TESTING"] = True
+
+def charge_card(amount):                        # would call Razorpay / Stripe for real
+    raise RuntimeError("Do not call the real gateway in tests!")
+
+@app.post("/pay/<int:amount>")
+def pay(amount):
+    payment_id = charge_card(amount)
+    return {"payment_id": payment_id, "amount": amount}
+
+with patch(f"{__name__}.charge_card", return_value="pay_TEST123") as fake:
+    r = app.test_client().post("/pay/499")
+    print(r.status_code, r.json)
+    print("called with:", fake.call_args.args)
+```
+
+```output
+200 {'amount': 499, 'payment_id': 'pay_TEST123'}
+called with: (499,)
+```
+
+<Playground kind="none">
+
+```python
+# tests/conftest.py  (run: pip install pytest pytest-cov && pytest --cov=myapp)
+import pytest
+from myapp import create_app
+from myapp.extensions import db
+
+class TestingConfig:
+    TESTING = True
+    SECRET_KEY = "test"
+    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    WTF_CSRF_ENABLED = False
+
+@pytest.fixture
+def app():
+    app = create_app(TestingConfig)
+    with app.app_context():
+        db.create_all()
+        yield app
+        db.session.remove()
+        db.drop_all()
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+
+# tests/test_auth.py
+# def test_login_wrong_password(client):
+#     r = client.post("/login", data={"username": "asha", "password": "x"})
+#     assert r.status_code == 401
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Tests sharing one database">
+
+<Wrong>
+
+```python
+app = create_app()               # points at the development DB
+def test_signup(): ...           # leaves rows behind; the next test sees them
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@pytest.fixture
+def app():
+    app = create_app(TestingConfig)          # sqlite:///:memory:
+    with app.app_context():
+        db.create_all(); yield app; db.drop_all()
+```
+
+</Right>
+
+Each test should start from a clean, known state, and never touch real data.
+
+</Mistake>
+
+<Mistake title="Testing only the happy path">
+
+<Wrong>
+
+```python
+def test_create(client):
+    assert client.post("/todos", json={"title": "x"}).status_code == 201
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def test_create_requires_title(client):
+    assert client.post("/todos", json={}).status_code == 400
+
+def test_requires_login(client):
+    assert client.get("/dashboard").status_code in (302, 401)
+```
+
+</Right>
+
+Most bugs and security holes hide in error paths: missing fields, no login, wrong ids.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you test a Flask application?">
+
+Use the application factory to create an app with a testing config (`TESTING=True`, test database, CSRF off), pytest fixtures for `app` and `client`, and `app.test_client()` to send requests and assert on status codes, JSON and headers. Mock external services, and use `test_cli_runner()` for CLI commands.
+
+</QA>
+
+<QA q="What does TESTING=True change?">
+
+Exceptions propagate to the test instead of being turned into 500 responses, so you see the real traceback. Extensions also read it, for example to disable email sending.
+
+</QA>
+
+<QA q="How do you keep tests independent?">
+
+Create a fresh app and database for each test (function-scoped fixtures, in-memory SQLite or transactions rolled back after each test), avoid global state, and mock time and external APIs.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which object sends requests to the app without running a server?',
+      options: ['app.run()', 'app.test_client()', 'requests.Session()', 'app.wsgi_app'],
+      answer: 1,
+      why: 'test_client() calls the app directly in the same process.',
+    },
+    {
+      q: 'How do you send JSON with the test client?',
+      options: ['client.post(url, data=json)', 'client.post(url, json={...})', 'client.json(url)', 'client.post(url, body={...})'],
+      answer: 1,
+      why: 'json= serializes the body and sets Content-Type: application/json.',
+    },
+    {
+      q: 'Where do shared pytest fixtures usually live?',
+      options: ['app.py', 'tests/conftest.py', 'setup.cfg', '__main__.py'],
+      answer: 1,
+      why: 'pytest loads conftest.py automatically for the tests in that folder.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Client | `client = app.test_client()` |
+| GET | `r = client.get("/x?page=2")` |
+| JSON POST | `client.post("/x", json={...})` |
+| Form POST | `client.post("/x", data={...})` |
+| Header | `client.get("/x", headers={"Authorization": "Bearer t"})` |
+| Follow redirect | `client.get("/x", follow_redirects=True)` |
+| Check | `r.status_code`, `r.json`, `r.get_data(as_text=True)`, `r.headers` |
+| CLI | `app.test_cli_runner().invoke(args=["cmd"])` |
+| Request helpers | `with app.test_request_context("/x"):` |
+| Config | `TESTING=True`, `WTF_CSRF_ENABLED=False`, in-memory DB |
+| Mock | `unittest.mock.patch("module.func", return_value=...)` |
+| Coverage | `pytest --cov=myapp` |
+
+</CheatSheet>

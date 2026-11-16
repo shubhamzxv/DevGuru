@@ -1,0 +1,266 @@
+---
+id: flask-jinja-templates
+title: Jinja2 templates
+summary: "render_template fills an HTML file from the templates folder with your data, using {{ }} for values, {% %} for logic, filters, and automatic escaping."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+A template is like a **wedding card design** with blanks: "Dear `____`, you are invited on `____`". The printer (Jinja) fills each blank for every guest. You design the card once; the data changes.
+
+</Analogy>
+
+## Simple explanation
+
+Flask uses **Jinja2** for HTML. Put templates in a folder named **`templates`** next to your app, then:
+
+`return render_template("profile.html", user=user, orders=orders)`
+
+Inside the template:
+
+| Syntax | Use | Example |
+| --- | --- | --- |
+| `{{ ... }}` | print a value | `{{ user.name }}` |
+| `{% ... %}` | logic: if, for, block, extends | `{% for o in orders %}` |
+| `{# ... #}` | comment (not sent to browser) | `{# TODO #}` |
+| `\|` filter | change a value | `{{ name\|upper }}` |
+
+Common **filters**: `upper`, `lower`, `title`, `length`, `default("—")`, `join(", ")`, `round(2)`, `truncate(50)`, `safe`.
+
+**Loops** have a `loop` variable: `loop.index` (1, 2, 3…), `loop.first`, `loop.last`. A `{% for %}` can have `{% else %}` for empty lists.
+
+**Auto-escaping**: in `.html` templates, Jinja turns `<` into `&lt;` and so on. If a user types `<script>` as their name, it is shown as text, not run. This protects against **XSS** (cross-site scripting). Only use the `safe` filter or `Markup` for HTML you trust.
+
+In every template you can use `url_for`, `request`, `session`, `g`, `config` and `get_flashed_messages`.
+
+`render_template_string` renders a template from a string. The examples below use it so they run without a templates folder; real apps use files.
+
+## Code example
+
+Values, filters, loops and conditions:
+
+```python
+from flask import Flask, render_template_string
+
+app = Flask(__name__)
+
+TEMPLATE = """
+<h1>Hi {{ user.name|title }}</h1>
+<p>City: {{ user.city|default("not set") }}</p>
+{% if orders %}
+<ul>
+{% for o in orders %}  <li>{{ loop.index }}. {{ o.item }} - Rs {{ "%.2f"|format(o.price) }}{% if loop.last %} (latest){% endif %}</li>
+{% endfor %}</ul>
+<p>Total items: {{ orders|length }}</p>
+{% else %}
+<p>No orders yet.</p>
+{% endif %}
+"""
+
+with app.app_context():
+    html = render_template_string(TEMPLATE, user={"name": "asha verma"},
+                                  orders=[{"item": "Pen", "price": 20}, {"item": "Notebook", "price": 55.5}])
+    print("\n".join(line for line in html.splitlines() if line.strip()))
+```
+
+```output
+<h1>Hi Asha Verma</h1>
+<p>City: not set</p>
+<ul>
+  <li>1. Pen - Rs 20.00</li>
+  <li>2. Notebook - Rs 55.50 (latest)</li>
+</ul>
+<p>Total items: 2</p>
+```
+
+Auto-escaping blocks XSS:
+
+```python
+from flask import Flask, render_template_string
+from markupsafe import Markup
+
+app = Flask(__name__)
+
+with app.app_context():
+    evil = "<script>alert('hacked')</script>"
+    print(render_template_string("<p>{{ comment }}</p>", comment=evil))
+    print(render_template_string("<p>{{ comment|safe }}</p>", comment="<b>trusted</b>"))
+    print(render_template_string("<p>{{ html }}</p>", html=Markup("<i>also trusted</i>")))
+```
+
+```output
+<p>&lt;script&gt;alert(&#39;hacked&#39;)&lt;/script&gt;</p>
+<p><b>trusted</b></p>
+<p><i>also trusted</i></p>
+```
+
+A custom filter and a value for every template (context processor):
+
+```python
+from flask import Flask, render_template_string
+
+app = Flask(__name__)
+
+@app.template_filter("rupees")
+def rupees(value):
+    return f"₹{value:,.0f}"
+
+@app.context_processor
+def site_info():
+    return {"site_name": "DevGuru"}       # available in every template
+
+with app.app_context():
+    print(render_template_string("{{ site_name }}: {{ 4999|rupees }}"))
+```
+
+```output
+DevGuru: ₹4,999
+```
+
+<Playground kind="none">
+
+```python
+# Folder:
+#   app.py
+#   templates/products.html
+#
+# templates/products.html:
+#   <h1>{{ title }}</h1>
+#   <ul>
+#   {% for p in products %}
+#     <li>{{ p.name }} - ₹{{ p.price }}{% if p.price < 100 %} (cheap){% endif %}</li>
+#   {% else %}
+#     <li>No products</li>
+#   {% endfor %}
+#   </ul>
+from flask import Flask, render_template
+
+app = Flask(__name__)
+
+@app.get("/")
+def products():
+    items = [{"name": "Pen", "price": 20}, {"name": "Bag", "price": 899}]
+    return render_template("products.html", title="Shop", products=items)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Turning off escaping for user input">
+
+<Wrong>
+
+```html
+<p>{{ comment|safe }}</p>       <!-- comment came from a user: XSS -->
+```
+
+</Wrong>
+
+<Right>
+
+```html
+<p>{{ comment }}</p>            <!-- auto-escaped -->
+```
+
+</Right>
+
+Only mark HTML as `safe` when it comes from you, never from users.
+
+</Mistake>
+
+<Mistake title="Template in the wrong folder">
+
+<Wrong>
+
+```text
+app.py
+home.html          -> jinja2.exceptions.TemplateNotFound: home.html
+```
+
+</Wrong>
+
+<Right>
+
+```text
+app.py
+templates/home.html
+```
+
+</Right>
+
+Flask looks in a folder named `templates` next to the module given to `Flask(__name__)`.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between {{ }} and {% %} in Jinja?">
+
+`{{ expression }}` prints a value into the output. `{% statement %}` runs logic such as `if`, `for`, `block`, `extends`, `include` and `macro`, and prints nothing by itself.
+
+</QA>
+
+<QA q="How does Flask protect templates from XSS?">
+
+Jinja auto-escapes values in `.html`, `.htm`, `.xml` and `.xhtml` templates, so characters like `<`, `>` and quotes become HTML entities. Values marked with `|safe` or wrapped in `Markup` are not escaped.
+
+</QA>
+
+<QA q="What is a context processor?">
+
+A function decorated with `@app.context_processor` that returns a dict; its keys are added to every template's context. Useful for the site name, the current year or the logged-in user.
+
+</QA>
+
+<QA q="How do you add a custom filter?">
+
+Decorate a function with `@app.template_filter("name")` (or add it to `app.jinja_env.filters`). Then use `{{ value|name }}`.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which folder does render_template look in by default?',
+      options: ['views', 'html', 'templates', 'static'],
+      answer: 2,
+      why: 'Flask looks for templates in the "templates" folder.',
+    },
+    {
+      q: '{{ "<b>hi</b>" }} in an .html template outputs?',
+      options: ['bold hi', '&lt;b&gt;hi&lt;/b&gt;', 'An error', 'Nothing'],
+      answer: 1,
+      why: 'Auto-escaping converts the tags to entities so they show as text.',
+    },
+    {
+      q: 'Inside a for loop, what is loop.index for the first item?',
+      options: ['0', '1', 'None', 'first'],
+      answer: 1,
+      why: 'loop.index starts at 1; loop.index0 starts at 0.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Jinja |
+| --- | --- |
+| Print | `{{ user.name }}` |
+| Filter | `{{ name\|upper }}`, `{{ items\|length }}` |
+| Default | `{{ city\|default("—") }}` |
+| If | `{% if x %} ... {% elif y %} ... {% else %} ... {% endif %}` |
+| Loop | `{% for i in items %} {{ loop.index }} {% else %} empty {% endfor %}` |
+| Comment | `{# hidden #}` |
+| Link | `{{ url_for("home") }}` |
+| Trusted HTML | `{{ html\|safe }}` |
+| Render (Python) | `render_template("page.html", key=value)` |
+| Custom filter | `@app.template_filter("rupees")` |
+| Global values | `@app.context_processor` |
+
+</CheatSheet>

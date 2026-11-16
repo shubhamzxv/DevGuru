@@ -1,0 +1,270 @@
+---
+id: flask-migrations
+title: Migrations with Flask-Migrate
+summary: "Flask-Migrate (Alembic) records every database schema change as a versioned script, so flask db migrate and flask db upgrade update the tables safely on every machine."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+Migrations are like the **version history of a building plan**. "Version 1: two rooms. Version 2: add a balcony. Version 3: widen the door." Any builder can take an old building and apply the missing versions in order, without demolishing it. Your database is the building.
+
+</Analogy>
+
+## Simple explanation
+
+When you add a column to a model, the database does **not** change by itself, and `db.create_all()` never alters existing tables. **Flask-Migrate** wraps **Alembic** to manage this.
+
+Install: `pip install flask-migrate`, then:
+
+```python
+migrate = Migrate()
+migrate.init_app(app, db)
+```
+
+The workflow:
+
+| Step | Command | What it does |
+| --- | --- | --- |
+| Once per project | `flask db init` | creates the `migrations/` folder (commit it) |
+| After changing models | `flask db migrate -m "add phone to user"` | **compares** models with the DB and writes a script in `migrations/versions/` |
+| Check | open the new script | autogenerate can miss things (renames, some type changes) |
+| Apply | `flask db upgrade` | runs the scripts the DB has not run yet |
+| Undo last | `flask db downgrade` | runs the `downgrade()` of the latest script |
+| Where am I | `flask db current`, `flask db history` | shows versions |
+
+Each script has a **revision id**, a `down_revision` (the previous one), an `upgrade()` and a `downgrade()`. Alembic stores the current version in a table called **`alembic_version`**.
+
+Good practice:
+
+- **Review** every generated script before applying it
+- **Commit** migration scripts with the model change, so teammates and the server run the same steps
+- Run `flask db upgrade` as part of **deployment**, before the new code serves traffic
+- Adding a **NOT NULL** column to a table with data needs a `server_default` (or a two-step migration)
+- A **rename** is seen as drop + add, which deletes data: change it to `op.alter_column(..., new_column_name=...)` by hand
+
+## Code example
+
+Run the real commands from Python with the Flask CLI runner. The model starts with two columns, then gains `phone`:
+
+```python
+import os, sqlite3, tempfile
+from flask import Flask
+from flask_migrate import Migrate
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import Mapped, mapped_column
+
+work = tempfile.mkdtemp()
+os.chdir(work)
+db_file = os.path.join(work, "app.db")
+
+def make_app(with_phone):
+    db = SQLAlchemy()
+
+    class User(db.Model):
+        id: Mapped[int] = mapped_column(primary_key=True)
+        name: Mapped[str]
+        if with_phone:                               # version 2 of the model
+            phone: Mapped[str | None]
+
+    app = Flask(__name__)
+    app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_file}"
+    db.init_app(app)
+    Migrate(app, db)
+    return app
+
+def flask_db(app, *args):
+    result = app.test_cli_runner().invoke(args=["db", *args])
+    return result.exception or "ok"
+
+def columns():
+    return [row[1] for row in sqlite3.connect(db_file).execute("PRAGMA table_info(user)")]
+
+v1 = make_app(with_phone=False)
+print("init:", flask_db(v1, "init"))
+print("migrate v1:", flask_db(v1, "migrate", "-m", "create user"))
+print("upgrade:", flask_db(v1, "upgrade"), "->", columns())
+
+v2 = make_app(with_phone=True)                       # we added a column to the model
+print("migrate v2:", flask_db(v2, "migrate", "-m", "add phone"))
+print("upgrade:", flask_db(v2, "upgrade"), "->", columns())
+
+scripts = sorted(os.listdir("migrations/versions"))
+print("scripts:", len([s for s in scripts if s.endswith(".py")]))
+newest = max((os.path.join("migrations/versions", s) for s in scripts if s.endswith(".py")), key=os.path.getmtime)
+body = open(newest).read()
+print([line.strip() for line in body.splitlines() if "op." in line])
+
+print("downgrade:", flask_db(v2, "downgrade"), "->", columns())
+version = sqlite3.connect(db_file).execute("SELECT count(*) FROM alembic_version").fetchone()[0]
+print("alembic_version rows:", version)
+```
+
+```output
+init: ok
+migrate v1: ok
+upgrade: ok -> ['id', 'name']
+migrate v2: ok
+upgrade: ok -> ['id', 'name', 'phone']
+scripts: 2
+["with op.batch_alter_table('user', schema=None) as batch_op:", "batch_op.add_column(sa.Column('phone', sa.String(), nullable=True))", "with op.batch_alter_table('user', schema=None) as batch_op:", "batch_op.drop_column('phone')"]
+downgrade: ok -> ['id', 'name']
+alembic_version rows: 1
+```
+
+On SQLite, Alembic uses `batch_alter_table`, because SQLite cannot alter columns directly. On PostgreSQL or MySQL the script is simply `op.add_column(...)` and `op.drop_column(...)`.
+
+<Playground kind="none">
+
+```python
+# pip install flask flask-sqlalchemy flask-migrate
+# app.py
+from flask import Flask
+from flask_migrate import Migrate
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import Mapped, mapped_column
+
+db = SQLAlchemy()
+migrate = Migrate()
+
+def create_app():
+    app = Flask(__name__)
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///shop.db"
+    db.init_app(app)
+    migrate.init_app(app, db)
+    return app
+
+class Product(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    # Step 2: add this line, then run migrate + upgrade again
+    # price: Mapped[int] = mapped_column(server_default="0")
+
+# Terminal:
+#   flask --app app db init
+#   flask --app app db migrate -m "create product"
+#   flask --app app db upgrade
+#   (add price)  flask --app app db migrate -m "add price"  &&  flask --app app db upgrade
+#   flask --app app db history
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Applying an autogenerated rename blindly">
+
+<Wrong>
+
+```python
+def upgrade():
+    op.add_column("user", sa.Column("full_name", sa.String()))
+    op.drop_column("user", "name")          # all names are lost
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def upgrade():
+    op.alter_column("user", "name", new_column_name="full_name")
+```
+
+</Right>
+
+Alembic cannot tell a rename from drop + add. Always read the script before `flask db upgrade`.
+
+</Mistake>
+
+<Mistake title="Adding a required column without a default">
+
+<Wrong>
+
+```python
+status: Mapped[str] = mapped_column(nullable=False)   # fails on a table with rows
+```
+
+</Wrong>
+
+<Right>
+
+```python
+status: Mapped[str] = mapped_column(nullable=False, server_default="active")
+```
+
+</Right>
+
+Existing rows need a value for the new column. Give a server default, or add it nullable, fill it, then make it NOT NULL.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Why do you need migrations instead of db.create_all()?">
+
+`create_all()` only creates missing tables; it cannot add columns, change types or keep data during changes. Migrations version every schema change so every environment (developer laptops, CI, production) applies the same steps in order, and changes can be rolled back.
+
+</QA>
+
+<QA q="What is the difference between flask db migrate and flask db upgrade?">
+
+`migrate` compares the models with the current database and writes a new migration script; it does not change the database. `upgrade` runs the pending scripts against the database.
+
+</QA>
+
+<QA q="How does Alembic know which migrations have run?">
+
+It stores the current revision id in the `alembic_version` table. Each script points to its parent with `down_revision`, forming a chain; `upgrade` runs every script after the stored revision.
+
+</QA>
+
+<QA q="How do you run migrations safely in production?">
+
+Review scripts in code review, back up the database, run `flask db upgrade` in the deploy pipeline before switching traffic, and keep changes backward compatible (for example add a column first, deploy code that uses it, remove old columns later).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command writes a new migration script from model changes?',
+      options: ['flask db init', 'flask db migrate', 'flask db upgrade', 'flask db current'],
+      answer: 1,
+      why: 'migrate autogenerates the script; upgrade applies it.',
+    },
+    {
+      q: 'Where does Alembic save the current version of the database?',
+      options: ['In migrations/env.py', 'In the alembic_version table', 'In app.config', 'In .env'],
+      answer: 1,
+      why: 'The alembic_version table holds the current revision id.',
+    },
+    {
+      q: 'Should the migrations folder be committed to Git?',
+      options: ['No, it is generated', 'Yes, so every environment runs the same scripts', 'Only in production', 'Only env.py'],
+      answer: 1,
+      why: 'Migration scripts are part of the code and must be shared.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Command |
+| --- | --- |
+| Install | `pip install flask-migrate` |
+| Setup | `migrate = Migrate()` · `migrate.init_app(app, db)` |
+| Start | `flask db init` (once) |
+| New script | `flask db migrate -m "message"` |
+| Apply | `flask db upgrade` |
+| Undo one | `flask db downgrade` |
+| Current / history | `flask db current` · `flask db history` |
+| Mark DB as up to date | `flask db stamp head` |
+| Rename column | `op.alter_column("t", "old", new_column_name="new")` |
+| New NOT NULL column | `server_default="..."` |
+
+</CheatSheet>

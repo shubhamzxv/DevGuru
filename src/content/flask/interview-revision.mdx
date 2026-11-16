@@ -1,0 +1,315 @@
+---
+id: flask-interview-revision
+title: Flask interview revision
+summary: "One-page revision of the Flask questions asked most in backend interviews: request lifecycle, contexts, Blueprints, app factory, sessions, auth, database, testing and deployment, with a full cheat sheet."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+This page is your **exam-day notes**: not the full textbook, but the points examiners always ask, in one place. Read it the night before an interview.
+
+</Analogy>
+
+## Simple explanation
+
+**What happens when a request hits a Flask app** (asked very often):
+
+1. **Nginx** receives HTTPS and forwards to **Gunicorn**
+2. Gunicorn calls the WSGI app: `app(environ, start_response)`
+3. Flask pushes the **app context** (`current_app`, `g`) and **request context** (`request`, `session`); the session cookie is loaded
+4. **URL matching**: the `url_map` finds the rule and the endpoint. If none matches, the 404 / 405 is **remembered** and raised only when the view would run, so `before_request` hooks still run (see the example below)
+5. **`before_request`** hooks run (may return early, e.g. 401)
+6. The **view function** runs and returns a value
+7. Flask converts it into a **Response** (`make_response`)
+8. **`after_request`** hooks modify the response; the session is saved into the cookie
+9. **Errors** at any step go to the matching **`errorhandler`**
+10. **`teardown_request` / `teardown_appcontext`** run (close DB connections); contexts are popped
+11. Gunicorn sends the response back through Nginx
+
+**Top topics in one line each**
+
+| Topic | Key point |
+| --- | --- |
+| Micro-framework | small core (Werkzeug + Jinja2), features via extensions |
+| Routing | `@app.route`, converters `<int:id>`, `url_for`, endpoints |
+| Methods | GET by default; `methods=[...]` or `@app.post`; 405 otherwise |
+| Contexts | `request`/`session` (request ctx), `current_app`/`g` (app ctx), contextvars |
+| `g` | per-request storage, cleared after each request |
+| Sessions | signed (not encrypted) cookie with `SECRET_KEY`; Flask-Session for server-side |
+| Blueprints | group routes per feature, `url_prefix`, endpoint `bp.view` |
+| App factory | `create_app(config)`, `ext.init_app(app)`, test configs, no circular imports |
+| Errors | `@app.errorhandler(404 / HTTPException / MyError)`, `abort()` |
+| Hooks | before / after (returns response) / teardown (always runs) |
+| Database | Flask-SQLAlchemy, `db.session.commit()`, N+1 → `selectinload` |
+| Migrations | Flask-Migrate: `flask db migrate` then `flask db upgrade` |
+| Security | password hashing, CSRF (Flask-WTF), XSS (auto-escape), secure cookies, CORS |
+| Auth | Flask-Login (sessions) or Flask-JWT-Extended (tokens, refresh, blocklist) |
+| Async | async views run on a worker thread; still WSGI; Celery/RQ for long jobs |
+| Testing | `test_client()`, pytest fixtures, `TESTING=True`, in-memory DB, mocks |
+| Deploy | Gunicorn (2×cores+1) + Nginx, env-var secrets, ProxyFix, Docker, `/health` |
+
+## Code example
+
+The request lifecycle, printed by a real app:
+
+```python
+from flask import Flask, g
+
+app = Flask(__name__)
+
+@app.before_request
+def before():
+    print("2. before_request")
+    g.user = "asha"
+
+@app.get("/orders")
+def orders():
+    print("3. view runs for", g.user)
+    return {"orders": []}
+
+@app.after_request
+def after(response):
+    print("4. after_request, status", response.status_code)
+    return response
+
+@app.teardown_request
+def teardown(error):
+    print("5. teardown_request, error =", error)
+
+@app.errorhandler(404)
+def not_found(e):
+    print("   errorhandler(404)")
+    return {"error": "not found"}, 404
+
+print("1. request arrives: GET /orders")
+app.test_client().get("/orders")
+print("---")
+print("1. request arrives: GET /missing")
+app.test_client().get("/missing")
+```
+
+```output
+1. request arrives: GET /orders
+2. before_request
+3. view runs for asha
+4. after_request, status 200
+5. teardown_request, error = None
+---
+1. request arrives: GET /missing
+2. before_request
+   errorhandler(404)
+4. after_request, status 404
+5. teardown_request, error = None
+```
+
+Quick checks you can be asked to predict:
+
+```python
+from flask import Flask, session
+
+app = Flask(__name__)
+app.secret_key = "x"
+
+@app.route("/a")
+def a():
+    return "a"
+
+@app.get("/b/<int:n>")
+def b(n):
+    return {"double": n * 2}
+
+@app.post("/c")
+def c():
+    session["seen"] = True
+    return "", 204
+
+client = app.test_client()
+print("POST /a ->", client.post("/a").status_code)
+print("GET /b/21 ->", client.get("/b/21").json)
+print("GET /b/x ->", client.get("/b/x").status_code)
+print("POST /c ->", client.post("/c").status_code, "| cookie set:", client.get_cookie("session") is not None)
+```
+
+```output
+POST /a -> 405
+GET /b/21 -> {'double': 42}
+GET /b/x -> 404
+POST /c -> 204 | cookie set: True
+```
+
+<Playground kind="none">
+
+```python
+# A production-shaped skeleton to revise every idea at once.
+# myapp/__init__.py
+from flask import Flask
+from werkzeug.exceptions import HTTPException
+
+def create_app(config=None):
+    app = Flask(__name__)
+    app.config.from_mapping(SECRET_KEY="dev", SQLALCHEMY_DATABASE_URI="sqlite:///app.db")
+    app.config.from_prefixed_env()                 # FLASK_SECRET_KEY etc.
+    if config:
+        app.config.update(config)
+
+    # from .extensions import db, migrate, jwt
+    # db.init_app(app); migrate.init_app(app, db); jwt.init_app(app)
+
+    # from .auth import bp as auth_bp
+    # from .api import bp as api_bp
+    # app.register_blueprint(auth_bp, url_prefix="/auth")
+    # app.register_blueprint(api_bp, url_prefix="/api/v1")
+
+    @app.errorhandler(HTTPException)
+    def json_errors(e):
+        return {"error": e.name, "detail": e.description}, e.code
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    return app
+
+# Run:  flask --app myapp run --debug     Prod:  gunicorn -w 4 "myapp:create_app()"
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Saying the session is encrypted">
+
+<Wrong>
+
+```text
+"Flask stores the session encrypted in a cookie, so it is safe to put anything in it."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"It is signed with SECRET_KEY, so it cannot be changed, but anyone can read it.
+Store only ids; use Flask-Session (Redis) for server-side data."
+```
+
+</Right>
+
+A very common trap question.
+
+</Mistake>
+
+<Mistake title="Confusing g and session">
+
+<Wrong>
+
+```text
+"g keeps data for the user across requests."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"g lives for one request (app context). session lives across requests in the cookie."
+```
+
+</Right>
+
+Say clearly how long each one lives.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain the Flask request lifecycle.">
+
+The WSGI server calls the app; Flask pushes the app and request contexts, opens the session, matches the URL to an endpoint, runs before_request hooks, calls the view, builds a Response, runs after_request hooks and saves the session, handles any exception with error handlers, then runs teardown functions and pops the contexts.
+
+</QA>
+
+<QA q="How would you structure a large Flask application?">
+
+An application factory (`create_app`) with config classes and environment variables, extensions created in `extensions.py` and bound with `init_app`, one Blueprint per feature (auth, users, orders, api v1), a service layer for business logic, models with Flask-SQLAlchemy and Flask-Migrate, JSON error handlers, and tests with pytest fixtures.
+
+</QA>
+
+<QA q="How do you secure a Flask app?">
+
+Debug off and a strong secret key from the environment; hashed passwords; CSRF protection on forms (Flask-WTF); auto-escaping in templates; parameterized queries via the ORM; secure, HttpOnly, SameSite cookies; HTTPS with HSTS and security headers (Flask-Talisman); limited CORS origins; rate limiting (Flask-Limiter); input validation; file upload checks (`secure_filename`, `MAX_CONTENT_LENGTH`); dependency updates.
+
+</QA>
+
+<QA q="How do you scale a Flask application?">
+
+Run multiple Gunicorn workers per server and many servers behind a load balancer; keep the app stateless (sessions in signed cookies or Redis); cache with Redis (Flask-Caching); optimise queries and add indexes; move slow work to Celery; serve static files from a CDN; use connection pooling and read replicas for the database.
+
+</QA>
+
+<QA q="What are Flask signals?">
+
+Notifications (built on blinker) sent at points such as `request_started`, `request_finished`, `got_request_exception` and `template_rendered`. Subscribers can observe events for logging or metrics, but cannot change the request flow like hooks can.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which runs first for a request?',
+      options: ['after_request', 'the view', 'before_request', 'teardown_request'],
+      answer: 2,
+      why: 'Order: before_request, view, after_request, teardown.',
+    },
+    {
+      q: 'Where should you close a DB connection stored in g?',
+      options: ['before_request', 'after_request', 'teardown_appcontext', 'In the view only'],
+      answer: 2,
+      why: 'Teardown always runs, even after an exception.',
+    },
+    {
+      q: 'What does init_app enable?',
+      options: ['Faster routing', 'Using extensions with the application factory', 'Async views', 'Auto docs'],
+      answer: 1,
+      why: 'Extensions are created without an app and bound to each app the factory builds.',
+    },
+    {
+      q: 'Which extension adds JWT access and refresh tokens?',
+      options: ['Flask-Login', 'Flask-JWT-Extended', 'Flask-WTF', 'Flask-Migrate'],
+      answer: 1,
+      why: 'Flask-JWT-Extended creates, checks and revokes JWTs.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Area | Remember |
+| --- | --- |
+| Create / run | `app = Flask(__name__)` · `flask --app app run --debug` |
+| Route | `@app.get("/u/<int:id>")` · `url_for("view", id=1)` |
+| Request | `request.args` · `.form` · `.get_json()` · `.headers` · `.files` |
+| Response | dict → JSON · `(body, status, headers)` · `redirect()` · `abort(404)` |
+| Templates | `render_template("x.html", k=v)` · `{{ }}` · `{% %}` · `extends` / `block` |
+| Contexts | `request`, `session` · `current_app`, `g` · `app.app_context()` |
+| Session | `app.secret_key` · `session["k"]` · signed, readable |
+| Blueprint | `Blueprint("auth", __name__, url_prefix="/auth")` · `register_blueprint` |
+| Factory | `create_app()` · `from_object` · `from_prefixed_env` · `init_app` |
+| Errors | `@app.errorhandler(HTTPException)` |
+| Hooks | `before_request` · `after_request` · `teardown_appcontext` |
+| DB | `db.session.add/commit` · `db.select(...)` · `selectinload` |
+| Migrations | `flask db init / migrate / upgrade / downgrade` |
+| Forms | Flask-WTF · `validate_on_submit()` · `hidden_tag()` |
+| Auth | `login_user` · `@login_required` · `create_access_token` · `@jwt_required()` |
+| CORS | `CORS(app, origins=[...])` |
+| Async / jobs | `async def` views · Celery `.delay()` · 202 |
+| Test | `app.test_client()` · pytest fixtures · `TESTING=True` |
+| Deploy | `gunicorn -w 4 "myapp:create_app()"` · Nginx · ProxyFix · Docker |
+
+</CheatSheet>

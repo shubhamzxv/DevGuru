@@ -1,0 +1,361 @@
+---
+id: flask-sqlalchemy
+title: Database with Flask-SQLAlchemy
+summary: "Flask-SQLAlchemy connects the SQLAlchemy ORM to Flask: define models as classes, then create, query, update and delete rows through db.session."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+An **ORM** is like a **translator** between you and a foreign shopkeeper. You speak Python ("give me users older than 25"), the translator speaks SQL to the database, and hands back Python objects. You never write the SQL yourself, though you can if you want to.
+
+</Analogy>
+
+## Simple explanation
+
+Install: `pip install flask-sqlalchemy` (this guide uses version 3.1 with SQLAlchemy 2.x).
+
+1. **Configure** the database URL: `SQLALCHEMY_DATABASE_URI`
+   - SQLite: `sqlite:///app.db`
+   - PostgreSQL: `postgresql://user:password@host:5432/dbname` (needs `psycopg2`)
+   - MySQL: `mysql+pymysql://user:password@host/dbname`
+2. **Create** `db = SQLAlchemy()` and `db.init_app(app)`
+3. **Define models**: classes that inherit `db.Model`; each class is a table, each attribute a column
+4. **Create tables**: `db.create_all()` (for quick starts; real projects use **migrations**, next topic)
+
+**SQLAlchemy 2.0 style** (used here):
+
+| Task | Code |
+| --- | --- |
+| Add | `db.session.add(user)` then `db.session.commit()` |
+| Get by id | `db.session.get(User, 1)` or `db.get_or_404(User, 1)` |
+| Query | `db.session.scalars(db.select(User).where(User.age > 25)).all()` |
+| One or 404 | `db.first_or_404(db.select(User).filter_by(email=e))` |
+| Update | change attributes, then `db.session.commit()` |
+| Delete | `db.session.delete(user)` then `commit()` |
+| Paginate | `db.paginate(db.select(User), page=2, per_page=10)` |
+
+The older style `User.query.filter_by(...)` still works but is called **legacy** in the docs.
+
+**Relationships**: a `ForeignKey` column plus `db.relationship(...)` give you `user.posts` and `post.author`.
+
+**The N+1 problem**: looping over 100 users and reading `user.posts` runs **101 queries**. Fix it with eager loading: `.options(selectinload(User.posts))`, which loads all posts in **one** extra query.
+
+The **session** is a unit of work: changes wait until `commit()`. On an error, call `db.session.rollback()`. Flask-SQLAlchemy removes the session at the end of each request.
+
+## Code example
+
+Models, a one-to-many relationship, and CRUD:
+
+```python
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import ForeignKey, String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+class Base(DeclarativeBase):
+    pass
+
+db = SQLAlchemy(model_class=Base)
+app = Flask(__name__)
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+db.init_app(app)
+
+class User(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80))
+    email: Mapped[str] = mapped_column(String(120), unique=True)
+    age: Mapped[int]
+    posts: Mapped[list["Post"]] = relationship(back_populates="author")
+
+    def __repr__(self):
+        return f"<User {self.name}>"
+
+class Post(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"))
+    author: Mapped["User"] = relationship(back_populates="posts")
+
+with app.app_context():
+    db.create_all()
+
+    asha = User(name="Asha", email="asha@x.in", age=28)                 # Create
+    ravi = User(name="Ravi", email="ravi@x.in", age=22)
+    db.session.add_all([asha, ravi])
+    asha.posts.append(Post(title="Learning Flask"))
+    db.session.commit()
+
+    print(db.session.get(User, 1))                                    # Read by id
+    older = db.session.scalars(db.select(User).where(User.age > 25)).all()
+    print("age > 25:", older)
+    print("Asha's posts:", [p.title for p in asha.posts])
+    print("Author of post 1:", db.session.get(Post, 1).author.name)
+
+    ravi.age = 23                                                     # Update
+    db.session.commit()
+    print("Ravi age:", db.session.get(User, 2).age)
+
+    db.session.delete(ravi)                                           # Delete
+    db.session.commit()
+    print("Users left:", db.session.scalar(db.select(db.func.count(User.id))))
+```
+
+```output
+<User Asha>
+age > 25: [<User Asha>]
+Asha's posts: ['Learning Flask']
+Author of post 1: Asha
+Ravi age: 23
+Users left: 1
+```
+
+The N+1 problem and the fix, counting the real SQL queries:
+
+```python
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import ForeignKey, event
+from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload
+
+db = SQLAlchemy()
+app = Flask(__name__)
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+db.init_app(app)
+
+class Author(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    books: Mapped[list["Book"]] = relationship()
+
+class Book(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str]
+    author_id: Mapped[int] = mapped_column(ForeignKey("author.id"))
+
+with app.app_context():
+    db.create_all()
+    for i in range(1, 6):
+        db.session.add(Author(name=f"A{i}", books=[Book(title=f"B{i}")]))
+    db.session.commit()
+    db.session.expire_all()
+
+    count = {"n": 0}
+    event.listen(db.engine, "before_cursor_execute", lambda *a: count.__setitem__("n", count["n"] + 1))
+
+    for a in db.session.scalars(db.select(Author)):        # lazy loading
+        _ = a.books
+    print("lazy loading queries:", count["n"])
+
+    db.session.expire_all(); count["n"] = 0
+    for a in db.session.scalars(db.select(Author).options(selectinload(Author.books))):
+        _ = a.books
+    print("selectinload queries:", count["n"])
+```
+
+```output
+lazy loading queries: 6
+selectinload queries: 2
+```
+
+Pagination for list endpoints:
+
+```python
+from flask import Flask, request
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import Mapped, mapped_column
+
+db = SQLAlchemy()
+app = Flask(__name__)
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+db.init_app(app)
+
+class Product(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+
+@app.get("/products")
+def products():
+    page = request.args.get("page", 1, type=int)
+    p = db.paginate(db.select(Product).order_by(Product.id), page=page, per_page=3)
+    return {"items": [x.name for x in p.items], "page": p.page, "pages": p.pages, "total": p.total}
+
+with app.app_context():
+    db.create_all()
+    db.session.add_all(Product(name=f"Item {i}") for i in range(1, 9))
+    db.session.commit()
+
+c = app.test_client()
+print(c.get("/products").json)
+print(c.get("/products?page=3").json)
+```
+
+```output
+{'items': ['Item 1', 'Item 2', 'Item 3'], 'page': 1, 'pages': 3, 'total': 8}
+{'items': ['Item 7', 'Item 8'], 'page': 3, 'pages': 3, 'total': 8}
+```
+
+<Playground kind="none">
+
+```python
+# pip install flask flask-sqlalchemy
+# flask --app app run --debug
+# curl -X POST http://127.0.0.1:5000/notes -H "Content-Type: application/json" -d "{\"text\": \"Buy milk\"}"
+# curl http://127.0.0.1:5000/notes
+from flask import Flask, request
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import Mapped, mapped_column
+
+db = SQLAlchemy()
+app = Flask(__name__)
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///notes.db"
+db.init_app(app)
+
+class Note(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    text: Mapped[str]
+
+with app.app_context():
+    db.create_all()
+
+@app.get("/notes")
+def list_notes():
+    return [{"id": n.id, "text": n.text} for n in db.session.scalars(db.select(Note))]
+
+@app.post("/notes")
+def add_note():
+    note = Note(text=request.get_json()["text"])
+    db.session.add(note)
+    db.session.commit()
+    return {"id": note.id}, 201
+
+@app.delete("/notes/<int:note_id>")
+def delete_note(note_id):
+    db.session.delete(db.get_or_404(Note, note_id))
+    db.session.commit()
+    return "", 204
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Forgetting to commit">
+
+<Wrong>
+
+```python
+db.session.add(user)
+return {"ok": True}          # nothing saved: the session is thrown away
+```
+
+</Wrong>
+
+<Right>
+
+```python
+db.session.add(user)
+db.session.commit()
+```
+
+</Right>
+
+Changes stay in the session until `commit()`. Call `db.session.rollback()` if something fails.
+
+</Mistake>
+
+<Mistake title="Building SQL with f-strings">
+
+<Wrong>
+
+```python
+db.session.execute(db.text(f"SELECT * FROM user WHERE email = '{email}'"))   # SQL injection
+```
+
+</Wrong>
+
+<Right>
+
+```python
+db.session.execute(db.text("SELECT * FROM user WHERE email = :email"), {"email": email})
+# or simply: db.select(User).filter_by(email=email)
+```
+
+</Right>
+
+Always use the ORM or bound parameters. User input inside SQL strings lets attackers run their own SQL.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What does Flask-SQLAlchemy add on top of SQLAlchemy?">
+
+It reads the database URL from Flask config, creates the engine, gives a scoped session (`db.session`) tied to the app context and removed after each request, a `db.Model` base class, and helpers like `get_or_404`, `first_or_404` and `paginate`.
+
+</QA>
+
+<QA q="What is the N+1 query problem and how do you fix it?">
+
+Loading N parent rows and then lazily loading each one's children runs 1 + N queries. Fix with eager loading: `selectinload` (one extra `IN` query, good for collections) or `joinedload` (a JOIN, good for many-to-one).
+
+</QA>
+
+<QA q="What is the difference between flush and commit?">
+
+`flush()` sends pending SQL to the database inside the current transaction (so you get generated ids) but can still be rolled back. `commit()` flushes and ends the transaction, making changes permanent.
+
+</QA>
+
+<QA q="Why not use db.create_all() in production?">
+
+It only creates missing tables; it never alters existing ones (new columns, type changes). Use migrations (Flask-Migrate/Alembic) to version and apply schema changes safely.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which call saves new rows permanently?',
+      options: ['db.session.add()', 'db.session.commit()', 'db.create_all()', 'db.session.get()'],
+      answer: 1,
+      why: 'add() only stages the object; commit() writes the transaction.',
+    },
+    {
+      q: 'Loading 50 authors and then each author.books lazily runs how many queries?',
+      options: ['1', '2', '51', '50'],
+      answer: 2,
+      why: '1 for the authors plus 1 per author: the N+1 problem.',
+    },
+    {
+      q: 'Which option loads related collections in one extra query?',
+      options: ['lazyload', 'selectinload', 'noload', 'defer'],
+      answer: 1,
+      why: 'selectinload loads all children with one SELECT ... WHERE id IN (...).',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Install | `pip install flask-sqlalchemy` |
+| DB URL | `app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///app.db"` |
+| Setup | `db = SQLAlchemy()` · `db.init_app(app)` |
+| Model | `class User(db.Model): id: Mapped[int] = mapped_column(primary_key=True)` |
+| Create tables (dev) | `db.create_all()` inside `app.app_context()` |
+| Add | `db.session.add(obj)` · `db.session.commit()` |
+| By id / 404 | `db.session.get(User, 1)` · `db.get_or_404(User, 1)` |
+| Filter | `db.session.scalars(db.select(User).where(User.age > 25)).all()` |
+| Delete | `db.session.delete(obj)` · `commit()` |
+| Undo | `db.session.rollback()` |
+| Relationship | `ForeignKey("user.id")` + `relationship(back_populates=...)` |
+| Avoid N+1 | `.options(selectinload(User.posts))` |
+| Paginate | `db.paginate(db.select(User), page=2, per_page=10)` |
+
+</CheatSheet>

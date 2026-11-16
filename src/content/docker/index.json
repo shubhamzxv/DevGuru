@@ -2,7 +2,7 @@
   "name": "Docker",
   "icon": "🐳",
   "tagline": "Images, containers, compose",
-  "order": 8,
+  "order": 9,
   "playground": "terminal",
   "modules": [
     {

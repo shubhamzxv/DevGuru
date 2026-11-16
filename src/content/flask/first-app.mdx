@@ -1,0 +1,222 @@
+---
+id: flask-first-app
+title: First app and the dev server
+summary: "Create a Flask app, run it with flask run, turn on debug mode for auto-reload, and understand what app.run does."
+updated: "2026-11-16"
+---
+
+<Analogy>
+
+The **development server** is like a **practice net** in cricket. Perfect for practising: it reloads when you change code and shows detailed errors. But you do not play the real match in the nets. For real users you use a production server such as **Gunicorn**.
+
+</Analogy>
+
+## Simple explanation
+
+Steps to your first app:
+
+1. Make a folder and a **virtual environment**: `python -m venv .venv`, then activate it
+2. Install Flask: `pip install flask`
+3. Write `app.py` with `app = Flask(__name__)` and one route
+4. Run it: `flask --app app run --debug`
+5. Open `http://127.0.0.1:5000`
+
+**Debug mode** (`--debug`) gives you:
+
+- **Auto-reload**: the server restarts when you save a file
+- **Interactive debugger** in the browser when an error happens
+
+Never turn on debug mode in production: the debugger can **run Python code** from the browser.
+
+Two ways to start the server:
+
+| Way | Command |
+| --- | --- |
+| Flask CLI (recommended) | `flask --app app run --debug` |
+| Inside the file | `if __name__ == "__main__": app.run(debug=True)` then `python app.py` |
+
+Useful CLI options: `--host 0.0.0.0` (reachable from other devices on your Wi-Fi), `--port 8000`.
+
+If your file is named `app.py` or `wsgi.py`, `flask run` finds it even without `--app`.
+
+`flask routes` lists every URL rule of the app, which is handy for debugging.
+
+## Code example
+
+Two routes and a look at the app's **URL map**:
+
+```python
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Home page"
+
+@app.route("/about")
+def about():
+    return "About DevGuru"
+
+for rule in sorted(app.url_map.iter_rules(), key=lambda r: r.rule):
+    print(rule.rule, "->", rule.endpoint)
+
+client = app.test_client()
+print(client.get("/about").get_data(as_text=True))
+print(client.get("/missing").status_code)       # no route -> 404
+```
+
+```output
+/ -> home
+/about -> about
+/static/<path:filename> -> static
+About DevGuru
+404
+```
+
+`app.config` holds settings. `DEBUG` is off unless you turn it on:
+
+```python
+from flask import Flask
+
+app = Flask(__name__)
+print("DEBUG:", app.config["DEBUG"])
+print("TESTING:", app.config["TESTING"])
+print("Import name:", app.import_name)
+```
+
+```output
+DEBUG: False
+TESTING: False
+Import name: __main__
+```
+
+<Playground kind="none">
+
+```python
+# app.py
+# Windows:  python -m venv .venv  then  .venv\Scripts\activate
+# Mac/Linux: python3 -m venv .venv then  source .venv/bin/activate
+# pip install flask
+# flask --app app run --debug        (or simply: python app.py)
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "<h1>My first Flask app</h1><p>Edit me and save: the page reloads.</p>"
+
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Running the dev server in production">
+
+<Wrong>
+
+```bash
+flask --app app run --debug --host 0.0.0.0     # on the live server
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+gunicorn -w 4 -b 0.0.0.0:8000 app:app
+```
+
+</Right>
+
+The dev server handles little traffic and debug mode exposes a code console. Use Gunicorn behind Nginx in production.
+
+</Mistake>
+
+<Mistake title="Changes not showing up">
+
+<Wrong>
+
+```bash
+flask --app app run        # no --debug: no auto-reload
+```
+
+</Wrong>
+
+<Right>
+
+```bash
+flask --app app run --debug
+```
+
+</Right>
+
+Without debug mode you must stop and restart the server after every change.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you run a Flask app in development?">
+
+`flask --app app run --debug`. The `--debug` flag turns on auto-reload and the interactive debugger. You can also call `app.run(debug=True)` under `if __name__ == "__main__":` and run `python app.py`.
+
+</QA>
+
+<QA q="Why should debug mode never be used in production?">
+
+The Werkzeug debugger lets anyone who sees an error page run arbitrary Python code on the server. It also leaks source code and settings. The dev server is not built for real traffic either.
+
+</QA>
+
+<QA q="What does Flask(__name__) do?">
+
+It creates the application object. `__name__` is the import name of the module; Flask uses it to find the `templates` and `static` folders and resources relative to that module.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which command starts the Flask dev server with auto-reload?',
+      options: ['flask start', 'flask --app app run --debug', 'python -m flask build', 'gunicorn app:app --debug'],
+      answer: 1,
+      why: 'flask run starts the dev server; --debug adds auto-reload and the debugger.',
+    },
+    {
+      q: 'What is the default port of the Flask dev server?',
+      options: ['80', '8000', '5000', '3000'],
+      answer: 2,
+      why: 'Flask serves on http://127.0.0.1:5000 by default.',
+    },
+    {
+      q: 'What happens when you request a URL that has no route?',
+      options: ['500 error', '404 Not Found', 'The home page', 'The server stops'],
+      answer: 1,
+      why: 'Flask returns 404 Not Found when no URL rule matches.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Task | Command / code |
+| --- | --- |
+| Virtual env | `python -m venv .venv` |
+| Install | `pip install flask` |
+| Run dev | `flask --app app run --debug` |
+| Other port / host | `flask run --port 8000 --host 0.0.0.0` |
+| Run from file | `app.run(debug=True)` under `if __name__ == "__main__":` |
+| List routes | `flask --app app routes` |
+| Interactive shell | `flask --app app shell` |
+| Production | `gunicorn app:app` |
+
+</CheatSheet>
