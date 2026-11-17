@@ -1,0 +1,285 @@
+---
+id: mcp-primitives
+title: Tools, resources and prompts
+summary: "An MCP server offers three kinds of things: tools that the model can call to do something, resources that the app can read as context, and prompts that the user can pick as ready-made templates."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Think of a **restaurant**. **Tools** are things the kitchen can **do** for you: cook a dish, pack an order. **Resources** are things you can **read**: the menu, today's specials board. **Prompts** are **set meals**: a ready combination you choose with one word instead of ordering item by item.
+
+</Analogy>
+
+## Simple explanation
+
+| Primitive | Controlled by | Purpose | Methods |
+| --- | --- | --- | --- |
+| **Tools** | the **model** decides when to call | **do** something or fetch live data | `tools/list`, `tools/call` |
+| **Resources** | the **application** decides what to load | **read-only context** identified by a **URI** | `resources/list`, `resources/read`, `resources/templates/list` |
+| **Prompts** | the **user** picks one (a slash command, a menu) | reusable **prompt templates** with arguments | `prompts/list`, `prompts/get` |
+
+**Tools in detail**. A tool has:
+
+- a **name** and a **description** (the model chooses tools from these)
+- an **inputSchema**: JSON Schema of the arguments
+- an optional **outputSchema** for typed results
+- optional **annotations** (hints such as read-only or destructive). They are **hints**, not security guarantees
+
+A tool result contains **content** (text, images, links to resources), optional **structuredContent** (JSON), and **isError**. A failed tool run is returned as a **normal result with `isError: true`**, so the model can read the message and react. Protocol problems (unknown method, bad parameters) are JSON-RPC **errors**.
+
+**Resources in detail**. Each has a **URI** such as `file:///logs/app.log` or `db://shop/schema`, a name and a MIME type. **Resource templates** have placeholders, like `db://shop/tables/{name}`.
+
+**Prompts in detail**. A prompt has a name, a description and **arguments**. `prompts/get` returns the filled-in **messages** to send to the model.
+
+**How to choose**:
+
+| You want to… | Use |
+| --- | --- |
+| let the model take an action or run a query | **tool** |
+| give the app a document or schema to add as context | **resource** |
+| give users a one-click workflow | **prompt** |
+
+**Asking the user for input (elicitation)**: a server can ask for missing details ("which repository?") while handling a request. In spec 2026-07-28 it does this by answering with "**input required**"; the client collects the input and **sends the request again** with the answers. Servers no longer send requests of their own.
+
+**Deprecated in 2026-07-28**: **sampling** (a server asking the host's LLM to generate text), **roots** and protocol **logging**. They still work during the deprecation period, but new servers should not depend on them.
+
+## Code example
+
+One server with all three primitives, tested with the SDK's in-memory client:
+
+```python
+import asyncio
+from mcp import Client
+from mcp.server.mcpserver import MCPServer
+
+mcp = MCPServer("shop")
+PRICES = {"pen": 20, "notebook": 55}
+
+@mcp.tool()
+def get_price(item: str) -> int:
+    """Return the price of an item in rupees."""
+    return PRICES[item]
+
+@mcp.resource("shop://catalogue")
+def catalogue() -> str:
+    """All items we sell."""
+    return ", ".join(PRICES)
+
+@mcp.resource("shop://items/{name}")
+def item_details(name: str) -> str:
+    """Details of one item."""
+    return f"{name}: ₹{PRICES[name]}"
+
+@mcp.prompt()
+def compare(first: str, second: str) -> str:
+    """Compare two items for a customer."""
+    return f"Compare {first} and {second} by price and suggest one."
+
+async def main():
+    async with Client(mcp) as client:
+        tool = (await client.list_tools()).tools[0]
+        print("TOOL    ", tool.name, "-", tool.description)
+        print("         input schema:", tool.input_schema["properties"], "required:", tool.input_schema["required"])
+        result = await client.call_tool("get_price", {"item": "notebook"})
+        print("         result:", result.content[0].text, "| structured:", result.structured_content, "| is_error:", result.is_error)
+
+        print("RESOURCE", [str(r.uri) for r in (await client.list_resources()).resources])
+        print("         templates:", [t.uri_template for t in (await client.list_resource_templates()).resource_templates])
+        print("         read:", (await client.read_resource("shop://items/pen")).contents[0].text)
+
+        prompt = (await client.list_prompts()).prompts[0]
+        print("PROMPT  ", prompt.name, "args:", [a.name for a in prompt.arguments])
+        filled = await client.get_prompt("compare", {"first": "pen", "second": "notebook"})
+        print("         message:", filled.messages[0].content.text)
+
+asyncio.run(main())
+```
+
+```output
+TOOL     get_price - Return the price of an item in rupees.
+         input schema: {'item': {'title': 'Item', 'type': 'string'}} required: ['item']
+         result: 55 | structured: {'result': 55} | is_error: False
+RESOURCE ['shop://catalogue']
+         templates: ['shop://items/{name}']
+         read: pen: ₹20
+PROMPT   compare args: ['first', 'second']
+         message: Compare pen and notebook by price and suggest one.
+```
+
+A tool that fails returns a normal result with `is_error` set. In the Python SDK, raise **`ToolError`** for a message the model should read. Any other exception is reported without its details, so internal errors do not leak:
+
+```python
+import asyncio
+from mcp import Client
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+
+mcp = MCPServer("shop")
+STOCK = {"pen": 120}
+
+@mcp.tool()
+def get_stock(item: str) -> int:
+    """Return how many units of an item are in stock."""
+    if item not in STOCK:
+        raise ToolError(f"Unknown item '{item}'. Known items: {', '.join(STOCK)}")
+    return STOCK[item]
+
+@mcp.tool()
+def buggy(item: str) -> int:
+    """A tool with a bug."""
+    return STOCK[item] / 0                  # internal error: password=secret in a traceback?
+
+async def main():
+    async with Client(mcp) as client:
+        for tool, args in [("get_stock", {"item": "pen"}), ("get_stock", {"item": "laptop"}), ("buggy", {"item": "pen"})]:
+            r = await client.call_tool(tool, args)
+            print(f"{tool:<9} is_error={r.is_error!s:<5} {r.content[0].text}")
+
+asyncio.run(main())
+```
+
+```output
+get_stock is_error=False 120
+get_stock is_error=True  Error executing tool get_stock: Unknown item 'laptop'. Known items: pen
+buggy     is_error=True  Error executing tool buggy
+```
+
+<Playground kind="python">
+
+```python
+# Sort capabilities into the right primitive.
+capabilities = [
+    ("Create a calendar event", "tool"),
+    ("The database schema", "resource"),
+    ("'Summarise this week's tickets' workflow", "prompt"),
+    ("Search orders by customer", "tool"),
+    ("Company style guide document", "resource"),
+    ("'Write release notes' template", "prompt"),
+]
+
+rule = {"tool": "model decides to call it", "resource": "app adds it as context", "prompt": "user picks it"}
+for text, kind in capabilities:
+    print(f"{text:<42} -> {kind:<8} ({rule[kind]})")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Turning every API endpoint into a tool">
+
+<Wrong>
+
+```text
+Expose all 140 REST endpoints as 140 tools with their raw parameter names.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Expose a few task-shaped tools: search_orders, get_order, cancel_order. Clear names, short
+descriptions, small results.
+```
+
+</Right>
+
+Every tool definition costs tokens and gives the model more ways to choose wrongly. Design for the task, not the API.
+
+</Mistake>
+
+<Mistake title="Raising a protocol error for a normal tool failure">
+
+<Wrong>
+
+```text
+Item not found -> the server crashes the request with a JSON-RPC error.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Item not found -> result with isError: true and a helpful message:
+"Unknown item 'laptop'. Known items: pen, notebook"
+```
+
+</Right>
+
+The model can read a tool error and try again or explain it. A protocol error usually just ends the step.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between tools, resources and prompts?">
+
+Tools are model-controlled functions that perform actions or computations and are called with `tools/call`. Resources are application-controlled, read-only data addressed by URIs and read with `resources/read`. Prompts are user-controlled templates that return messages through `prompts/get`. The split reflects who decides to use each one: model, application or user.
+
+</QA>
+
+<QA q="What does a tool definition contain?">
+
+A unique name, a human and model readable description, an `inputSchema` in JSON Schema, optionally an `outputSchema` and annotations such as read-only or destructive hints. Results carry content blocks, optional `structuredContent` and an `isError` flag.
+
+</QA>
+
+<QA q="How are tool execution errors reported in MCP?">
+
+As a successful JSON-RPC response whose result has `isError: true` and content describing the failure, so the model can see it and self-correct. JSON-RPC error responses are reserved for protocol-level issues such as an unknown method or malformed request.
+
+</QA>
+
+<QA q="What is elicitation?">
+
+A way for a server to request additional information from the user during an operation, for example a missing parameter or a confirmation. In the 2026-07-28 specification the server returns an input-required result describing what it needs, the client gathers the input and retries the original request with the responses included.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which primitive does the model decide to use?',
+      options: ['Resources', 'Prompts', 'Tools', 'Transports'],
+      answer: 2,
+      why: 'Tools are model-controlled.',
+    },
+    {
+      q: 'How is a resource identified?',
+      options: ['By a URI', 'By a port number', 'By an embedding', 'By a SQL id only'],
+      answer: 0,
+      why: 'For example file:///logs/app.log or db://shop/schema.',
+    },
+    {
+      q: 'A tool cannot find the record. What should the server return?',
+      options: ['A crash', 'A result with isError true and a clear message', 'An empty HTTP 200 body', 'Nothing'],
+      answer: 1,
+      why: 'The model can then recover or explain.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Tools | model-controlled; `tools/list`, `tools/call` |
+| Resources | app-controlled; `resources/list`, `resources/read`, `resources/templates/list` |
+| Prompts | user-controlled; `prompts/list`, `prompts/get` |
+| Tool definition | name, description, `inputSchema`, optional `outputSchema`, annotations |
+| Tool result | `content`, `structuredContent`, `isError` |
+| Tool failure | result with `isError: true` |
+| Protocol failure | JSON-RPC error |
+| Resource | URI + MIME type; templates use `{placeholders}` |
+| Prompt | name + arguments → messages |
+| Elicitation | server asks the user for input; client retries with answers |
+| Deprecated (2026-07-28) | sampling, roots, logging |
+
+</CheatSheet>

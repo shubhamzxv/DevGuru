@@ -1,0 +1,318 @@
+---
+id: mcp-messages
+title: JSON-RPC messages and the stateless protocol
+summary: "MCP messages are JSON-RPC 2.0 requests, responses and notifications; since spec 2026-07-28 every request is self-contained, carrying the protocol version and client details, so no handshake or session is needed."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+A **courier form** has fixed boxes: tracking number, what to do, the details. Every MCP message is such a form: an **id**, a **method** and **params**. And like a parcel that carries its **full address on the label**, every request carries everything the server needs, so **any counter** can handle it without knowing your earlier parcels.
+
+</Analogy>
+
+## Simple explanation
+
+MCP uses **JSON-RPC 2.0**. There are three kinds of message:
+
+| Kind | Has `id`? | Shape | Meaning |
+| --- | --- | --- | --- |
+| **Request** | yes | `method` + `params` | "do this and reply" |
+| **Response** | same `id` | `result` **or** `error` | the reply |
+| **Notification** | no | `method` + `params` | "for your information", no reply |
+
+**Common methods**:
+
+| Method | Purpose |
+| --- | --- |
+| `server/discover` | server name, version, capabilities, supported protocol versions |
+| `tools/list`, `tools/call` | list and run tools |
+| `resources/list`, `resources/read` | list and read resources |
+| `prompts/list`, `prompts/get` | list and fill prompts |
+| `notifications/cancelled` | cancel a request in progress |
+
+**The stateless design (spec 2026-07-28)**:
+
+- **No `initialize` handshake and no session id.** Earlier versions opened a session first; now each request stands alone
+- Every request has a `_meta` object with three keys: `io.modelcontextprotocol/protocolVersion`, `io.modelcontextprotocol/clientInfo` and `io.modelcontextprotocol/clientCapabilities`
+- Every result has a **`resultType`**: `"complete"` (done) or `"input_required"` (the server needs something first)
+- List results carry **`ttlMs`** and **`cacheScope`**, telling the client how long it may cache the list
+- **Servers never send requests.** Only clients send requests; servers send responses and notifications
+
+**When a server needs more input** (for example, to ask the user a question), it uses **Multi Round-Trip Requests**:
+
+1. Client sends `tools/call`
+2. Server replies with `resultType: "input_required"`, an `inputRequests` map (what it needs) and an opaque `requestState` string
+3. Client collects the answers and **sends `tools/call` again** with `inputResponses` and the same `requestState`
+4. Server finishes and replies with `resultType: "complete"`
+
+The server keeps **no memory** between steps 2 and 3. Everything it needs is inside `requestState`, which it must **sign** because it passes through the client.
+
+**Errors**: protocol failures use JSON-RPC error codes, for example `-32601` method not found and `-32602` invalid params. A tool that runs and fails returns a normal result with `isError: true`.
+
+## Code example
+
+Real messages on the wire. This starts a real MCP server as a subprocess and talks to it with raw JSON lines, no SDK on the client side:
+
+```python
+import json, os, subprocess, sys, tempfile
+
+SERVER = '''
+from mcp.server.mcpserver import MCPServer
+mcp = MCPServer("shop", version="1.0.0")
+
+@mcp.tool()
+def get_price(item: str) -> int:
+    """Return the price of an item in rupees."""
+    return {"pen": 20, "notebook": 55}.get(item, 0)
+
+mcp.run()   # stdio transport
+'''
+path = os.path.join(tempfile.mkdtemp(), "server.py")
+open(path, "w").write(SERVER)
+proc = subprocess.Popen([sys.executable, path], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, text=True)
+
+META = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientInfo": {"name": "raw-demo", "version": "0.1"},
+    "io.modelcontextprotocol/clientCapabilities": {},
+}
+
+def send(id, method, **params):
+    request = {"jsonrpc": "2.0", "id": id, "method": method, "params": {**params, "_meta": META}}
+    proc.stdin.write(json.dumps(request) + "\n")            # one JSON message per line
+    proc.stdin.flush()
+    return json.loads(proc.stdout.readline())
+
+r = send(1, "server/discover")["result"]
+print("discover :", r["_meta"]["io.modelcontextprotocol/serverInfo"], "| versions:", r["supportedVersions"])
+print("           capabilities:", sorted(r["capabilities"]))
+
+r = send(2, "tools/list")["result"]
+print("list     :", r["tools"][0]["name"], "| resultType:", r["resultType"], "| ttlMs:", r["ttlMs"], "| cacheScope:", r["cacheScope"])
+
+r = send(3, "tools/call", name="get_price", arguments={"item": "pen"})
+print("call     :", json.dumps({k: r["result"][k] for k in ("content", "structuredContent", "isError", "resultType")}))
+
+r = send(4, "tools/call", name="no_such_tool", arguments={})["result"]
+print("bad tool :", "isError =", r["isError"], "|", r["content"][0]["text"])
+
+r = send(5, "orders/delete")
+print("bad method:", r["error"])
+
+proc.stdin.close()
+proc.wait(timeout=5)
+```
+
+```output
+discover : {'name': 'shop', 'version': '1.0.0'} | versions: ['2026-07-28']
+           capabilities: ['prompts', 'resources', 'tools']
+list     : get_price | resultType: complete | ttlMs: 0 | cacheScope: private
+call     : {"content": [{"text": "20", "type": "text"}], "structuredContent": {"result": 20}, "isError": false, "resultType": "complete"}
+bad tool : isError = True | Unknown tool: no_such_tool
+bad method: {'code': -32601, 'message': 'Method not found', 'data': 'orders/delete'}
+```
+
+The Multi Round-Trip pattern, simulated. The server is stateless: it signs what it needs into `requestState` and gets it back on the retry:
+
+```python
+import base64, hashlib, hmac, json
+
+SECRET = b"server-only-secret"
+
+def sign(state):
+    body = base64.urlsafe_b64encode(json.dumps(state).encode()).decode()
+    mac = hmac.new(SECRET, body.encode(), hashlib.sha256).hexdigest()[:16]
+    return f"{body}.{mac}"
+
+def verify(token):
+    body, mac = token.rsplit(".", 1)
+    expected = hmac.new(SECRET, body.encode(), hashlib.sha256).hexdigest()[:16]
+    if not hmac.compare_digest(mac, expected):
+        raise ValueError("requestState was tampered with")
+    return json.loads(base64.urlsafe_b64decode(body))
+
+def server_tools_call(params):
+    """Handles delete_branch. Needs a confirmation from the user first."""
+    if "inputResponses" not in params:
+        return {"resultType": "input_required",
+                "inputRequests": {"confirm": {"method": "elicitation/create",
+                                              "params": {"message": f"Delete branch {params['arguments']['branch']}?"}}},
+                "requestState": sign({"branch": params["arguments"]["branch"]})}
+    state = verify(params["requestState"])
+    if params["inputResponses"]["confirm"]["action"] != "accept":
+        return {"resultType": "complete", "content": [{"type": "text", "text": "Cancelled."}]}
+    return {"resultType": "complete", "content": [{"type": "text", "text": f"Deleted {state['branch']}."}]}
+
+first = server_tools_call({"name": "delete_branch", "arguments": {"branch": "old-feature"}})
+print("1.", first["resultType"], "->", first["inputRequests"]["confirm"]["params"]["message"])
+
+retry = {"name": "delete_branch", "arguments": {"branch": "old-feature"},
+         "inputResponses": {"confirm": {"action": "accept"}}, "requestState": first["requestState"]}
+print("2.", server_tools_call(retry)["content"][0]["text"])
+
+retry["requestState"] = retry["requestState"][:-1] + "0"            # a client changes the state
+try:
+    server_tools_call(retry)
+except ValueError as e:
+    print("3.", e)
+```
+
+```output
+1. input_required -> Delete branch old-feature?
+2. Deleted old-feature.
+3. requestState was tampered with
+```
+
+<Playground kind="python">
+
+```python
+# Tell the three JSON-RPC message kinds apart.
+import json
+
+messages = [
+    '{"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "get_price"}}',
+    '{"jsonrpc": "2.0", "id": 7, "result": {"resultType": "complete", "content": []}}',
+    '{"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 7}}',
+    '{"jsonrpc": "2.0", "id": 8, "error": {"code": -32601, "message": "Method not found"}}',
+]
+
+def kind(msg):
+    if "method" in msg:
+        return "request" if "id" in msg else "notification"
+    return "error response" if "error" in msg else "response"
+
+for raw in messages:
+    msg = json.loads(raw)
+    print(f"{kind(msg):<15} id={msg.get('id')!s:<5} {msg.get('method', '')}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Keeping per-connection state in a remote server">
+
+<Wrong>
+
+```python
+SESSIONS = {}                               # in the memory of one server process
+
+def tools_call(session_id, params):
+    user = SESSIONS[session_id]["user"]     # breaks when another instance gets the retry
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def tools_call(params, auth):
+    user = auth.subject                     # from the access token on THIS request
+    state = verify(params.get("requestState"))   # anything else comes signed in the request
+```
+
+</Right>
+
+With the stateless protocol any instance may receive any request. Keep what you need in the request, a token or a shared store.
+
+</Mistake>
+
+<Mistake title="Trusting requestState without checking it">
+
+<Wrong>
+
+```python
+state = json.loads(base64.b64decode(params["requestState"]))    # client could have edited it
+delete_branch(state["branch"])
+```
+
+</Wrong>
+
+<Right>
+
+```python
+state = verify(params["requestState"])      # HMAC or encryption; also bind user + expiry
+delete_branch(state["branch"])
+```
+
+</Right>
+
+`requestState` travels through the client, so the spec says to treat it as attacker-controlled input.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What message format does MCP use?">
+
+JSON-RPC 2.0 encoded as UTF-8. Requests have an id, a method and params; responses carry the same id with either a result or an error object; notifications have no id and get no reply. MCP defines the method names and the parameter and result shapes.
+
+</QA>
+
+<QA q="What does stateless mean in MCP 2026-07-28?">
+
+There is no initialization handshake or protocol session. Each request includes the protocol version, client info and client capabilities in `_meta`, the server's description is available through `server/discover`, and servers do not send their own requests. Any server instance can therefore handle any request, which suits load balancers and serverless platforms.
+
+</QA>
+
+<QA q="How does a stateless server ask the user for more input?">
+
+With Multi Round-Trip Requests. It answers the request with `resultType: "input_required"`, an `inputRequests` map and an opaque, integrity-protected `requestState`. The client gathers the inputs and retries the original request with `inputResponses` and the echoed `requestState`; the server rebuilds its context from that and completes.
+
+</QA>
+
+<QA q="How are errors reported?">
+
+Protocol-level failures use JSON-RPC error responses with codes such as -32700 parse error, -32600 invalid request, -32601 method not found and -32602 invalid params. Failures inside a tool are returned as a normal result with `isError: true` so the model can see and handle them.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which JSON-RPC message has no id?',
+      options: ['Request', 'Response', 'Notification', 'Error'],
+      answer: 2,
+      why: 'Notifications expect no reply, so they carry no id.',
+    },
+    {
+      q: 'In spec 2026-07-28, where does the protocol version travel?',
+      options: ['Only in an initialize handshake', 'In _meta on every request', 'In a cookie', 'Nowhere'],
+      answer: 1,
+      why: 'Each request is self-contained.',
+    },
+    {
+      q: 'resultType "input_required" means?',
+      options: ['The tool failed', 'The server needs more input and the client should retry with it', 'The request was cached', 'The server is shutting down'],
+      answer: 1,
+      why: 'It is the first half of a multi round-trip request.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Format | JSON-RPC 2.0, UTF-8 |
+| Request | `id`, `method`, `params` |
+| Response | `id` + `result` or `error` |
+| Notification | no `id`, no reply |
+| Discover | `server/discover` |
+| Tools | `tools/list`, `tools/call` |
+| Request metadata | `_meta`: protocolVersion, clientInfo, clientCapabilities |
+| Result | `resultType`: `complete` or `input_required` |
+| Caching | `ttlMs`, `cacheScope` on list results |
+| More input | `inputRequests` → retry with `inputResponses` + `requestState` |
+| `requestState` | opaque to the client; server must sign it |
+| Errors | `-32601` method not found, `-32602` invalid params |
+| Tool failure | result with `isError: true` |
+| Direction | clients send requests; servers never do |
+
+</CheatSheet>

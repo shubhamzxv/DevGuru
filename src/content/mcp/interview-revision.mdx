@@ -1,0 +1,263 @@
+---
+id: mcp-interview-revision
+title: MCP interview revision
+summary: "One-page MCP revision: what it is, the three roles, the three primitives, the message flow, transports, the stateless 2026 changes, security, and how MCP compares with function calling and REST APIs."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Your **exam-eve sheet** for MCP: say "USB-C for AI apps", draw host → client → server, and name tools, resources and prompts. Most MCP interview questions are variations of those three ideas.
+
+</Analogy>
+
+## Simple explanation
+
+**In one breath**: MCP is an **open JSON-RPC protocol** that lets an AI **host** application connect, through one **client** per connection, to **servers** that expose **tools, resources and prompts**, over **stdio** or **Streamable HTTP**.
+
+**MCP vs function calling vs REST**
+
+| | **Function calling** | **MCP** | **REST API** |
+| --- | --- | --- | --- |
+| What it is | a feature of an LLM API | a protocol between AI apps and tool servers | a web API style |
+| Who talks | your app ↔ model | host/client ↔ server | any program ↔ service |
+| Discovery | you hard-code the tool list | `tools/list` at run time | docs / OpenAPI |
+| Reuse | per application | any MCP host | any HTTP client |
+| Relationship | the host still uses it to show MCP tools to the model | sits **between** the app and your systems | often what an MCP server wraps |
+
+**The request flow** (the "explain end to end" question):
+
+1. Host connects to servers and lists their tools
+2. User asks; host sends message + tool definitions to the LLM
+3. LLM returns a tool call
+4. Host checks permission and sends `tools/call` through the right client
+5. Server validates, runs, returns `content` / `structuredContent` / `isError`
+6. Host gives the result to the LLM; it answers or calls another tool
+
+**Spec versions to mention**:
+
+| Version | Remember |
+| --- | --- |
+| `2024-11-05` | first release; stdio and HTTP+SSE |
+| `2025-03-26` | Streamable HTTP, OAuth-based authorization |
+| `2025-06-18` | elicitation, structured tool output |
+| `2025-11-25` | tasks and other additions |
+| `2026-07-28` | **stateless**: no `initialize`, per-request `_meta`, `server/discover`, multi round-trip requests; sampling, roots, logging and HTTP+SSE deprecated |
+
+**One line each**
+
+| Topic | Say this |
+| --- | --- |
+| Host / client / server | app / per-server connector / capability provider |
+| Tools | model-controlled actions with JSON Schema inputs |
+| Resources | app-controlled read-only data by URI |
+| Prompts | user-controlled templates |
+| stdio | local subprocess, newline-delimited JSON, logs on stderr |
+| Streamable HTTP | remote, POST to one endpoint, OAuth 2.1 |
+| Tool error | result with `isError: true` |
+| Protocol error | JSON-RPC error code |
+| Security | least privilege, approvals, trusted and pinned servers, audience-checked tokens |
+
+## Code example
+
+The whole flow in one real run: a server, a client, discovery, a successful call and a failed one:
+
+```python
+import asyncio
+from mcp import Client
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+
+mcp = MCPServer("library", version="1.0.0")
+BOOKS = {"B1": "Clean Code", "B2": "Fluent Python"}
+
+@mcp.tool()
+def find_book(book_id: str) -> str:
+    """Return the title of a book by its id."""
+    if book_id not in BOOKS:
+        raise ToolError(f"No book {book_id}. Try one of: {', '.join(BOOKS)}")
+    return BOOKS[book_id]
+
+@mcp.resource("library://catalogue")
+def catalogue() -> str:
+    """All book ids and titles."""
+    return "; ".join(f"{k}={v}" for k, v in BOOKS.items())
+
+@mcp.prompt()
+def recommend(topic: str) -> str:
+    """Recommend a book on a topic."""
+    return f"Using the catalogue, recommend one book about {topic}."
+
+async def main():
+    async with Client(mcp) as client:
+        print("1. server   :", client.server_info.name, "| protocol", client.protocol_version)
+        print("2. tools    :", [t.name for t in (await client.list_tools()).tools])
+        print("   resources:", [str(r.uri) for r in (await client.list_resources()).resources])
+        print("   prompts  :", [p.name for p in (await client.list_prompts()).prompts])
+        ok = await client.call_tool("find_book", {"book_id": "B2"})
+        print("3. call     :", ok.content[0].text, "| is_error", ok.is_error)
+        bad = await client.call_tool("find_book", {"book_id": "B9"})
+        print("4. failure  :", bad.content[0].text, "| is_error", bad.is_error)
+
+asyncio.run(main())
+```
+
+```output
+1. server   : library | protocol 2026-07-28
+2. tools    : ['find_book']
+   resources: ['library://catalogue']
+   prompts  : ['recommend']
+3. call     : Fluent Python | is_error False
+4. failure  : Error executing tool find_book: No book B9. Try one of: B1, B2 | is_error True
+```
+
+<Playground kind="python">
+
+```python
+# Quick self-test. Cover the right column and answer aloud.
+questions = {
+    "What is MCP?": "Open protocol connecting AI apps to tools and data",
+    "Three roles?": "Host, client, server",
+    "Three primitives?": "Tools, resources, prompts",
+    "Message format?": "JSON-RPC 2.0",
+    "Two transports?": "stdio and Streamable HTTP",
+    "Who runs the tool?": "The server, when the host sends tools/call",
+    "Who approves the tool call?": "The host, with the user",
+    "How is a tool failure reported?": "Result with isError true",
+    "Remote auth?": "OAuth 2.1 with PKCE, token bound to the server",
+    "What changed in 2026-07-28?": "Stateless: no initialize, metadata per request",
+}
+for q, a in questions.items():
+    print(f"{q:<32} {a}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Saying MCP replaces function calling">
+
+<Wrong>
+
+```text
+"With MCP you no longer need function calling."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"MCP standardises how the app gets tools from servers. The app still passes those tools to
+the model through the model API's function calling."
+```
+
+</Right>
+
+They work at different layers and are used together.
+
+</Mistake>
+
+<Mistake title="Describing only the old handshake">
+
+<Wrong>
+
+```text
+"Every MCP connection starts with initialize and keeps a session id."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"That was true up to the 2025 versions. Since 2026-07-28 the protocol is stateless: each request
+carries its version and client info, and servers describe themselves via server/discover.
+SDKs still fall back to initialize for older servers."
+```
+
+</Right>
+
+Showing you know the current version, and why it changed (scaling, load balancing), stands out.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain MCP to a backend engineer in two minutes.">
+
+MCP is like a plug standard between AI applications and your systems. You write a small server that exposes a few functions (tools), readable data (resources) and prompt templates over JSON-RPC, either as a local process on stdio or a remote HTTP service with OAuth. Any MCP-capable application can discover those capabilities at run time, show the tools to its model, and route the model's tool calls to your server, with the application controlling permissions.
+
+</QA>
+
+<QA q="MCP vs function calling: what is the difference?">
+
+Function calling is the model-API mechanism by which a model emits a structured request for a function the application defined. MCP is an application-level protocol for discovering and invoking capabilities offered by separate servers. A host uses MCP to obtain tools and function calling to present them to the model; MCP adds standard discovery, transport, auth and reuse across applications.
+
+</QA>
+
+<QA q="When would you build an MCP server and when a plain API integration?">
+
+Build an MCP server when several AI applications or agents should use the capability, when you want users to plug it into existing hosts, or when a team owns the system and should own its AI interface. A direct tool in your own application is enough for a single app with a couple of private functions.
+
+</QA>
+
+<QA q="How would you expose an existing REST service through MCP safely?">
+
+Write a thin server with a few task-level, mostly read-only tools that call the REST API using the server's own credentials; validate inputs with typed schemas; return small structured results and clear errors; separate and gate write actions; deploy over Streamable HTTP with OAuth 2.1, audience and scope checks and per-user authorization; log every call; and test with the in-memory client and the Inspector.
+
+</QA>
+
+<QA q="Why was MCP made stateless?">
+
+Session-based connections needed sticky routing or shared session storage, which complicated load balancing, autoscaling and serverless hosting, and server-initiated requests required long-lived streams. Making each request self-contained lets any instance serve it, lets gateways route on headers, and simplifies caching and retries.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which pair lists the standard MCP transports?',
+      options: ['gRPC and SOAP', 'stdio and Streamable HTTP', 'FTP and SMTP', 'WebSocket and UDP'],
+      answer: 1,
+      why: 'Local stdio and remote Streamable HTTP.',
+    },
+    {
+      q: 'Who controls resources?',
+      options: ['The model', 'The application', 'The transport', 'The tokenizer'],
+      answer: 1,
+      why: 'Tools: model. Resources: application. Prompts: user.',
+    },
+    {
+      q: 'How do MCP and function calling relate?',
+      options: ['MCP replaces it', 'The host gets tools via MCP and shows them to the model via function calling', 'They are the same thing', 'They cannot be used together'],
+      answer: 1,
+      why: 'Different layers, used together.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Area | Remember |
+| --- | --- |
+| Definition | open JSON-RPC protocol: AI apps ↔ tools and data |
+| Roles | host (app) → client (1 per server) → server |
+| Primitives | tools (model), resources (app), prompts (user) |
+| Methods | `server/discover`, `tools/list`, `tools/call`, `resources/read`, `prompts/get` |
+| Transports | stdio (local), Streamable HTTP (remote) |
+| Stateless | `_meta` on each request; no `initialize`; `resultType` |
+| More input | `input_required` → retry with `inputResponses` + `requestState` |
+| Errors | tool: `isError: true` · protocol: JSON-RPC code |
+| Python | `MCPServer`, `@mcp.tool()`, `mcp.run()`, `Client(...)` |
+| Host config | `mcpServers`: `command` + `args` + `env`, or `url` |
+| Auth | OAuth 2.1 + PKCE; check audience and scopes |
+| Security | least privilege, approvals, pin tools, untrusted results |
+| vs function calling | different layer; used together |
+| vs REST | MCP wraps APIs for models |
+
+</CheatSheet>

@@ -1,10 +1,10 @@
 # DevGuru
 
-**Learn backend and cloud tech the simple way.** DevGuru explains Python, SQL, Django, FastAPI, Flask, REST, AWS, Git, Docker, Linux, DSA and System Design in simple English, with real-life analogies and **code you can run in your browser** — no server, no install.
+**Learn backend and cloud tech the simple way.** DevGuru explains Python, SQL, Django, FastAPI, Flask, REST, AWS, Git, Docker, Linux, DSA, System Design, Generative AI, LLMs, RAG and MCP in simple English, with real-life analogies and **code you can run in your browser** — no server, no install.
 
-- **390 topics** in 12 tracks. Every topic: analogy → simple explanation → code with real output → "Try it yourself" playground → common mistakes → interview questions → quiz → cheat sheet.
+- **427 topics** in 16 tracks. Every topic: analogy → simple explanation → code with real output → "Try it yourself" playground → common mistakes → interview questions → quiz → cheat sheet.
 - **Runs in the browser**: Python (Pyodide), SQL (SQLite via sql.js), and simulators for Git, a Linux/Docker terminal, REST APIs and AWS architecture diagrams.
-- **Interview questions tab** (`/interview`): all 1,330 interview Q&As in one place, one chip per stack, with filter, show/hide answers, a random question for practice, and print.
+- **Interview questions tab** (`/interview`): all 1,477 interview Q&As in one place, one chip per stack, with filter, show/hide answers, a random question for practice, and print.
 - **Works offline** after the first visit (PWA), on phones first.
 - **No account needed.** Progress is saved in the browser. Optional login with a phone number or username keeps it on every device ([docs/login.md](docs/login.md)).
 - Frontend only: React 18 + Vite + TypeScript (strict) + Tailwind + MDX. Hosted on **AWS Amplify**.
@@ -23,6 +23,10 @@
 | 🐧 Linux & Bash     | 25     | simulated Linux terminal (Bash scripts, sed, awk, systemctl…) |
 | 🧩 DSA in Python    | 28     | Python + sort / search / BFS / DFS / stack visualizers        |
 | 🏗️ System Design    | 22     | architecture diagrams + Python simulations                    |
+| ✨ Generative AI    | 7      | Python simulations (agent loop, guardrails, cost)             |
+| 🧠 LLMs             | 11     | Python: tokenizer, attention, sampling, tool calling          |
+| 📚 RAG              | 10     | Python: embeddings, chunking, BM25, a full pipeline + diagram |
+| 🔌 MCP              | 9      | real MCP SDK code with output + architecture diagram          |
 
 ---
 

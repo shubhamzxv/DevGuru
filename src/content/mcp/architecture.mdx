@@ -1,0 +1,284 @@
+---
+id: mcp-architecture
+title: Architecture (host, client, server)
+summary: "MCP has three roles: the host is the AI application, it runs one client per connection, and each client talks to one server that exposes tools, resources and prompts."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+A **laptop** (host) has several **USB ports** (clients). Each port connects to **one device** (server): a printer, a pen drive, a camera. The laptop decides which devices to trust and what to do with them. A device never talks to another device directly; everything goes through the laptop.
+
+</Analogy>
+
+## Simple explanation
+
+| Role | What it is | Examples |
+| --- | --- | --- |
+| **Host** | the AI application the user works in. It holds the LLM connection, the conversation and the permission decisions | a chat app, a code editor, your own agent backend |
+| **Client** | a connector **inside the host**. One client ↔ one server | created by the host for each server |
+| **Server** | a program that exposes tools, resources and prompts | a GitHub server, a Postgres server, your company's server |
+
+**Where servers run**:
+
+- **Local server**: a process started by the host on the same machine, talking over **stdio**. Good for files and local tools
+- **Remote server**: a web service reached over **Streamable HTTP**, usually protected with **OAuth**. Good for shared, multi-user services
+
+**What happens when the user asks something**:
+
+1. The host connects to its servers and asks each one what it offers (`tools/list`, and so on)
+2. The host gives the **tool definitions** to the LLM together with the user's message
+3. The LLM replies with a **tool call**
+4. The host (after any permission check) sends `tools/call` to the right server **through its client**
+5. The server runs the tool and returns the result
+6. The host passes the result to the LLM, which writes the final answer
+
+**Important design points**:
+
+- The **LLM never talks to a server**. The host is always in the middle, so it can ask the user, filter and log
+- **Servers are isolated** from each other. A server sees only what the host sends it, not the whole conversation
+- **Capabilities**: client and server tell each other which optional features they support, so both sides know what they may use
+- In spec version **2026-07-28** the protocol is **stateless**: there is no handshake that opens a session. Every request carries the protocol version and the client's details, and a server can be asked for its details with `server/discover`. Any server instance behind a load balancer can answer any request
+- Earlier versions (2024 and 2025) began every connection with an `initialize` handshake. SDKs detect which kind of server they are talking to and fall back automatically
+
+## Code example
+
+Routing in a host: several servers, one client each, and the host decides which server gets a tool call:
+
+```python
+class FakeServer:
+    def __init__(self, name, tools):
+        self.name, self.tools = name, tools
+    def list_tools(self):
+        return list(self.tools)
+    def call_tool(self, tool, args):
+        return self.tools[tool](**args)
+
+class Host:
+    """Keeps one client (here: a direct reference) per server and a routing table."""
+    def __init__(self):
+        self.route = {}
+    def connect(self, server):
+        for tool in server.list_tools():
+            self.route[f"{server.name}__{tool}"] = (server, tool)       # prefix avoids name clashes
+    def tool_names_for_llm(self):
+        return sorted(self.route)
+    def handle_tool_call(self, name, args):
+        server, tool = self.route[name]
+        print(f"   host -> {server.name}: tools/call {tool} {args}")
+        return server.call_tool(tool, args)
+
+host = Host()
+host.connect(FakeServer("tickets", {"search": lambda query: [f"TCK-7: {query} issue"]}))
+host.connect(FakeServer("calendar", {"search": lambda query: ["Mon 10:00 review"], "create": lambda title: "created"}))
+
+print("tools shown to the LLM:", host.tool_names_for_llm())
+print(host.handle_tool_call("tickets__search", {"query": "login"}))
+print(host.handle_tool_call("calendar__create", {"title": "Fix login bug"}))
+```
+
+```output
+tools shown to the LLM: ['calendar__create', 'calendar__search', 'tickets__search']
+   host -> tickets: tools/call search {'query': 'login'}
+['TCK-7: login issue']
+   host -> calendar: tools/call create {'title': 'Fix login bug'}
+created
+```
+
+Asking a real server what it is and what it supports. The SDK's client does the discovery for you:
+
+```python
+import asyncio
+from mcp import Client
+from mcp.server.mcpserver import MCPServer
+
+server = MCPServer("tickets", version="1.2.0")
+
+@server.tool()
+def search(query: str) -> list[str]:
+    """Search support tickets."""
+    return [f"TCK-7: {query} issue"]
+
+async def main():
+    async with Client(server) as client:
+        print("server:", client.server_info.name, client.server_info.version)
+        print("protocol:", client.protocol_version)
+        caps = client.server_capabilities
+        print("offers tools:", caps.tools is not None, "| resources:", caps.resources is not None)
+
+asyncio.run(main())
+```
+
+```output
+server: tickets 1.2.0
+protocol: 2026-07-28
+offers tools: True | resources: True
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "user", "label": "User", "icon": "🙋", "col": 0, "row": 1, "info": "Asks a question in the AI app.", "example": "Any open tickets about login?" },
+    { "id": "host", "label": "Host (AI app)", "icon": "💬", "col": 1, "row": 1, "info": "Holds the conversation, talks to the LLM, asks for permission, creates one client per server.", "example": "chat app / IDE / agent" },
+    { "id": "llm", "label": "LLM", "icon": "🧠", "col": 1, "row": 0, "info": "Sees tool definitions and decides which tool to call. Never talks to servers directly.", "example": "tool call: tickets.search" },
+    { "id": "c1", "label": "Client 1", "icon": "🔌", "col": 2, "row": 0, "info": "Connector for one server. Speaks JSON-RPC.", "example": "stdio" },
+    { "id": "c2", "label": "Client 2", "icon": "🔌", "col": 2, "row": 2, "info": "A second client for a second server.", "example": "Streamable HTTP" },
+    { "id": "s1", "label": "Local server", "icon": "🗂️", "col": 3, "row": 0, "info": "Runs as a subprocess on the same machine.", "example": "files server" },
+    { "id": "s2", "label": "Remote server", "icon": "☁️", "col": 3, "row": 2, "info": "A web service, usually behind OAuth.", "example": "https://mcp.example.com" },
+    { "id": "api", "label": "Ticket API", "icon": "🎫", "col": 4, "row": 2, "info": "The existing system the server wraps.", "example": "GET /tickets?q=login" }
+  ],
+  "edges": [
+    ["user", "host", "question"],
+    ["host", "llm", "prompt + tools"],
+    ["host", "c1", "uses"],
+    ["host", "c2", "uses"],
+    ["c1", "s1", "stdio"],
+    ["c2", "s2", "HTTP"],
+    ["s2", "api", "calls"]
+  ],
+  "flows": [
+    {
+      "name": "Discover tools",
+      "steps": [
+        ["host", "Starts or connects to each configured server."],
+        ["c1", "tools/list to the local server."],
+        ["c2", "tools/list to the remote server."],
+        ["host", "Collects all tool definitions for the LLM."]
+      ]
+    },
+    {
+      "name": "Answer a question",
+      "steps": [
+        ["user", "Any open tickets about login?"],
+        ["llm", "Decides to call the ticket search tool."],
+        ["host", "Checks permission, picks the right client."],
+        ["c2", "tools/call search with the arguments."],
+        ["s2", "Runs the tool."],
+        ["api", "Existing API returns the tickets."],
+        ["llm", "Reads the result and writes the answer."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Saying the model calls the server">
+
+<Wrong>
+
+```text
+"The LLM connects to the MCP server and runs the tool."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"The LLM only outputs a tool call. The host sends it to the server through an MCP client
+and returns the result to the LLM."
+```
+
+</Right>
+
+The host in the middle is what makes permission prompts, filtering and logging possible.
+
+</Mistake>
+
+<Mistake title="Mixing up host and client">
+
+<Wrong>
+
+```text
+"The chat application is the MCP client."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"The chat application is the host. Inside it there is one MCP client per connected server."
+```
+
+</Right>
+
+People often say "client" loosely for the whole app; in the spec, client means the per-server connector.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain the roles of host, client and server in MCP.">
+
+The host is the AI application: it manages the LLM, the conversation, user consent and one client per server. A client is the protocol connector that maintains the link to exactly one server. A server exposes tools, resources and prompts and usually wraps an existing system. The host coordinates everything; servers never talk to each other or to the model directly.
+
+</QA>
+
+<QA q="Walk through what happens when a user request needs an MCP tool.">
+
+The host has already listed the tools of its servers. It sends the user message and tool definitions to the LLM. The LLM returns a tool call. The host applies its permission policy, routes a `tools/call` request through the matching client, the server executes and returns content, the host adds that as a tool result and calls the LLM again for the final answer.
+
+</QA>
+
+<QA q="What is the difference between a local and a remote MCP server?">
+
+A local server is launched by the host as a subprocess and communicates over stdio; it runs with the user's local access and suits files and developer tools. A remote server is a network service using Streamable HTTP, typically multi-user and secured with OAuth 2.1, suited to SaaS and shared company systems.
+
+</QA>
+
+<QA q="What changed with the stateless protocol in the 2026-07-28 specification?">
+
+The `initialize` handshake and protocol-level sessions were removed. Each request carries the protocol version, client info and client capabilities in `_meta`, servers describe themselves through `server/discover`, and servers no longer send their own requests. Any instance can serve any request, which simplifies load balancing and serverless deployment.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'How many servers does one MCP client connect to?',
+      options: ['All of them', 'Exactly one', 'Two', 'None'],
+      answer: 1,
+      why: 'The host creates a separate client for each server.',
+    },
+    {
+      q: 'Who decides whether a tool call is allowed to run?',
+      options: ['The server alone', 'The host (with the user)', 'The LLM', 'The transport'],
+      answer: 1,
+      why: 'The host sits between the model and the servers and applies permissions.',
+    },
+    {
+      q: 'Which transport does a local subprocess server normally use?',
+      options: ['Streamable HTTP', 'stdio', 'WebSocket', 'SMTP'],
+      answer: 1,
+      why: 'Local servers talk over standard input and output.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Host | the AI app; owns LLM, conversation, permissions |
+| Client | connector inside the host; one per server |
+| Server | exposes tools, resources, prompts |
+| Local server | subprocess, stdio |
+| Remote server | Streamable HTTP + OAuth |
+| Flow | list tools → LLM picks → host routes `tools/call` → result → LLM answers |
+| Isolation | servers do not see each other or the full chat |
+| Capabilities | each side states its optional features |
+| Stateless (2026-07-28) | no `initialize`; metadata on every request; `server/discover` |
+| Older servers | `initialize` handshake; SDKs fall back |
+
+</CheatSheet>

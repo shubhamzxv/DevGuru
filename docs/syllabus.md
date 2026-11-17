@@ -1,7 +1,7 @@
 # DevGuru syllabus
 
 Generated from the index.json files. Topic ids are `<track>-<slug>`.
-12 tracks, 390 topics.
+16 tracks, 427 topics.
 
 ## 1. Python (64 topics)
 
@@ -123,3 +123,31 @@ Generated from the index.json files. Topic ids are `<track>-<slug>`.
 3. **Data and caching**: Choosing a database (SQL vs NoSQL); Caching basics; Redis cache; Cache strategies and invalidation; Replication and sharding; CAP theorem
 4. **Reliability**: Rate limiting; Retries, timeouts and circuit breakers; Logging, monitoring and tracing
 5. **Interview practice**: How to explain your own microservices; Design a URL shortener; Design a notification system; System design interview revision
+
+## 13. Generative AI (7 topics)
+
+1. **Basics**: What is Generative AI?; Types of generative models
+2. **Using it well**: Prompt engineering; AI agents and tool use
+3. **Building safely**: Hallucinations, safety and guardrails; Building GenAI apps (prompt vs RAG vs fine-tuning)
+4. **Revision**: Generative AI interview revision
+
+## 14. LLMs (11 topics)
+
+1. **How LLMs work**: What is an LLM?; Tokens and tokenization; Transformers and attention; Context window
+2. **Controlling output**: Temperature, top-p and top-k; Structured output (JSON); Tool calling (function calling)
+3. **In production**: Calling LLM APIs; Fine-tuning, LoRA and quantization; Evaluation, cost and latency
+4. **Revision**: LLM interview revision
+
+## 15. RAG (10 topics)
+
+1. **Basics**: What is RAG?; Embeddings and similarity; Chunking documents; Vector databases and ANN search
+2. **Pipeline**: Build a RAG pipeline step by step; Hybrid search and reranking; Grounded prompts and citations
+3. **Quality**: Evaluating RAG; Advanced RAG (query rewriting, HyDE, agentic, GraphRAG)
+4. **Revision**: RAG interview revision
+
+## 16. MCP (9 topics)
+
+1. **Basics**: What is MCP?; Architecture (host, client, server); Tools, resources and prompts
+2. **Protocol**: JSON-RPC messages and the stateless protocol; Transports (stdio and Streamable HTTP)
+3. **Building**: Build an MCP server in Python; Clients and connecting to hosts; Security and authorization
+4. **Revision**: MCP interview revision

@@ -1,6 +1,7 @@
 import { isValidElement, type ComponentProps, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import CodeBlock, { OutputBlock } from './CodeBlock';
+import { pythonRunsInBrowser } from '../../utils/runnable';
 
 /* Styled versions of plain Markdown elements, used by every topic page. */
 
@@ -126,7 +127,7 @@ export function MdxPre({ children }: ComponentProps<'pre'>) {
         code={code}
         language={otherEngine ? 'sql' : language}
         label={otherEngine ? language : undefined}
-        tryIt={!otherEngine}
+        tryIt={!otherEngine && !(language === 'python' && !pythonRunsInBrowser(code))}
       />
     );
   }

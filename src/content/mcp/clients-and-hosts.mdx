@@ -1,0 +1,276 @@
+---
+id: mcp-clients-and-hosts
+title: Clients and connecting to hosts
+summary: "A host connects to MCP servers either from a configuration file that lists a command or URL for each server, or from your own code using the SDK's Client; the host then passes the servers' tools to the LLM and routes its tool calls."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Adding a **printer** to a computer. You do not rewrite the computer. You add **one entry** in settings: the printer's name and how to reach it. After that every program can print. Adding an MCP server to an AI app is the same: **one entry in a config file**, and its tools appear.
+
+</Analogy>
+
+## Simple explanation
+
+**Way 1: use an existing host** (a desktop chat app, a code editor, a CLI agent). Most hosts read a JSON config with an `mcpServers` section:
+
+- A **local** server entry has a **command**, **args** and **env** (the host starts the process and talks over stdio)
+- A **remote** server entry has a **URL** (the host connects over Streamable HTTP and runs the OAuth login)
+
+The exact file name and location differ by app, so check the app's documentation. The shape is nearly always the same.
+
+**Way 2: write your own host** with the SDK's `Client`, for example inside your backend agent:
+
+| Connect to | Code |
+| --- | --- |
+| a server object (tests) | `Client(mcp)` |
+| a local process | `Client(StdioServerParameters(command="python", args=["server.py"]))` |
+| a remote server | `Client("https://mcp.example.com/mcp")` |
+
+**What your host code must do**:
+
+1. **Connect** to each server and call `list_tools()`
+2. **Convert** each MCP tool into the LLM API's tool format: `name`, `description`, and `input_schema` (it is already JSON Schema, so this is a copy)
+3. **Send** the user message + tools to the LLM
+4. When the LLM returns a **tool call**: check permission → `call_tool(name, arguments)` on the right client → send the result back to the LLM
+5. **Repeat** until the LLM gives a final answer
+
+**Good host behaviour**:
+
+- **Prefix tool names** with the server name when several servers are connected, to avoid clashes
+- **Ask the user** before tools that change data, and show what will be sent
+- Load only the servers and tools a task needs. Every tool definition costs tokens; with many servers, **search for tools on demand** instead of loading all definitions
+- Respect `ttlMs` when caching tool lists, and set **timeouts** on tool calls
+- Treat tool results as **untrusted data**
+
+## Code example
+
+Connect to a real server process over **stdio** with the SDK client:
+
+```python
+import asyncio, os, sys, tempfile
+from mcp import Client, StdioServerParameters
+
+SERVER = '''
+from mcp.server.mcpserver import MCPServer
+mcp = MCPServer("shop")
+
+@mcp.tool()
+def get_price(item: str) -> int:
+    """Return the price of an item in rupees."""
+    return {"pen": 20, "notebook": 55}.get(item, 0)
+
+mcp.run()
+'''
+path = os.path.join(tempfile.mkdtemp(), "server.py")
+open(path, "w").write(SERVER)
+
+async def main():
+    params = StdioServerParameters(command=sys.executable, args=[path], env={"SHOP_REGION": "IN"})
+    async with Client(params) as client:                       # starts the subprocess
+        print("connected to:", client.server_info.name)
+        result = await client.call_tool("get_price", {"item": "notebook"})
+        print("price:", result.structured_content["result"])
+
+asyncio.run(main())
+```
+
+```output
+connected to: shop
+price: 55
+```
+
+A small host: list MCP tools, hand them to the "LLM", route the tool call, return the answer. The LLM is a stand-in function so the example runs anywhere:
+
+```python
+import asyncio, json
+from mcp import Client
+from mcp.server.mcpserver import MCPServer
+
+shop = MCPServer("shop")
+
+@shop.tool()
+def get_price(item: str) -> int:
+    """Return the price of an item in rupees."""
+    return {"pen": 20, "notebook": 55}.get(item, 0)
+
+def to_llm_tool(server_name, tool):
+    return {"name": f"{server_name}__{tool.name}", "description": tool.description, "input_schema": tool.input_schema}
+
+def fake_llm(messages, tools):
+    if messages[-1]["role"] == "user":
+        return {"tool_call": {"name": tools[0]["name"], "arguments": {"item": "notebook"}}}
+    return {"text": f"A notebook costs ₹{json.loads(messages[-1]['content'])['result']}."}
+
+async def main():
+    async with Client(shop) as client:
+        clients = {"shop": client}
+        tools = [to_llm_tool("shop", t) for t in (await client.list_tools()).tools]
+        print("tool given to the LLM:", tools[0]["name"], "|", tools[0]["description"])
+
+        messages = [{"role": "user", "content": "How much is a notebook?"}]
+        reply = fake_llm(messages, tools)
+        while "tool_call" in reply:
+            server_name, tool_name = reply["tool_call"]["name"].split("__")
+            result = await clients[server_name].call_tool(tool_name, reply["tool_call"]["arguments"])
+            print(f"host -> {server_name}: {tool_name}({reply['tool_call']['arguments']}) = {result.structured_content}")
+            messages.append({"role": "tool", "content": json.dumps(result.structured_content)})
+            reply = fake_llm(messages, tools)
+        print("answer:", reply["text"])
+
+asyncio.run(main())
+```
+
+```output
+tool given to the LLM: shop__get_price | Return the price of an item in rupees.
+host -> shop: get_price({'item': 'notebook'}) = {'result': 55}
+answer: A notebook costs ₹55.
+```
+
+<Playground kind="none">
+
+```json
+{
+  "mcpServers": {
+    "orders": {
+      "command": "python",
+      "args": ["C:/projects/orders-mcp/server.py"],
+      "env": { "ORDERS_API_URL": "http://localhost:8000", "ORDERS_API_TOKEN": "set-your-token-here" }
+    },
+    "files": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/me/Documents"]
+    },
+    "company-tickets": {
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}
+```
+
+</Playground>
+
+After saving the config, restart the app. The first two entries are **local** servers that the app starts itself; the third is a **remote** server that asks you to sign in. To debug a server on its own, use the **MCP Inspector** (`npx @modelcontextprotocol/inspector`), a small web UI that lists and calls its tools.
+
+<Mistakes>
+
+<Mistake title="Running tool calls with no permission step">
+
+<Wrong>
+
+```python
+result = await client.call_tool(call["name"], call["arguments"])     # even for delete_repository
+```
+
+</Wrong>
+
+<Right>
+
+```python
+if is_write_tool(call["name"]) and not await ask_user(call):
+    result_text = "The user declined this action."
+else:
+    result = await client.call_tool(call["name"], call["arguments"])
+```
+
+</Right>
+
+The host is the safety gate. Read-only tools can run freely; actions that change things need the user's yes.
+
+</Mistake>
+
+<Mistake title="Loading every tool from every server into every prompt">
+
+<Wrong>
+
+```text
+12 servers × 30 tools = 360 tool definitions (tens of thousands of tokens) sent with each message.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Connect only the servers the task needs, filter to relevant tools, or let the model search
+a tool index and load definitions on demand.
+```
+
+</Right>
+
+Too many tools cost tokens on every request and make the model choose worse.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you add an MCP server to an AI application?">
+
+For an existing host, add an entry to its MCP configuration: a command, arguments and environment variables for a local stdio server, or a URL for a remote Streamable HTTP server, then restart or reload. In your own application, create an SDK client for the server, list its tools and register them with your LLM calls.
+
+</QA>
+
+<QA q="How does a host connect MCP tools to an LLM?">
+
+It calls `tools/list` on each server, converts each tool's name, description and input schema into the LLM API's tool definition format, sends them with the conversation, and when the model returns a tool call, routes it to the owning server with `tools/call` and returns the result as a tool message. The loop repeats until the model answers.
+
+</QA>
+
+<QA q="What problems appear when many MCP servers are connected, and how do you handle them?">
+
+Token cost and confusion from hundreds of tool definitions, name collisions, slower responses and a larger attack surface. Handle them with name prefixes, loading servers per task, tool filtering or on-demand tool search, caching tool lists, timeouts and stricter permission rules.
+
+</QA>
+
+<QA q="How do you debug an MCP server?">
+
+Run it with the MCP Inspector to list and call tools interactively, test with the SDK's in-memory client in pytest, check stderr logs, confirm nothing is printed to stdout on stdio, and verify the config path, command and environment variables the host uses.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does a local server entry in a host config contain?',
+      options: ['Only a URL', 'A command, args and env', 'A SQL query', 'An embedding'],
+      answer: 1,
+      why: 'The host starts that command as a subprocess and talks over stdio.',
+    },
+    {
+      q: 'Why prefix tool names with the server name?',
+      options: ['To save tokens', 'To avoid clashes between servers with the same tool name', 'It is required by JSON', 'For encryption'],
+      answer: 1,
+      why: 'Two servers may both have a tool called search.',
+    },
+    {
+      q: 'Which tool helps you test a server by hand?',
+      options: ['MCP Inspector', 'Wireshark only', 'A vector database', 'Jinja'],
+      answer: 0,
+      why: 'It lists and calls tools, resources and prompts in a web UI.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | How |
+| --- | --- |
+| Add a local server to a host | config: `command`, `args`, `env` under `mcpServers` |
+| Add a remote server | config: `url` (then sign in) |
+| Client for tests | `Client(mcp)` |
+| Client for a process | `Client(StdioServerParameters(command=..., args=[...]))` |
+| Client for a URL | `Client("https://host/mcp")` |
+| List | `await client.list_tools()` |
+| Call | `await client.call_tool(name, arguments)` |
+| Result | `.content`, `.structured_content`, `.is_error` |
+| To LLM format | name, description, `input_schema` |
+| Loop | LLM → tool call → permission → `call_tool` → result → LLM |
+| Many servers | prefix names, load per task, tool search |
+| Debug | MCP Inspector, stderr logs |
+
+</CheatSheet>

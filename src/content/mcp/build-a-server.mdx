@@ -1,0 +1,351 @@
+---
+id: mcp-build-a-server
+title: Build an MCP server in Python
+summary: "With the official Python SDK you create an MCPServer, turn ordinary functions into tools, resources and prompts with decorators, test them with the in-memory client and run the server over stdio or HTTP."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Opening a **small service counter**. You decide which **services** to offer (tools), put up a **notice board** people can read (resources), keep a few **ready-made forms** (prompts), and write a **clear sign** for each service so visitors know what it does. Then you open the counter (run the server).
+
+</Analogy>
+
+## Simple explanation
+
+Install the official SDK: `pip install mcp` (this page uses SDK **2.x**, which speaks spec 2026-07-28).
+
+**The pieces**:
+
+| Code | What it creates |
+| --- | --- |
+| `mcp = MCPServer("name")` | the server |
+| `@mcp.tool()` | a **tool** from a function |
+| `@mcp.resource("scheme://path")` | a **resource**; `{placeholders}` make a template |
+| `@mcp.prompt()` | a **prompt** template |
+| `mcp.run()` | start on **stdio**; `mcp.run(transport="streamable-http")` for HTTP |
+
+In SDK 1.x the class was called `FastMCP` (`from mcp.server.fastmcp import FastMCP`). You will still see that name in older tutorials.
+
+**The SDK builds the tool definition from your function**:
+
+- function **name** → tool name
+- **docstring** → description (the model reads this to decide when to use the tool)
+- **type hints** → `inputSchema` (and `outputSchema` from the return type)
+- **default values** → optional arguments
+- `Annotated[..., Field(description="...")]` → per-argument descriptions
+
+**Rules for good tools**:
+
+- **Name by task**: `search_orders`, not `api_v2_orders_get`
+- **Describe** what it does, when to use it and what it returns
+- **Validate** inputs and use narrow types (`Literal["asc", "desc"]`, ranges)
+- **Return small, useful results**: the fields the model needs, not a 5 MB API response
+- Raise **`ToolError`** with a helpful message for expected failures
+- **Read-only by default**; make write actions separate, clearly named tools
+- **Never print to stdout** in a stdio server; log to stderr
+
+**Testing**: `async with Client(mcp) as client:` connects to the server **in memory**, with no process or network. Use it in pytest.
+
+## Code example
+
+A complete server for a small order system, and a test run with the in-memory client:
+
+```python
+import asyncio
+from typing import Annotated, Literal
+from pydantic import BaseModel, Field
+from mcp import Client
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+
+mcp = MCPServer("orders", version="1.0.0", instructions="Tools for looking up and cancelling customer orders.")
+
+ORDERS = {
+    "A17": {"item": "Notebook", "status": "shipped", "amount": 55},
+    "A18": {"item": "Pen", "status": "processing", "amount": 20},
+}
+
+class Order(BaseModel):
+    order_id: str
+    item: str
+    status: str
+    amount: int
+
+@mcp.tool()
+def get_order(order_id: Annotated[str, Field(description="Order id such as A17")]) -> Order:
+    """Look up one order by its id. Use this when the user asks about a specific order."""
+    if order_id not in ORDERS:
+        raise ToolError(f"Order {order_id} not found. Known ids: {', '.join(ORDERS)}")
+    return Order(order_id=order_id, **ORDERS[order_id])
+
+@mcp.tool()
+def list_orders(status: Literal["processing", "shipped", "any"] = "any", limit: int = 10) -> list[str]:
+    """List order ids, optionally filtered by status."""
+    ids = [oid for oid, o in ORDERS.items() if status in ("any", o["status"])]
+    return ids[:limit]
+
+@mcp.tool()
+def cancel_order(order_id: str) -> str:
+    """Cancel an order that has not shipped yet. This changes data."""
+    order = ORDERS.get(order_id)
+    if order is None:
+        raise ToolError(f"Order {order_id} not found.")
+    if order["status"] == "shipped":
+        raise ToolError("Shipped orders cannot be cancelled. Offer a return instead.")
+    order["status"] = "cancelled"
+    return f"Order {order_id} cancelled."
+
+@mcp.resource("orders://policy")
+def policy() -> str:
+    """Cancellation and return policy."""
+    return "Orders can be cancelled before shipping. Returns are free within 10 days."
+
+@mcp.prompt()
+def order_summary(order_id: str) -> str:
+    """Write a short status update for a customer."""
+    return f"Look up order {order_id} and write a two-line, friendly status update for the customer."
+
+async def main():
+    async with Client(mcp) as client:
+        for tool in (await client.list_tools()).tools:
+            required = tool.input_schema.get("required", [])
+            print(f"{tool.name:<13} args={list(tool.input_schema['properties'])} required={required}")
+        schema = (await client.list_tools()).tools[0].input_schema["properties"]["order_id"]
+        print("argument description:", schema["description"])
+
+        r = await client.call_tool("get_order", {"order_id": "A17"})
+        print("get_order   ->", r.structured_content)
+        r = await client.call_tool("list_orders", {"status": "processing"})
+        print("list_orders ->", r.structured_content)
+        r = await client.call_tool("cancel_order", {"order_id": "A17"})
+        print("cancel A17  ->", r.is_error, "|", r.content[0].text)
+        r = await client.call_tool("cancel_order", {"order_id": "A18"})
+        print("cancel A18  ->", r.is_error, "|", r.content[0].text)
+        r = await client.call_tool("list_orders", {"status": "pending"})
+        print("bad enum    ->", r.is_error)
+        print("resource    ->", (await client.read_resource("orders://policy")).contents[0].text)
+
+asyncio.run(main())
+```
+
+```output
+get_order     args=['order_id'] required=['order_id']
+list_orders   args=['status', 'limit'] required=[]
+cancel_order  args=['order_id'] required=['order_id']
+argument description: Order id such as A17
+get_order   -> {'order_id': 'A17', 'item': 'Notebook', 'status': 'shipped', 'amount': 55}
+list_orders -> {'result': ['A18']}
+cancel A17  -> True | Error executing tool cancel_order: Shipped orders cannot be cancelled. Offer a return instead.
+cancel A18  -> False | Order A18 cancelled.
+bad enum    -> True
+resource    -> Orders can be cancelled before shipping. Returns are free within 10 days.
+```
+
+Notice the last tool call: `"pending"` is not in the `Literal`, so the SDK **rejects it before your function runs**. Type hints are your first validation layer.
+
+An **async** tool for I/O work, such as calling your REST API:
+
+```python
+import asyncio
+from pydantic import BaseModel
+from mcp import Client
+from mcp.server.mcpserver import MCPServer
+
+mcp = MCPServer("stock")
+
+class Stock(BaseModel):
+    sku: str
+    units: int
+
+async def fake_http_get(url):
+    await asyncio.sleep(0.05)                    # stands in for: await httpx_client.get(url)
+    return {"sku": url.rsplit("/", 1)[-1], "units": 42}
+
+@mcp.tool()
+async def get_stock(sku: str) -> Stock:
+    """Return the units in stock for a product SKU."""
+    data = await fake_http_get(f"https://inventory.internal/api/stock/{sku}")
+    return Stock(sku=data["sku"], units=data["units"])           # only the fields the model needs
+
+async def main():
+    async with Client(mcp) as client:
+        results = await asyncio.gather(*(client.call_tool("get_stock", {"sku": s}) for s in ("P1", "P2", "P3")))
+        print([r.structured_content for r in results])
+
+asyncio.run(main())
+```
+
+```output
+[{'sku': 'P1', 'units': 42}, {'sku': 'P2', 'units': 42}, {'sku': 'P3', 'units': 42}]
+```
+
+<Playground kind="none">
+
+```python
+# server.py : a server you can connect to a desktop AI app.
+# pip install mcp httpx
+import logging, os, sys
+import httpx
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+API = os.environ.get("ORDERS_API_URL", "http://localhost:8000")
+TOKEN = os.environ["ORDERS_API_TOKEN"]                 # secret from the environment, never from the model
+
+mcp = MCPServer("orders")
+
+@mcp.tool()
+async def get_order(order_id: str) -> dict:
+    """Look up one order by its id (for example A17)."""
+    async with httpx.AsyncClient(timeout=10) as http:
+        response = await http.get(f"{API}/orders/{order_id}", headers={"Authorization": f"Bearer {TOKEN}"})
+    if response.status_code == 404:
+        raise ToolError(f"Order {order_id} not found.")
+    response.raise_for_status()
+    order = response.json()
+    return {"id": order["id"], "status": order["status"], "eta": order.get("eta")}
+
+if __name__ == "__main__":
+    mcp.run()                                          # stdio
+
+# tests/test_server.py
+# import pytest
+# from mcp import Client
+# from server import mcp
+#
+# @pytest.mark.anyio
+# async def test_lists_tools():
+#     async with Client(mcp) as client:
+#         assert [t.name for t in (await client.list_tools()).tools] == ["get_order"]
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="No docstring or a useless one">
+
+<Wrong>
+
+```python
+@mcp.tool()
+def q(s: str) -> list:
+    return db.search(s)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+@mcp.tool()
+def search_orders(customer_email: str, limit: int = 5) -> list[dict]:
+    """Find a customer's most recent orders by their email address. Returns id, date and status."""
+    return db.search_orders(customer_email, limit)
+```
+
+</Right>
+
+The name, docstring and type hints **are** the interface the model sees. Vague ones lead to wrong or missing tool calls.
+
+</Mistake>
+
+<Mistake title="Returning the whole upstream response">
+
+<Wrong>
+
+```python
+return requests.get(url).json()         # 3,000 lines of JSON into the model's context
+```
+
+</Wrong>
+
+<Right>
+
+```python
+data = requests.get(url).json()
+return {"id": data["id"], "status": data["status"], "total": data["total"]}
+```
+
+</Right>
+
+Large results waste the context window and bury the useful fields. Return what the task needs.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you build an MCP server in Python?">
+
+Install the `mcp` SDK, create an `MCPServer`, decorate functions with `@mcp.tool()`, `@mcp.resource(uri)` and `@mcp.prompt()`, and call `mcp.run()` for stdio or `mcp.run(transport="streamable-http")` for HTTP. The SDK derives names, descriptions and JSON Schemas from function names, docstrings and type hints, validates arguments and serialises results.
+
+</QA>
+
+<QA q="How do you design good MCP tools?">
+
+Few, task-oriented tools with clear names; descriptions that say what, when and what is returned; narrow typed parameters with enums and defaults; small structured results; helpful error messages; read and write operations separated; idempotent or confirmable writes; and secrets taken from the server's environment, never from model arguments.
+
+</QA>
+
+<QA q="How do you test an MCP server?">
+
+Unit-test the underlying functions, then connect the SDK's `Client` directly to the server object in memory and assert on `list_tools`, `call_tool` results and error cases in pytest. For end-to-end checks, run the server over stdio and use the MCP Inspector or a real host.
+
+</QA>
+
+<QA q="How should a tool report an error?">
+
+Raise the SDK's `ToolError` (or return an error result) with a message the model can act on, such as what was wrong and which values are valid. Unexpected exceptions are returned as generic errors without internal details, and should be logged to stderr.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Where does the tool description come from in the Python SDK?',
+      options: ['The file name', 'The function docstring', 'A YAML file', 'The return value'],
+      answer: 1,
+      why: 'The docstring becomes the description the model reads.',
+    },
+    {
+      q: 'What creates the input schema of a tool?',
+      options: ['The type hints of the function', 'The print statements', 'The transport', 'The LLM'],
+      answer: 0,
+      why: 'The SDK turns type hints and defaults into JSON Schema.',
+    },
+    {
+      q: 'How do you test a server without starting a process?',
+      options: ['It is not possible', 'async with Client(mcp) as client', 'curl', 'ssh'],
+      answer: 1,
+      why: 'The client can connect to the server object in memory.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Want | Code |
+| --- | --- |
+| Install | `pip install mcp` |
+| Server | `mcp = MCPServer("orders")` |
+| Tool | `@mcp.tool()` + docstring + type hints |
+| Argument description | `Annotated[str, Field(description="...")]` |
+| Fixed choices | `Literal["asc", "desc"]` |
+| Typed result | return a Pydantic model (gives `structuredContent` + `outputSchema`) |
+| Expected failure | `raise ToolError("clear message")` |
+| Resource | `@mcp.resource("orders://policy")` |
+| Resource template | `@mcp.resource("orders://{order_id}")` |
+| Prompt | `@mcp.prompt()` |
+| Run (stdio) | `mcp.run()` |
+| Run (HTTP) | `mcp.run(transport="streamable-http")` |
+| Test | `async with Client(mcp) as client:` |
+| Logs | stderr |
+| Old name | `FastMCP` in SDK 1.x |
+
+</CheatSheet>

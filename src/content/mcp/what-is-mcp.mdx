@@ -1,0 +1,230 @@
+---
+id: mcp-what-is-mcp
+title: What is MCP?
+summary: "The Model Context Protocol is an open standard that lets AI applications connect to tools and data through one common interface, so an integration is built once as an MCP server and works in every MCP-capable app."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Before **USB-C**, every phone had its own charger and every laptop its own port. Now one cable fits everything. **MCP** is the USB-C port for AI apps: a tool or data source is wrapped **once** as an MCP server, and any AI app with an MCP "port" can plug into it.
+
+</Analogy>
+
+## Simple explanation
+
+**MCP** = **Model Context Protocol**. It is an **open protocol**, first published by Anthropic in November 2024 and now developed as an open standard with a public specification.
+
+**The problem it solves**: an LLM cannot reach your database, your tickets or your files by itself. Before MCP, every AI app wrote its own custom connector for every system. With **M** apps and **N** systems that is **M × N** connectors.
+
+**With MCP**: each system gets one **MCP server**, each app gets one **MCP client**. That is **M + N** pieces, and they all work together.
+
+**What an MCP server can offer**:
+
+| Primitive | What it is | Example |
+| --- | --- | --- |
+| **Tools** | functions the model can call | `create_ticket`, `run_query` |
+| **Resources** | data the app can read | a file, a table schema, a document |
+| **Prompts** | ready-made prompt templates | "review this pull request" |
+
+**How it relates to things you know**:
+
+| Thing | Role |
+| --- | --- |
+| **Tool calling** | how **one model API** lets the model ask for a function |
+| **MCP** | how **apps and tool providers** agree on listing and calling tools, so the same server works everywhere |
+| **REST API** | built for programs written by developers; MCP wraps such APIs in a form models can discover and use |
+
+MCP does **not** replace your APIs. An MCP server is usually a thin layer **in front of** an existing API or database.
+
+**Key facts for interviews**:
+
+- Messages are **JSON-RPC 2.0**
+- Two standard transports: **stdio** (local process) and **Streamable HTTP** (remote server)
+- The spec is versioned by **date**. This track follows version **2026-07-28**, which made the protocol **stateless**
+- Official SDKs exist for Python, TypeScript and other languages
+
+## Code example
+
+Why a standard matters: count the integrations needed with and without it:
+
+```python
+def connectors(apps, systems):
+    return {"custom (M x N)": apps * systems, "with MCP (M + N)": apps + systems}
+
+for apps, systems in [(3, 5), (10, 50), (20, 200)]:
+    print(f"{apps} AI apps, {systems} systems -> {connectors(apps, systems)}")
+```
+
+```output
+3 AI apps, 5 systems -> {'custom (M x N)': 15, 'with MCP (M + N)': 8}
+10 AI apps, 50 systems -> {'custom (M x N)': 500, 'with MCP (M + N)': 60}
+20 AI apps, 200 systems -> {'custom (M x N)': 4000, 'with MCP (M + N)': 220}
+```
+
+A real MCP server and client in a few lines, using the official Python SDK. The client discovers the tool and calls it:
+
+```python
+import asyncio
+from mcp import Client
+from mcp.server.mcpserver import MCPServer
+
+server = MCPServer("weather")
+
+@server.tool()
+def get_temperature(city: str) -> int:
+    """Return the current temperature of a city in Celsius."""
+    return {"Delhi": 34, "Shimla": 18}.get(city, 25)
+
+async def main():
+    async with Client(server) as client:                 # in-memory connection, good for tests
+        tools = await client.list_tools()
+        print("protocol version:", client.protocol_version)
+        print("tools offered:", [t.name for t in tools.tools])
+        result = await client.call_tool("get_temperature", {"city": "Shimla"})
+        print("result:", result.structured_content)
+
+asyncio.run(main())
+```
+
+```output
+protocol version: 2026-07-28
+tools offered: ['get_temperature']
+result: {'result': 18}
+```
+
+<Playground kind="python">
+
+```python
+# One MCP server, many apps: each app only needs to speak the protocol.
+server_tools = {"search_tickets": "Find support tickets", "create_ticket": "Open a new ticket"}
+
+apps = ["Chat assistant", "Code editor", "Internal agent"]
+
+for app in apps:
+    print(f"{app} connects and discovers:")
+    for name, description in server_tools.items():
+        print(f"   - {name}: {description}")
+
+print("\nConnectors written for the ticket system:", 1, "(not", len(apps), ")")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Thinking MCP replaces your API">
+
+<Wrong>
+
+```text
+"We will delete our REST API and use MCP instead."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Our REST API stays. We add a small MCP server in front of it that exposes a few well-described
+tools, so AI apps can use it."
+```
+
+</Right>
+
+MCP is an interface for AI apps. Your services, databases and APIs stay as they are.
+
+</Mistake>
+
+<Mistake title="Confusing MCP with the model">
+
+<Wrong>
+
+```text
+"MCP is a new kind of LLM."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"MCP is a protocol between an AI application and external servers. It works with any model
+that the application uses."
+```
+
+</Right>
+
+The protocol is model-independent.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the Model Context Protocol?">
+
+An open, JSON-RPC based protocol that standardises how AI applications connect to external tools and data. Servers expose tools, resources and prompts; clients inside host applications discover and use them. It turns M × N custom integrations into M + N reusable ones.
+
+</QA>
+
+<QA q="What problem does MCP solve that function calling does not?">
+
+Function calling defines how a model requests a function within one provider's API, but each application still has to hand-write and maintain every tool. MCP standardises discovery, description, invocation and transport between applications and tool providers, so a tool server written once is usable by any compliant host.
+
+</QA>
+
+<QA q="What are the three server primitives in MCP?">
+
+Tools (model-controlled functions with JSON Schema inputs), resources (application-controlled data identified by URIs) and prompts (user-controlled prompt templates with arguments).
+
+</QA>
+
+<QA q="Does MCP replace REST APIs?">
+
+No. MCP servers usually wrap existing APIs, databases or files and present a small set of model-friendly capabilities. REST remains the interface for ordinary programs.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'With 10 AI apps and 50 systems, how many pieces does MCP need?',
+      options: ['500', '60', '50', '10'],
+      answer: 1,
+      why: 'One client per app plus one server per system: M + N.',
+    },
+    {
+      q: 'Which message format does MCP use?',
+      options: ['SOAP', 'JSON-RPC 2.0', 'GraphQL', 'Protocol Buffers only'],
+      answer: 1,
+      why: 'All MCP messages are JSON-RPC 2.0.',
+    },
+    {
+      q: 'Which is NOT an MCP server primitive?',
+      options: ['Tools', 'Resources', 'Prompts', 'Embeddings'],
+      answer: 3,
+      why: 'Servers expose tools, resources and prompts.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| MCP | Model Context Protocol: open standard for AI app ↔ tools and data |
+| Analogy | USB-C port for AI apps |
+| Solves | M × N connectors → M + N |
+| Server offers | tools, resources, prompts |
+| Messages | JSON-RPC 2.0 |
+| Transports | stdio (local), Streamable HTTP (remote) |
+| Versions | dated, e.g. `2026-07-28` (stateless) |
+| vs tool calling | tool calling = model API feature; MCP = app ↔ server standard |
+| vs REST | MCP wraps APIs for models; it does not replace them |
+| SDKs | Python, TypeScript and more |
+
+</CheatSheet>

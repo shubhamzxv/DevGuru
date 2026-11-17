@@ -1,0 +1,74 @@
+{
+  "name": "MCP",
+  "icon": "🔌",
+  "tagline": "Connect AI apps to tools and data",
+  "order": 16,
+  "playground": "python",
+  "modules": [
+    {
+      "title": "Basics",
+      "topics": [
+        {
+          "id": "mcp-what-is-mcp",
+          "slug": "what-is-mcp",
+          "title": "What is MCP?"
+        },
+        {
+          "id": "mcp-architecture",
+          "slug": "architecture",
+          "title": "Architecture (host, client, server)"
+        },
+        {
+          "id": "mcp-primitives",
+          "slug": "primitives",
+          "title": "Tools, resources and prompts"
+        }
+      ]
+    },
+    {
+      "title": "Protocol",
+      "topics": [
+        {
+          "id": "mcp-messages",
+          "slug": "messages",
+          "title": "JSON-RPC messages and the stateless protocol"
+        },
+        {
+          "id": "mcp-transports",
+          "slug": "transports",
+          "title": "Transports (stdio and Streamable HTTP)"
+        }
+      ]
+    },
+    {
+      "title": "Building",
+      "topics": [
+        {
+          "id": "mcp-build-a-server",
+          "slug": "build-a-server",
+          "title": "Build an MCP server in Python"
+        },
+        {
+          "id": "mcp-clients-and-hosts",
+          "slug": "clients-and-hosts",
+          "title": "Clients and connecting to hosts"
+        },
+        {
+          "id": "mcp-security",
+          "slug": "security",
+          "title": "Security and authorization"
+        }
+      ]
+    },
+    {
+      "title": "Revision",
+      "topics": [
+        {
+          "id": "mcp-interview-revision",
+          "slug": "interview-revision",
+          "title": "MCP interview revision"
+        }
+      ]
+    }
+  ]
+}

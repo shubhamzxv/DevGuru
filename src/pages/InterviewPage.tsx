@@ -6,6 +6,7 @@ import CodeBlock from '../components/content/CodeBlock';
 import InlineMarkdown from '../components/content/InlineMarkdown';
 import type { InterviewEntry, InterviewItem } from '../build/contentIndex';
 import { TRACKS, type Track } from '../registry/tracks';
+import { pythonRunsInBrowser } from '../utils/runnable';
 
 /** Tracks that have at least one interview question, in sidebar order. */
 const tracksWithQuestions = TRACKS.filter((track) => (counts[track.slug] ?? 0) > 0);
@@ -114,7 +115,12 @@ function Question({
                 <InlineMarkdown text={block.text} />
               </p>
             ) : (
-              <CodeBlock key={index} code={block.code} language={block.language} />
+              <CodeBlock
+                key={index}
+                code={block.code}
+                language={block.language}
+                tryIt={block.language !== 'python' || pythonRunsInBrowser(block.code)}
+              />
             ),
           )}
         </div>

@@ -1,0 +1,291 @@
+---
+id: mcp-transports
+title: Transports (stdio and Streamable HTTP)
+summary: "A transport carries the JSON-RPC messages: stdio connects a host to a local server process through standard input and output, and Streamable HTTP connects to a remote server with HTTP POST requests."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+The same letter can travel two ways. **Hand delivery** inside your own office: quick, private, no address needed. That is **stdio**. **Postal service** to another city: needs an address, a stamp and ID checks. That is **Streamable HTTP**. The **letter itself** (the JSON-RPC message) is identical either way.
+
+</Analogy>
+
+## Simple explanation
+
+The protocol is the same on every transport. The transport only decides **how messages are framed and delivered**.
+
+| | **stdio** | **Streamable HTTP** |
+| --- | --- | --- |
+| Server runs | as a **subprocess** started by the host | as a **web service** |
+| Messages travel | on **stdin / stdout**, one JSON message per **line** | as **HTTP POST** to one endpoint, such as `/mcp` |
+| Reply | a line on stdout | a JSON body, or an **SSE stream** when the server sends progress first |
+| Users | one (the person running the host) | many |
+| Auth | the process's own environment (env variables, local files) | **OAuth 2.1** access tokens |
+| Good for | local files, git, developer tools | SaaS, shared company services |
+| Scaling | not needed | load balancers, serverless |
+
+**stdio rules**:
+
+- Each message is a single line of JSON ending with a newline
+- **stdout is only for protocol messages.** Logs go to **stderr**. A stray `print()` to stdout corrupts the stream
+- The host starts the process and stops it by closing stdin
+
+**Streamable HTTP rules (spec 2026-07-28)**:
+
+- **One endpoint**, every message is a **POST**
+- Headers repeat key facts from the body so gateways can route without parsing JSON: **`MCP-Protocol-Version`**, **`Mcp-Method`** (for example `tools/call`) and **`Mcp-Name`** (for example the tool name)
+- **No session header.** Each request is independent, so any server instance can answer
+- To **cancel**, the client closes the response stream
+- Servers should **validate the `Origin` header** and local servers should **bind to localhost**, to stop web pages from reaching them (DNS rebinding)
+
+**The older HTTP+SSE transport** (two endpoints, from the 2024 spec) is **deprecated**. Use Streamable HTTP for anything new.
+
+**Which one?** If the server works with things on the user's own machine, use **stdio**. If it is a shared service, use **Streamable HTTP**.
+
+## Code example
+
+stdio framing: one JSON object per line. This is all a transport does:
+
+```python
+import io, json
+
+def write_message(stream, message):
+    stream.write(json.dumps(message) + "\n")          # newline-delimited JSON
+
+def read_messages(stream):
+    for line in stream:
+        if line.strip():
+            yield json.loads(line)
+
+pipe = io.StringIO()                                   # stands in for the server's stdin
+write_message(pipe, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+write_message(pipe, {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_price"}})
+
+print(repr(pipe.getvalue()[:60]), "...")
+pipe.seek(0)
+for msg in read_messages(pipe):
+    print("server received:", msg["id"], msg["method"])
+```
+
+```output
+'{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params"' ...
+server received: 1 tools/list
+server received: 2 tools/call
+```
+
+Why a `print()` in a stdio server is a bug: it puts a non-JSON line into the protocol stream:
+
+```python
+import json
+
+stdout_lines = [
+    '{"jsonrpc": "2.0", "id": 1, "result": {"resultType": "complete", "tools": []}}',
+    'DEBUG: loaded 3 tools',                           # someone used print() for logging
+    '{"jsonrpc": "2.0", "id": 2, "result": {"resultType": "complete", "content": []}}',
+]
+for line in stdout_lines:
+    try:
+        msg = json.loads(line)
+        print("ok   message id", msg["id"])
+    except json.JSONDecodeError:
+        print("FAIL not JSON ->", repr(line), "(log to stderr instead)")
+```
+
+```output
+ok   message id 1
+FAIL not JSON -> 'DEBUG: loaded 3 tools' (log to stderr instead)
+ok   message id 2
+```
+
+What a Streamable HTTP request looks like, built by hand:
+
+```python
+import json
+
+body = {
+    "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+    "params": {"name": "get_price", "arguments": {"item": "pen"},
+               "_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                         "io.modelcontextprotocol/clientInfo": {"name": "demo", "version": "0.1"},
+                         "io.modelcontextprotocol/clientCapabilities": {}}},
+}
+headers = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+    "Authorization": "Bearer <access token>",
+    "MCP-Protocol-Version": body["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"],
+    "Mcp-Method": body["method"],
+    "Mcp-Name": body["params"]["name"],
+}
+
+print("POST /mcp HTTP/1.1")
+for name, value in headers.items():
+    print(f"{name}: {value}")
+print()
+print(json.dumps(body)[:110], "...")
+```
+
+```output
+POST /mcp HTTP/1.1
+Content-Type: application/json
+Accept: application/json, text/event-stream
+Authorization: Bearer <access token>
+MCP-Protocol-Version: 2026-07-28
+Mcp-Method: tools/call
+Mcp-Name: get_price
+
+{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_price", "arguments": {"item": "pen ...
+```
+
+<Playground kind="none">
+
+```python
+# server.py : the same server on either transport.
+# pip install mcp
+import logging, sys
+from mcp.server.mcpserver import MCPServer
+
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)     # logs to stderr, never stdout
+mcp = MCPServer("shop")
+
+@mcp.tool()
+def get_price(item: str) -> int:
+    """Return the price of an item in rupees."""
+    logging.info("get_price(%s)", item)
+    return {"pen": 20, "notebook": 55}.get(item, 0)
+
+if __name__ == "__main__":
+    transport = sys.argv[1] if len(sys.argv) > 1 else "stdio"
+    mcp.run(transport=transport)
+    # python server.py                     -> stdio: the host starts this process
+    # python server.py streamable-http     -> a web server; clients POST to its /mcp endpoint
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Printing to stdout in a stdio server">
+
+<Wrong>
+
+```python
+@mcp.tool()
+def get_price(item: str) -> int:
+    print("looking up", item)          # goes into the JSON-RPC stream
+    return 20
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import logging, sys
+logging.basicConfig(stream=sys.stderr)
+
+@mcp.tool()
+def get_price(item: str) -> int:
+    logging.info("looking up %s", item)
+    return 20
+```
+
+</Right>
+
+On stdio, stdout belongs to the protocol. Write logs to stderr or a file.
+
+</Mistake>
+
+<Mistake title="A local HTTP server open to the whole network">
+
+<Wrong>
+
+```text
+Local MCP server listening on 0.0.0.0:8000, no auth, no Origin check.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Bind to 127.0.0.1, validate the Origin header, and require a token.
+Or use stdio for a purely local server.
+```
+
+</Right>
+
+Anything on the network, or a web page in the user's browser, could otherwise call the user's tools.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What transports does MCP define?">
+
+stdio, where the client launches the server as a subprocess and they exchange newline-delimited JSON-RPC messages over standard input and output; and Streamable HTTP, where each message is an HTTP POST to a single endpoint and the reply is a JSON body or a request-scoped SSE stream. Custom transports are allowed if they keep the message format and patterns.
+
+</QA>
+
+<QA q="When would you choose stdio and when Streamable HTTP?">
+
+stdio for local, single-user servers that need the user's machine: files, shells, local databases. It needs no network or auth setup. Streamable HTTP for remote, multi-user services that must scale, be updated centrally and be protected with OAuth.
+
+</QA>
+
+<QA q="Why must a stdio server not write logs to stdout?">
+
+stdout carries the JSON-RPC messages. Any other text breaks the framing and the client fails to parse the stream. Logs belong on stderr.
+
+</QA>
+
+<QA q="What changed in Streamable HTTP with the 2026-07-28 spec?">
+
+Session ids were removed because the protocol is stateless; each POST is independent. Requests mirror the protocol version, method and name into headers (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`) for routing. Cancellation is done by closing the response stream, and the older two-endpoint HTTP+SSE transport is deprecated.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'How are messages separated on the stdio transport?',
+      options: ['By commas', 'One JSON message per line', 'By HTTP headers', 'By XML tags'],
+      answer: 1,
+      why: 'Newline-delimited JSON.',
+    },
+    {
+      q: 'Where should a stdio server write logs?',
+      options: ['stdout', 'stderr', 'The JSON-RPC result', 'stdin'],
+      answer: 1,
+      why: 'stdout is reserved for protocol messages.',
+    },
+    {
+      q: 'Which transport fits a shared company service used by 500 people?',
+      options: ['stdio', 'Streamable HTTP', 'Named pipes', 'USB'],
+      answer: 1,
+      why: 'It is remote, multi-user and works with OAuth and load balancers.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | stdio | Streamable HTTP |
+| --- | --- | --- |
+| Where | local subprocess | remote web service |
+| Framing | one JSON per line | HTTP POST to one endpoint |
+| Reply | line on stdout | JSON body or SSE stream |
+| Auth | process environment | OAuth 2.1 bearer token |
+| Logs | stderr only | normal server logs |
+| Cancel | `notifications/cancelled` | close the response stream |
+| Headers | none | `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` |
+| Safety | runs with the user's rights | validate `Origin`; bind local servers to localhost |
+| Python SDK | `mcp.run()` | `mcp.run(transport="streamable-http")` |
+| Deprecated | | old HTTP+SSE transport |
+
+</CheatSheet>
