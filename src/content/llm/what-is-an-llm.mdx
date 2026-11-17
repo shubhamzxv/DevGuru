@@ -1,0 +1,259 @@
+---
+id: llm-what-is-an-llm
+title: What is an LLM?
+summary: "A large language model is a neural network trained on huge amounts of text to predict the next token; by repeating that prediction it writes whole answers."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Your phone keyboard suggests the next word: type "Good" and it offers "morning". An **LLM** is that idea made enormous. It has read a large part of the internet, so its "next word" guess is good enough to write essays, code and answers, **one small piece at a time**.
+
+</Analogy>
+
+## Simple explanation
+
+**LLM** = **Large Language Model**.
+
+- **Language model**: given some text, it gives a **probability for every possible next token**
+- **Large**: billions of **parameters** (learned numbers), trained on a huge amount of text
+
+**How it writes an answer** (this loop is called **autoregressive generation**):
+
+1. Your prompt is split into **tokens**
+2. The model computes probabilities for the next token
+3. One token is **picked** (sampling)
+4. That token is **added to the text**, and the model runs again
+5. Stop at a special **end token** or the **max tokens** limit
+
+So a 300-token answer means the model ran about 300 times.
+
+**How it learned**: during **pre-training**, the model sees text with the next token hidden, guesses it, and its parameters are adjusted when it is wrong. Repeat trillions of times. Nobody writes rules of grammar or facts; they are absorbed as patterns. Later, **fine-tuning** and feedback make it follow instructions and behave like a helpful assistant.
+
+**Things that follow from this design**:
+
+| Fact | Why |
+| --- | --- |
+| It can be confidently wrong | it picks **likely** text, not checked facts |
+| It has a **knowledge cutoff** | it only knows what was in the training data |
+| The same prompt can give different answers | the next token is **sampled** |
+| It has no memory between requests | each call starts from only the text you send |
+| It is bad at exact arithmetic on big numbers | it predicts digits as text; give it a calculator tool |
+
+## Code example
+
+A hand-made "language model": a table of next-token probabilities. Generation is just looking up the table again and again:
+
+```python
+MODEL = {
+    "<start>": {"The": 0.6, "A": 0.4},
+    "The":     {"cat": 0.5, "dog": 0.3, "train": 0.2},
+    "A":       {"cat": 0.5, "dog": 0.5},
+    "cat":     {"sleeps": 0.7, "runs": 0.3},
+    "dog":     {"runs": 0.8, "sleeps": 0.2},
+    "train":   {"runs": 0.9, "sleeps": 0.1},
+    "sleeps":  {"<end>": 1.0},
+    "runs":    {"<end>": 1.0},
+}
+
+def generate_greedy(max_tokens=10):
+    token, out = "<start>", []
+    for _ in range(max_tokens):
+        probs = MODEL[token]
+        token = max(probs, key=probs.get)        # always the most likely token
+        if token == "<end>":
+            break
+        out.append(token)
+        print(f"  picked {token!r:9} from {probs}")
+    return " ".join(out)
+
+print(generate_greedy())
+```
+
+```output
+  picked 'The'     from {'The': 0.6, 'A': 0.4}
+  picked 'cat'     from {'cat': 0.5, 'dog': 0.3, 'train': 0.2}
+  picked 'sleeps'  from {'sleeps': 0.7, 'runs': 0.3}
+The cat sleeps
+```
+
+The same model with **sampling**: tokens are picked by probability, so answers vary:
+
+```python
+import random
+
+MODEL = {
+    "<start>": {"The": 0.6, "A": 0.4},
+    "The":     {"cat": 0.5, "dog": 0.3, "train": 0.2},
+    "A":       {"cat": 0.5, "dog": 0.5},
+    "cat":     {"sleeps": 0.7, "runs": 0.3},
+    "dog":     {"runs": 0.8, "sleeps": 0.2},
+    "train":   {"runs": 0.9, "sleeps": 0.1},
+    "sleeps":  {"<end>": 1.0},
+    "runs":    {"<end>": 1.0},
+}
+
+random.seed(11)
+def generate_sampled():
+    token, out = "<start>", []
+    while True:
+        probs = MODEL[token]
+        token = random.choices(list(probs), weights=list(probs.values()))[0]
+        if token == "<end>":
+            return " ".join(out)
+        out.append(token)
+
+for _ in range(5):
+    print(generate_sampled())
+```
+
+```output
+The dog sleeps
+The dog runs
+A dog runs
+The train runs
+A dog runs
+```
+
+<Playground kind="python">
+
+```python
+# Probability of a whole sentence = product of each step's probability.
+MODEL = {
+    "<start>": {"The": 0.6, "A": 0.4},
+    "The":     {"cat": 0.5, "dog": 0.3, "train": 0.2},
+    "A":       {"cat": 0.5, "dog": 0.5},
+    "cat":     {"sleeps": 0.7, "runs": 0.3},
+    "dog":     {"runs": 0.8, "sleeps": 0.2},
+    "train":   {"runs": 0.9, "sleeps": 0.1},
+}
+
+def sentence_probability(sentence):
+    p, prev = 1.0, "<start>"
+    for word in sentence.split():
+        p *= MODEL[prev].get(word, 0)
+        prev = word
+    return p
+
+for s in ["The cat sleeps", "The train sleeps", "A dog runs"]:
+    print(f"{s:<18} {sentence_probability(s):.3f}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Thinking the LLM looks answers up">
+
+<Wrong>
+
+```text
+"The model has a copy of Wikipedia inside and searches it."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"The model stores patterns in its weights and generates likely text. It can reproduce common
+facts, but it does not retrieve documents unless we add search or RAG."
+```
+
+</Right>
+
+This explains hallucinations and why the model cannot quote its sources by itself.
+
+</Mistake>
+
+<Mistake title="Expecting it to know today's events">
+
+<Wrong>
+
+```text
+Ask a plain model "what is today's gold price?" and trust the number.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Give it a tool or search result with today's price, then ask it to answer from that.
+```
+
+</Right>
+
+Training data ends at the knowledge cutoff. Fresh facts must come in through the prompt.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How does an LLM generate text?">
+
+Autoregressively. The prompt is tokenized, the model outputs a probability distribution over the vocabulary for the next token, one token is chosen by a decoding strategy (greedy or sampling), appended to the input, and the process repeats until an end token or the token limit.
+
+</QA>
+
+<QA q="What is pre-training?">
+
+Self-supervised training on very large text collections with the objective of predicting the next token. No human labels are needed because the text itself supplies the answer. It gives the model general language ability, which is later refined by fine-tuning and feedback-based training.
+
+</QA>
+
+<QA q="Why do LLMs hallucinate?">
+
+They are trained to produce probable continuations, not verified facts. When the training data is thin, conflicting or missing for a question, the most probable text can still look confident and be wrong. There is no internal fact checker.
+
+</QA>
+
+<QA q="What are parameters in an LLM?">
+
+The weights of the neural network, learned during training. They encode the patterns of language. Model size is quoted in parameters (for example 7B); more parameters usually mean more capability and more memory and compute per token.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does an LLM output at each step?',
+      options: ['A full sentence', 'A probability for every possible next token', 'A database row', 'An image'],
+      answer: 1,
+      why: 'Then one token is chosen from that distribution.',
+    },
+    {
+      q: 'Generating one token at a time, each based on all earlier ones, is called?',
+      options: ['Autoregressive generation', 'Diffusion', 'Retrieval', 'Quantization'],
+      answer: 0,
+      why: 'Each new token is fed back as input for the next step.',
+    },
+    {
+      q: 'Why can the same prompt give two different answers?',
+      options: ['Network errors', 'Tokens are sampled by probability', 'The weights change', 'Caching'],
+      answer: 1,
+      why: 'Sampling adds controlled randomness.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Meaning |
+| --- | --- |
+| LLM | neural network that predicts the next token |
+| Token | piece of text the model reads and writes |
+| Parameters | learned weights (billions) |
+| Pre-training | learn by predicting next tokens on huge text |
+| Fine-tuning | extra training for instructions or a task |
+| Autoregressive | generate one token, feed it back, repeat |
+| Greedy decoding | always pick the most likely token |
+| Sampling | pick by probability (varied output) |
+| Knowledge cutoff | last date covered by training data |
+| Stateless | no memory between API calls |
+
+</CheatSheet>

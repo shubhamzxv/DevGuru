@@ -1,0 +1,296 @@
+---
+id: rag-retrieval-pipeline
+title: Build a RAG pipeline step by step
+summary: "A complete small RAG system in plain Python: chunk the documents, embed them, store the vectors, retrieve the top matches for a question, build a grounded prompt and generate an answer with sources."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Setting up a **small library desk**. First you **cut and label** index cards for every page (chunk + embed + store). When a reader asks something, you **pull the three best cards** (retrieve), hand them to a writer with the question (prompt), and the writer **answers with card numbers** as references (generate + cite).
+
+</Analogy>
+
+## Simple explanation
+
+This topic joins the earlier pieces into one working pipeline. The code below uses a simple **TF-IDF** vector in place of a neural embedding model, and a stand-in function in place of the LLM, so it runs anywhere. In a real project you swap those two functions for API calls. The **structure stays the same**.
+
+**TF-IDF in one line**: a word counts more if it appears often in this chunk (**TF**) and is rare across all chunks (**IDF**). So "refund" matters more than "the".
+
+**Pipeline settings you will tune**:
+
+| Setting | Meaning | Typical start |
+| --- | --- | --- |
+| **chunk size / overlap** | size of each piece | 300–500 tokens, 10–20% |
+| **top-k** | how many chunks to retrieve | 3–8 |
+| **similarity threshold** | drop weak matches | tune on your data |
+| **context budget** | max tokens of chunks in the prompt | leave room for the answer |
+
+**Why a threshold matters**: vector search **always** returns the k nearest chunks, even when nothing is relevant. A minimum score lets you say "I don't know" instead of answering from unrelated text.
+
+**Production extras** around this core: document loaders and OCR, an ingestion queue, re-indexing changed documents, access filters, caching, logging of the retrieved chunk ids for each answer, and evals.
+
+## Code example
+
+**Step 1 and 2: load and chunk**, keeping metadata:
+
+```python
+DOCUMENTS = {
+    "returns.md": "Returns are free within 10 days of delivery. Refunds are processed within 7 working days after we receive the item. Refunds go back to the original payment method.",
+    "shipping.md": "Standard delivery takes 3 to 5 days. Express delivery takes 1 day in metro cities. Delivery is free above an order value of 499 rupees.",
+    "warranty.md": "Electronics have a 12 month warranty. Batteries are covered for 6 months. Physical damage is not covered by the warranty.",
+}
+
+def chunk(text):
+    return [s.strip() + "." for s in text.split(".") if s.strip()]      # one sentence per chunk
+
+CHUNKS = [{"id": f"{name}#{i}", "source": name, "text": piece}
+          for name, text in DOCUMENTS.items() for i, piece in enumerate(chunk(text))]
+
+print("documents:", len(DOCUMENTS), "| chunks:", len(CHUNKS))
+print(CHUNKS[1])
+```
+
+```output
+documents: 3 | chunks: 9
+{'id': 'returns.md#1', 'source': 'returns.md', 'text': 'Refunds are processed within 7 working days after we receive the item.'}
+```
+
+**Steps 3 to 7: embed, store, retrieve, build the prompt, generate.** One runnable file:
+
+```python
+import math
+from collections import Counter
+
+DOCUMENTS = {
+    "returns.md": "Returns are free within 10 days of delivery. Refunds are processed within 7 working days after we receive the item. Refunds go back to the original payment method.",
+    "shipping.md": "Standard delivery takes 3 to 5 days. Express delivery takes 1 day in metro cities. Delivery is free above an order value of 499 rupees.",
+    "warranty.md": "Electronics have a 12 month warranty. Batteries are covered for 6 months. Physical damage is not covered by the warranty.",
+}
+CHUNKS = [{"id": f"{name}#{i}", "source": name, "text": s.strip() + "."}
+          for name, text in DOCUMENTS.items() for i, s in enumerate(text.split(".")) if s.strip()]
+
+def tokenize(text):
+    return [w.strip(".,?").lower() for w in text.split()]
+
+# 3. Embed: TF-IDF vectors (a real system calls an embedding model here)
+doc_freq = Counter(word for c in CHUNKS for word in set(tokenize(c["text"])))
+IDF = {w: math.log(len(CHUNKS) / df) + 1 for w, df in doc_freq.items()}
+
+def embed(text):
+    counts = Counter(tokenize(text))
+    return {w: n * IDF.get(w, 0) for w, n in counts.items() if w in IDF}
+
+def cosine(a, b):
+    dot = sum(a[w] * b.get(w, 0) for w in a)
+    na, nb = math.sqrt(sum(v * v for v in a.values())), math.sqrt(sum(v * v for v in b.values()))
+    return dot / (na * nb) if na and nb else 0.0
+
+# 4. Store
+INDEX = [(c, embed(c["text"])) for c in CHUNKS]
+
+# 5. Retrieve
+def retrieve(question, k=2, min_score=0.15):
+    q = embed(question)
+    scored = sorted(((cosine(q, vec), c) for c, vec in INDEX), key=lambda x: -x[0])
+    return [(round(score, 2), c) for score, c in scored[:k] if score >= min_score]
+
+# 6. Build the grounded prompt
+def build_prompt(question, hits):
+    sources = "\n".join(f"[{i}] ({c['source']}) {c['text']}" for i, (_, c) in enumerate(hits, 1))
+    return ("Answer only from the sources. Cite like [1]. If the answer is not in the sources, "
+            f"say \"I don't know\".\n\nSources:\n{sources}\n\nQuestion: {question}")
+
+# 7. Generate (stand-in for the LLM call)
+def generate(prompt, hits):
+    if not hits:
+        return "I don't know."
+    return f"{hits[0][1]['text']} [1]"
+
+def ask(question):
+    hits = retrieve(question)
+    answer = generate(build_prompt(question, hits), hits)
+    print(f"Q: {question}")
+    for score, c in hits:
+        print(f"   retrieved {score}  {c['id']}")
+    print(f"A: {answer}\n")
+
+ask("How many days do refunds take?")
+ask("How long are batteries covered?")
+ask("Do you sell gift cards?")
+ask("Is the battery covered under warranty?")
+```
+
+```output
+Q: How many days do refunds take?
+   retrieved 0.33  returns.md#1
+   retrieved 0.23  returns.md#2
+A: Refunds are processed within 7 working days after we receive the item. [1]
+
+Q: How long are batteries covered?
+   retrieved 0.64  warranty.md#1
+   retrieved 0.17  warranty.md#2
+A: Batteries are covered for 6 months. [1]
+
+Q: Do you sell gift cards?
+A: I don't know.
+
+Q: Is the battery covered under warranty?
+   retrieved 0.6  warranty.md#2
+   retrieved 0.18  warranty.md#1
+A: Physical damage is not covered by the warranty. [1]
+
+```
+
+What the four questions show:
+
+- Questions 1 and 2: the right chunk is first, so the answer is right
+- Question 3: nothing is relevant, the **threshold** removes everything, and the system says it does not know. That is correct behaviour
+- Question 4: a **retrieval failure**. Our word-based vectors treat "battery" and "batteries" as different words, so the wrong chunk ranks first and the answer is wrong. A neural embedding model handles this, which is why embedding quality and retrieval evals matter so much
+
+<Playground kind="none">
+
+```python
+# The same pipeline with real services. Replace the placeholders with your provider's SDK calls.
+# pip install psycopg pgvector <your-llm-sdk>
+
+def embed(texts: list[str]) -> list[list[float]]:
+    """Call your embedding model API here; return one vector per text."""
+    ...
+
+def llm(prompt: str) -> str:
+    """Call your LLM API here with temperature=0."""
+    ...
+
+def index_document(conn, doc_id: str, text: str):
+    chunks = split_into_chunks(text, max_tokens=400, overlap=50)
+    vectors = embed(chunks)
+    with conn.transaction():
+        conn.execute("DELETE FROM chunks WHERE doc_id = %s", (doc_id,))      # replace old version
+        for chunk, vector in zip(chunks, vectors):
+            conn.execute("INSERT INTO chunks (doc_id, content, embedding) VALUES (%s, %s, %s)",
+                         (doc_id, chunk, vector))
+
+def answer(conn, question: str, tenant_id: int) -> str:
+    [q] = embed([question])
+    rows = conn.execute(
+        "SELECT content, doc_id FROM chunks WHERE tenant_id = %s "
+        "ORDER BY embedding <=> %s LIMIT 5", (tenant_id, q)).fetchall()
+    sources = "\n".join(f"[{i}] ({doc}) {text}" for i, (text, doc) in enumerate(rows, 1))
+    return llm(f"Answer only from the sources and cite them.\n\n{sources}\n\nQuestion: {question}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="No similarity threshold">
+
+<Wrong>
+
+```python
+hits = store.search(q, k=5)          # always 5 chunks, even for "what is the weather?"
+answer = llm(build_prompt(question, hits))
+```
+
+</Wrong>
+
+<Right>
+
+```python
+hits = [h for h in store.search(q, k=5) if h.score >= MIN_SCORE]
+if not hits:
+    return "I couldn't find that in our documents."
+```
+
+</Right>
+
+Nearest does not mean relevant. Drop weak matches so the model is not pushed to answer from noise.
+
+</Mistake>
+
+<Mistake title="Not logging what was retrieved">
+
+<Wrong>
+
+```python
+log.info("question=%s answer=%s", question, answer)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+log.info("question=%s chunk_ids=%s scores=%s answer=%s", question, ids, scores, answer)
+```
+
+</Right>
+
+When an answer is wrong, the first question is "which chunks did it see?". Without the ids you cannot debug.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Walk me through building a RAG system for company documents.">
+
+Ingest: load files, extract text, split into chunks with overlap and metadata, embed them and store vectors in a vector store with document ids and access tags. Query: embed the question, run a filtered top-k (preferably hybrid) search, rerank, apply a score threshold, build a grounded prompt with numbered sources, call the LLM at low temperature, return the answer with citations. Around it: re-indexing on document change, caching, logging retrieved ids, guardrails and an eval set for retrieval and answers.
+
+</QA>
+
+<QA q="How do you choose top-k?">
+
+Large enough that the needed passage is usually included, small enough to avoid noise and token cost. Common practice is to retrieve a wider set (20 to 50), rerank, and pass the best 3 to 8 to the model. Tune it using retrieval recall on an eval set.
+
+</QA>
+
+<QA q="How do you keep the index in sync with changing documents?">
+
+Track a content hash or modified time per document; on change, delete that document's chunks and insert the new ones (upsert by document id) in one transaction; process changes through a queue or scheduled job; handle deletions; and version the index when the chunking or embedding model changes.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Why apply a minimum similarity score?',
+      options: ['To make search faster', 'Vector search always returns k results, even irrelevant ones', 'To reduce chunk size', 'To save storage'],
+      answer: 1,
+      why: 'A threshold lets the system say "I don’t know".',
+    },
+    {
+      q: 'In TF-IDF, which word gets a higher weight?',
+      options: ['A word in every chunk', 'A word that is rare across chunks', 'The longest word', 'The first word'],
+      answer: 1,
+      why: 'Rare words tell chunks apart.',
+    },
+    {
+      q: 'A document was edited. What should the pipeline do?',
+      options: ['Nothing', 'Delete its old chunks and index the new ones', 'Retrain the LLM', 'Increase top-k'],
+      answer: 1,
+      why: 'Otherwise old text keeps being retrieved.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | Code idea |
+| --- | --- |
+| 1. Load | read files → text |
+| 2. Chunk | split + metadata (source, section) |
+| 3. Embed | `vectors = embed(chunks)` |
+| 4. Store | upsert into the vector store by doc id |
+| 5. Retrieve | `search(embed(question), k, where=...)` + threshold |
+| 6. Prompt | rules + numbered sources + question |
+| 7. Generate | LLM at temperature 0, with citations |
+| No hits | "I don't know" |
+| Log | question, chunk ids, scores, answer |
+| Tune | chunk size, top-k, threshold with evals |
+
+</CheatSheet>

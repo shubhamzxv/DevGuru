@@ -1,0 +1,278 @@
+---
+id: rag-vector-databases
+title: Vector databases and ANN search
+summary: "A vector database stores embeddings with their text and metadata and finds the nearest vectors to a query quickly, using approximate nearest neighbour indexes such as HNSW instead of comparing with every vector."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+To find a book in a small room, you can check **every book**. In a big library that is hopeless, so the library has **sections and shelves**: you go to the right section and check only a few shelves. You might miss a misplaced book, but you are thousands of times faster. That shortcut is **approximate nearest neighbour (ANN)** search.
+
+</Analogy>
+
+## Simple explanation
+
+A **vector database** stores, for each chunk: an **id**, the **vector**, the **text** and **metadata**. Its main query is: "give me the **top-k** vectors most similar to this one".
+
+**Two ways to search**:
+
+| Method | How | Speed | Accuracy |
+| --- | --- | --- | --- |
+| **Exact (brute force, kNN)** | compare the query with **every** vector | slow on millions | 100% |
+| **ANN** (approximate) | use an index to check only a small part | very fast | ~95–99% (**recall**) |
+
+**Common ANN indexes**:
+
+| Index | Idea | Notes |
+| --- | --- | --- |
+| **HNSW** | a layered **graph**; hop from neighbour to nearer neighbour | fast and accurate; uses more memory; the most common default |
+| **IVF** | cluster vectors into **buckets**; search only the nearest buckets | less memory; tune how many buckets to probe |
+| **PQ** (product quantization) | **compress** vectors | huge collections; some accuracy loss |
+
+**Features that matter in practice**:
+
+- **Metadata filtering**: "only documents from 2026" or "only this customer's files". Essential for **access control** and multi-tenant apps
+- **Hybrid search**: vector + keyword (BM25) in one query
+- **Upsert and delete** by document id, to keep the index fresh
+- **Namespaces / collections** to separate tenants or data sets
+
+**Choices** (all are widely used):
+
+| Kind | Examples | When |
+| --- | --- | --- |
+| Extension to a database you already run | **pgvector** (PostgreSQL), OpenSearch / Elasticsearch, Redis, MongoDB Atlas | you want one database, SQL joins and transactions |
+| Dedicated vector database | Pinecone, Qdrant, Weaviate, Milvus | very large scale or advanced vector features |
+| Library, in-process | **FAISS**, Chroma, LanceDB | prototypes, small or embedded use |
+
+A good rule: if you already use PostgreSQL and have up to a few million vectors, **pgvector** is usually enough.
+
+## Code example
+
+A tiny vector store with exact search and a metadata filter:
+
+```python
+import math
+
+def cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
+
+class TinyVectorStore:
+    def __init__(self):
+        self.rows = {}
+
+    def upsert(self, id, vector, text, **metadata):
+        self.rows[id] = {"vector": vector, "text": text, "meta": metadata}
+
+    def delete(self, id):
+        self.rows.pop(id, None)
+
+    def search(self, query, k=2, where=None):
+        hits = []
+        for id, row in self.rows.items():
+            if where and any(row["meta"].get(key) != value for key, value in where.items()):
+                continue                                    # metadata filter
+            hits.append((round(cosine(query, row["vector"]), 3), id, row["text"]))
+        return sorted(hits, reverse=True)[:k]
+
+store = TinyVectorStore()
+store.upsert("c1", [0.9, 0.1], "Refunds take 7 days", team="support", year=2026)
+store.upsert("c2", [0.8, 0.3], "Old refund rule: 15 days", team="support", year=2023)
+store.upsert("c3", [0.1, 0.9], "Salary is paid on the 1st", team="hr", year=2026)
+
+query = [1.0, 0.2]                                           # "how long do refunds take?"
+print(store.search(query))
+print(store.search(query, where={"year": 2026}))
+print(store.search(query, where={"team": "hr"}))
+```
+
+```output
+[(0.996, 'c1', 'Refunds take 7 days'), (0.987, 'c2', 'Old refund rule: 15 days')]
+[(0.996, 'c1', 'Refunds take 7 days'), (0.303, 'c3', 'Salary is paid on the 1st')]
+[(0.303, 'c3', 'Salary is paid on the 1st')]
+```
+
+Why ANN is fast: an **IVF**-style index puts vectors in buckets and searches only the nearest bucket:
+
+```python
+import math, random
+
+random.seed(0)
+def dist(a, b):
+    return math.dist(a, b)
+
+vectors = [(random.random(), random.random()) for _ in range(10_000)]
+centres = [(0.25, 0.25), (0.25, 0.75), (0.75, 0.25), (0.75, 0.75)]       # 4 buckets
+
+buckets = {i: [] for i in range(len(centres))}
+for v in vectors:
+    nearest = min(range(len(centres)), key=lambda i: dist(v, centres[i]))
+    buckets[nearest].append(v)
+
+query = (0.20, 0.30)
+exact = min(vectors, key=lambda v: dist(query, v))                       # checks 10,000
+
+bucket = min(range(len(centres)), key=lambda i: dist(query, centres[i]))
+approx = min(buckets[bucket], key=lambda v: dist(query, v))              # checks one bucket
+
+print("exact search compared:", len(vectors))
+print("ANN search compared:  ", len(centres) + len(buckets[bucket]))
+print("same answer:", exact == approx)
+```
+
+```output
+exact search compared: 10000
+ANN search compared:   2491
+same answer: True
+```
+
+<Playground kind="none">
+
+```sql
+-- pgvector in PostgreSQL: vector search with normal SQL.
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE chunks (
+    id         bigserial PRIMARY KEY,
+    doc_id     text NOT NULL,
+    tenant_id  int  NOT NULL,
+    content    text NOT NULL,
+    embedding  vector(1024)             -- must match your embedding model's dimensions
+);
+
+-- HNSW index for cosine distance
+CREATE INDEX ON chunks USING hnsw (embedding vector_cosine_ops);
+
+-- Top 5 chunks for this tenant. <=> is cosine distance (smaller = more similar).
+SELECT id, content, 1 - (embedding <=> :query_vector) AS similarity
+FROM chunks
+WHERE tenant_id = :tenant_id
+ORDER BY embedding <=> :query_vector
+LIMIT 5;
+
+-- Keep the index fresh when a document changes
+DELETE FROM chunks WHERE doc_id = 'refund-policy';
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Filtering by user after the search">
+
+<Wrong>
+
+```python
+hits = store.search(query, k=5)                       # top 5 across ALL customers
+hits = [h for h in hits if h.tenant_id == user.tenant_id]     # maybe 0 left, and data was exposed to the app
+```
+
+</Wrong>
+
+<Right>
+
+```python
+hits = store.search(query, k=5, where={"tenant_id": user.tenant_id})
+```
+
+</Right>
+
+Filter inside the query. Post-filtering returns too few results and risks leaking another tenant's text.
+
+</Mistake>
+
+<Mistake title="Never deleting old chunks">
+
+<Wrong>
+
+```python
+store.add(embed_chunks(new_version_of_policy))        # the old version is still in the index
+```
+
+</Wrong>
+
+<Right>
+
+```python
+store.delete(where={"doc_id": "refund-policy"})
+store.add(embed_chunks(new_version_of_policy), doc_id="refund-policy")
+```
+
+</Right>
+
+Stale chunks get retrieved and the bot quotes rules that no longer apply.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a vector database and how is it different from a relational database?">
+
+It stores high-dimensional vectors with metadata and is optimised for nearest-neighbour similarity queries using ANN indexes. A relational database is optimised for exact matches, ranges and joins with B-tree indexes. Extensions such as pgvector add vector search to a relational database.
+
+</QA>
+
+<QA q="What is ANN search and why not exact search?">
+
+Approximate nearest neighbour search uses an index (graph, clusters or compressed codes) to examine only a small fraction of vectors, giving millisecond queries over millions of vectors with a small loss of recall. Exact search compares against every vector, which is linear in collection size and too slow at scale.
+
+</QA>
+
+<QA q="How does HNSW work?">
+
+Hierarchical Navigable Small World builds layered graphs: sparse upper layers with long links and dense lower layers. A search enters at the top, greedily moves to neighbours closer to the query, descends layer by layer and refines among nearby nodes at the bottom. Parameters such as M, efConstruction and efSearch trade memory and build time for recall and speed.
+
+</QA>
+
+<QA q="When would you choose pgvector over a dedicated vector database?">
+
+When you already run PostgreSQL, need transactions, joins and row-level security with your vectors, and have up to millions of vectors. A dedicated vector database fits billions of vectors, very high query rates or specialised features and managed scaling.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does ANN trade for speed?',
+      options: ['Security', 'A little accuracy (recall)', 'Metadata', 'Vector dimensions'],
+      answer: 1,
+      why: 'It may miss a true nearest neighbour now and then.',
+    },
+    {
+      q: 'Which index is graph-based?',
+      options: ['B-tree', 'HNSW', 'Hash index', 'IVF'],
+      answer: 1,
+      why: 'HNSW navigates a layered graph of neighbours.',
+    },
+    {
+      q: 'How do you make sure users only retrieve their own company’s chunks?',
+      options: ['A system prompt', 'A metadata filter on tenant id in the query', 'Higher top-k', 'Smaller chunks'],
+      answer: 1,
+      why: 'Enforce access control in the retrieval query.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Row | id + vector + text + metadata |
+| Query | top-k nearest to the query vector |
+| Exact kNN | compare all; accurate, slow |
+| ANN | index; fast, ~95–99% recall |
+| HNSW | layered graph; default choice |
+| IVF | cluster buckets; probe a few |
+| PQ | compressed vectors |
+| Filter | metadata `where` inside the search |
+| Fresh index | upsert / delete by doc id |
+| pgvector | `ORDER BY embedding <=> :q LIMIT k` |
+| Dedicated | Pinecone, Qdrant, Weaviate, Milvus |
+| Library | FAISS, Chroma, LanceDB |
+
+</CheatSheet>

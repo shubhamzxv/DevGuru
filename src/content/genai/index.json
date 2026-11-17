@@ -1,0 +1,64 @@
+{
+  "name": "Generative AI",
+  "icon": "✨",
+  "tagline": "How AI creates text, images and code",
+  "order": 13,
+  "playground": "python",
+  "modules": [
+    {
+      "title": "Basics",
+      "topics": [
+        {
+          "id": "genai-what-is-generative-ai",
+          "slug": "what-is-generative-ai",
+          "title": "What is Generative AI?"
+        },
+        {
+          "id": "genai-model-types",
+          "slug": "model-types",
+          "title": "Types of generative models"
+        }
+      ]
+    },
+    {
+      "title": "Using it well",
+      "topics": [
+        {
+          "id": "genai-prompt-engineering",
+          "slug": "prompt-engineering",
+          "title": "Prompt engineering"
+        },
+        {
+          "id": "genai-ai-agents",
+          "slug": "ai-agents",
+          "title": "AI agents and tool use"
+        }
+      ]
+    },
+    {
+      "title": "Building safely",
+      "topics": [
+        {
+          "id": "genai-hallucinations-and-guardrails",
+          "slug": "hallucinations-and-guardrails",
+          "title": "Hallucinations, safety and guardrails"
+        },
+        {
+          "id": "genai-building-genai-apps",
+          "slug": "building-genai-apps",
+          "title": "Building GenAI apps (prompt vs RAG vs fine-tuning)"
+        }
+      ]
+    },
+    {
+      "title": "Revision",
+      "topics": [
+        {
+          "id": "genai-interview-revision",
+          "slug": "interview-revision",
+          "title": "Generative AI interview revision"
+        }
+      ]
+    }
+  ]
+}

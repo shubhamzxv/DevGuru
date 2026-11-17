@@ -1,0 +1,253 @@
+---
+id: llm-interview-revision
+title: LLM interview revision
+summary: "One-page LLM revision for interviews: how a prompt becomes an answer step by step, the key settings, limits, production practices and a complete cheat sheet."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+The **night-before notes** for LLM questions: the path of a prompt through the model, and a one-line answer for every common question.
+
+</Analogy>
+
+## Simple explanation
+
+**From prompt to answer** (the most asked "explain how it works" question):
+
+1. **Tokenize**: the text becomes token ids (subwords, BPE)
+2. **Embed**: each id becomes a vector; position information is added
+3. **Transformer layers**: self-attention mixes information between tokens; feed-forward layers process it. Repeated across many layers
+4. **Output scores**: the last position gives a score (logit) for every token in the vocabulary
+5. **Sample**: temperature / top-p / top-k pick one token
+6. **Append and repeat** until an end token, a stop sequence or max tokens
+7. **Decode**: token ids become text, usually streamed
+
+**One line each**
+
+| Topic | Say this |
+| --- | --- |
+| LLM | predicts the next token; trained on huge text |
+| Token | subword unit; ≈ 4 characters; unit of cost and limits |
+| Transformer | parallel processing + self-attention |
+| Attention | each token weighs every other token |
+| Context window | max tokens per request, input + output |
+| Stateless | the app resends history |
+| Temperature | randomness; 0 for facts and code |
+| top-p / top-k | cut unlikely tokens before sampling |
+| Hallucination | likely but false; fix with grounding and checks |
+| Structured output | JSON by schema + validation + retry |
+| Tool calling | model asks, your code runs, result goes back |
+| RAG | retrieve relevant text and put it in the prompt |
+| Fine-tuning | change behaviour by training; LoRA = cheap adapters |
+| Quantization | fewer bits per weight; smaller, slightly less accurate |
+| Evals | fixed test set; run on every change |
+| Cost | input tokens + output tokens |
+| Latency | TTFT, tokens per second, p95; stream |
+
+## Code example
+
+The whole generation loop in a few lines, with a toy model: tokenize, score, sample, append, stop:
+
+```python
+import math, random
+
+VOCAB = ["<end>", "I", "like", "love", "tea", "coffee", "."]
+
+def toy_logits(tokens):
+    """Scores for the next token, based on the last token only."""
+    table = {
+        "<start>": {"I": 5},
+        "I":       {"like": 3, "love": 2.5},
+        "like":    {"tea": 3, "coffee": 2.6},
+        "love":    {"coffee": 3, "tea": 2},
+        "tea":     {".": 5},
+        "coffee":  {".": 5},
+        ".":       {"<end>": 5},
+    }[tokens[-1]]
+    return [table.get(tok, -5) for tok in VOCAB]
+
+def sample(logits, temperature):
+    if temperature == 0:
+        return VOCAB[logits.index(max(logits))]
+    exps = [math.exp(l / temperature) for l in logits]
+    return random.choices(VOCAB, weights=exps)[0]
+
+def generate(temperature, max_tokens=8):
+    tokens = ["<start>"]
+    for _ in range(max_tokens):
+        nxt = sample(toy_logits(tokens), temperature)
+        if nxt == "<end>":
+            break
+        tokens.append(nxt)
+    return " ".join(tokens[1:])
+
+random.seed(5)
+print("temperature 0  :", generate(0), "|", generate(0))
+print("temperature 1.5:", generate(1.5), "|", generate(1.5), "|", generate(1.5))
+```
+
+```output
+temperature 0  : I like tea . | I like tea .
+temperature 1.5: I love coffee . | I like tea . | I like tea .
+```
+
+Quick sizing questions interviewers like:
+
+```python
+context_window = 200_000
+system_prompt, history, documents, reserved_output = 1_500, 12_000, 60_000, 4_000
+
+used = system_prompt + history + documents + reserved_output
+print("tokens used:", f"{used:,}", "| free:", f"{context_window - used:,}")
+print("approx words that fit in the window:", f"{int(context_window * 0.75):,}")
+
+price_in, price_out = 3.0, 15.0            # example $ per million tokens
+cost = (used - reserved_output) / 1e6 * price_in + reserved_output / 1e6 * price_out
+print(f"cost of this one request: ${cost:.3f}")
+```
+
+```output
+tokens used: 77,500 | free: 122,500
+approx words that fit in the window: 150,000
+cost of this one request: $0.280
+```
+
+<Playground kind="python">
+
+```python
+# Which fix for which symptom?
+fixes = {
+    "Answers are made up": "Ground with RAG or tools; ask for citations",
+    "Output is not valid JSON": "Structured output + validation + retry",
+    "Different answer every run": "Lower temperature",
+    "Bot forgets earlier messages": "Resend history; summarise or retrieve",
+    "Answer stops mid-sentence": "Check stop reason; raise max tokens",
+    "Too slow": "Stream; smaller model; shorter output",
+    "Too expensive": "Smaller model; shorter prompt; caching",
+    "Wrong tone every time": "Better examples; then consider fine-tuning",
+}
+for symptom, fix in fixes.items():
+    print(f"{symptom:<30} -> {fix}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Describing an LLM as a search engine or database">
+
+<Wrong>
+
+```text
+"It stores documents and finds the best matching answer."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"It is a neural network that generates the next token from learned patterns. Retrieval is
+a separate step we add around it."
+```
+
+</Right>
+
+Get this one sentence right and most follow-up answers fall into place.
+
+</Mistake>
+
+<Mistake title="Mixing up context window and training data">
+
+<Wrong>
+
+```text
+"I pasted the document yesterday, so the model has learned it."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"The document was only in yesterday's context. The weights did not change, so today I must
+send it again or retrieve it."
+```
+
+</Right>
+
+Context is short-term working space. Training is the only long-term learning.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Walk through what happens when you send a prompt to an LLM.">
+
+The text is tokenized into ids, converted to embeddings with positional information, and passed through stacked transformer layers where self-attention and feed-forward networks build a contextual representation. The final position is projected to logits over the vocabulary, a decoding strategy picks the next token, it is appended to the input, and the loop repeats until a stop condition. The ids are decoded to text and streamed back.
+
+</QA>
+
+<QA q="What are the main limitations of LLMs?">
+
+Hallucinations, a knowledge cutoff, a finite context window, no memory across requests, non-deterministic output, weak exact arithmetic and counting, sensitivity to prompt wording and injection, latency and per-token cost.
+
+</QA>
+
+<QA q="How would you make an LLM feature production-ready?">
+
+A tested prompt with an eval set; grounding through RAG or tools; structured output with validation; guardrails on input, output and actions; streaming; timeouts, retries and a fallback model; token and cost budgets; caching; logging of prompts, outputs, tokens and latency; and monitoring with human review of samples.
+
+</QA>
+
+<QA q="How do embeddings relate to LLMs?">
+
+Both come from transformer networks. An LLM uses token embeddings internally and generates text. An embedding model outputs one vector for a whole text, so that similar meanings have nearby vectors. Embeddings power semantic search and the retrieval step of RAG, which then feeds an LLM.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which step comes first when a prompt reaches the model?',
+      options: ['Sampling', 'Tokenization', 'Decoding', 'Attention'],
+      answer: 1,
+      why: 'Text must become token ids before anything else.',
+    },
+    {
+      q: 'What turns logits into a chosen token?',
+      options: ['The tokenizer', 'The sampling step (temperature, top-p)', 'The embedding layer', 'The context window'],
+      answer: 1,
+      why: 'Decoding settings decide which token is picked.',
+    },
+    {
+      q: 'The bot forgets what was said 40 messages ago. Most likely cause?',
+      options: ['Temperature too high', 'Old messages were dropped to fit the context', 'Wrong API key', 'Quantization'],
+      answer: 1,
+      why: 'History beyond the budget is trimmed or summarised.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Area | Remember |
+| --- | --- |
+| Pipeline | tokenize → embed → attention layers → logits → sample → repeat → decode |
+| Tokens | ≈ 4 chars; BPE subwords; cost and limits |
+| Architecture | decoder-only transformer, causal mask |
+| Settings | temperature, top-p, top-k, max tokens, stop |
+| Context | input + output; stateless; trim, summarise, retrieve |
+| Output control | JSON Schema, validation, repair loop |
+| Tools | definition → tool call → run → result → answer |
+| Adapt | prompt → RAG → tools → fine-tune (LoRA) |
+| Deploy smaller | quantization, distillation, small models |
+| Measure | evals, TTFT, p95, cost per request |
+| API | roles, stop reason, usage, 429 backoff, streaming |
+
+</CheatSheet>

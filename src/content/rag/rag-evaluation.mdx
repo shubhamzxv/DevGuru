@@ -1,0 +1,268 @@
+---
+id: rag-rag-evaluation
+title: Evaluating RAG
+summary: "RAG is evaluated in two parts: retrieval (did we fetch the right chunks, measured by recall, precision and MRR) and generation (is the answer faithful to the chunks and relevant to the question)."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+If a restaurant dish is bad, there are two suspects: the **shopper** who bought the wrong vegetables, or the **cook** who spoiled good ones. You check them **separately**. In RAG, the shopper is **retrieval** and the cook is **generation**. One overall "is the answer good?" score cannot tell you whom to fix.
+
+</Analogy>
+
+## Simple explanation
+
+**Build a test set first**: 50–200 real questions, each with the **ids of the chunks that contain the answer** and a **reference answer**. Include questions whose answer is **not** in the documents.
+
+**Part 1: retrieval metrics** (no LLM needed, fast and cheap)
+
+| Metric | Question it answers |
+| --- | --- |
+| **Recall@k** | of the relevant chunks, how many appear in the top k? |
+| **Precision@k** | of the top k, how many are relevant? |
+| **Hit rate@k** | did at least one relevant chunk appear in the top k? |
+| **MRR** (mean reciprocal rank) | how high is the **first** relevant chunk? (1 for rank 1, ½ for rank 2, ⅓ for rank 3) |
+| **nDCG** | like MRR but rewards **all** relevant chunks ranked high |
+
+**Recall@k is the most important**: if the right chunk is not retrieved, the answer cannot be right.
+
+**Part 2: generation metrics** (usually scored by an LLM judge or people)
+
+| Metric | Meaning |
+| --- | --- |
+| **Faithfulness** (groundedness) | every claim in the answer is supported by the retrieved chunks |
+| **Answer relevance** | the answer addresses the question |
+| **Context relevance** | the retrieved chunks are about the question |
+| **Correctness** | the answer matches the reference answer |
+| **Refusal accuracy** | says "I don't know" when it should, and only then |
+
+**Diagnosing a bad answer**:
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Right chunk not retrieved | chunking, embedding model, no keyword search | hybrid search, better chunks, query rewriting |
+| Right chunk retrieved but ranked low | no reranker, top-k too small | rerank, raise k |
+| Right chunk in prompt, wrong answer | prompt, too much noise, weak model | grounded prompt, fewer chunks, stronger model |
+| Answer has facts not in chunks | model used its memory | stricter prompt, faithfulness check |
+| Old information | stale index | re-index on change, date filters |
+
+Tools such as **Ragas**, **DeepEval** and **TruLens** implement these metrics, but the ideas above are what interviewers ask.
+
+## Code example
+
+Retrieval metrics computed by hand on a small test set:
+
+```python
+TEST = [   # (question, relevant chunk ids, what the retriever returned in order)
+    ("refund time",        {"c2"},        ["c2", "c7", "c1"]),
+    ("battery warranty",   {"c5"},        ["c4", "c5", "c9"]),
+    ("express delivery",   {"c3", "c8"},  ["c3", "c1", "c8"]),
+    ("cancel an order",    {"c6"},        ["c1", "c2", "c4"]),
+]
+
+def recall_at_k(relevant, retrieved, k):
+    return len(relevant & set(retrieved[:k])) / len(relevant)
+
+def precision_at_k(relevant, retrieved, k):
+    return len(relevant & set(retrieved[:k])) / k
+
+def reciprocal_rank(relevant, retrieved):
+    for rank, chunk in enumerate(retrieved, start=1):
+        if chunk in relevant:
+            return 1 / rank
+    return 0.0
+
+k = 3
+for question, relevant, retrieved in TEST:
+    print(f"{question:<18} recall@{k} {recall_at_k(relevant, retrieved, k):.2f}  "
+          f"precision@{k} {precision_at_k(relevant, retrieved, k):.2f}  RR {reciprocal_rank(relevant, retrieved):.2f}")
+
+n = len(TEST)
+print("\nmean recall@3:", round(sum(recall_at_k(r, got, 3) for _, r, got in TEST) / n, 2))
+print("mean recall@1:", round(sum(recall_at_k(r, got, 1) for _, r, got in TEST) / n, 2))
+print("MRR:", round(sum(reciprocal_rank(r, got) for _, r, got in TEST) / n, 2))
+print("hit rate@3:", sum(1 for _, r, got in TEST if r & set(got[:3])) / n)
+```
+
+```output
+refund time        recall@3 1.00  precision@3 0.33  RR 1.00
+battery warranty   recall@3 1.00  precision@3 0.33  RR 0.50
+express delivery   recall@3 1.00  precision@3 0.67  RR 1.00
+cancel an order    recall@3 0.00  precision@3 0.00  RR 0.00
+
+mean recall@3: 0.75
+mean recall@1: 0.38
+MRR: 0.62
+hit rate@3: 0.75
+```
+
+A simple **faithfulness** check: what share of the answer's sentences is supported by the retrieved text? Real systems use an LLM judge for this; word overlap shows the idea:
+
+```python
+context = "Refunds are processed within 7 working days. Refunds go to the original payment method."
+
+answers = {
+    "faithful": "Refunds are processed within 7 working days. They go to the original payment method.",
+    "hallucinated": "Refunds are processed within 7 working days. You also get a 10 percent bonus coupon.",
+}
+
+def supported(sentence, context):
+    words = {w.strip(".").lower() for w in sentence.split() if len(w) > 3}
+    context_words = {w.strip(".").lower() for w in context.split()}
+    return len(words & context_words) / len(words) >= 0.6
+
+for name, answer in answers.items():
+    sentences = [s.strip() for s in answer.split(".") if s.strip()]
+    ok = [supported(s, context) for s in sentences]
+    print(f"{name:<13} faithfulness {sum(ok) / len(ok):.2f}  per sentence: {ok}")
+```
+
+```output
+faithful      faithfulness 1.00  per sentence: [True, True]
+hallucinated  faithfulness 0.50  per sentence: [True, False]
+```
+
+<Playground kind="python">
+
+```python
+# Compare two retriever settings on the same questions.
+TEST = [({"c2"}, ["c2", "c7", "c1"], ["c2", "c1", "c7"]),
+        ({"c5"}, ["c4", "c9", "c1"], ["c5", "c4", "c9"]),      # hybrid finds the exact term
+        ({"c3"}, ["c3", "c1", "c8"], ["c1", "c3", "c8"]),
+        ({"c6"}, ["c1", "c2", "c4"], ["c6", "c2", "c4"])]
+
+def mrr(index):
+    total = 0
+    for relevant, *runs in TEST:
+        retrieved = runs[index]
+        total += next((1 / r for r, c in enumerate(retrieved, 1) if c in relevant), 0)
+    return total / len(TEST)
+
+def recall3(index):
+    return sum(1 for relevant, *runs in TEST if relevant & set(runs[index][:3])) / len(TEST)
+
+for name, i in (("vector only", 0), ("hybrid + rerank", 1)):
+    print(f"{name:<16} recall@3 {recall3(i):.2f}  MRR {mrr(i):.2f}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Only judging the final answer">
+
+<Wrong>
+
+```text
+"Answer quality is 70%. Let's try another LLM."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Recall@5 is 62%: in 38% of questions the right chunk never arrives. Fix retrieval first,
+then measure faithfulness of the answers."
+```
+
+</Right>
+
+Measure retrieval and generation separately so you know which part to fix.
+
+</Mistake>
+
+<Mistake title="No 'answer not in the documents' test cases">
+
+<Wrong>
+
+```text
+Test set: 100 questions that all have an answer in the knowledge base.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Test set: 85 answerable questions + 15 that are out of scope, where the correct output is
+"I don't know".
+```
+
+</Right>
+
+Real users ask things you have no document for. Check that the bot refuses instead of inventing.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you evaluate a RAG system?">
+
+Separately for the two stages. Retrieval: a labelled set of questions and relevant chunks, scored with recall@k, precision@k, MRR or nDCG. Generation: faithfulness to the retrieved context, answer relevance and correctness against reference answers, scored by an LLM judge calibrated with human review. Add refusal tests, latency and cost, and run the suite on every change.
+
+</QA>
+
+<QA q="What is the difference between recall@k and precision@k?">
+
+Recall@k is the share of all relevant chunks that appear in the top k: it measures what you missed. Precision@k is the share of the top k that are relevant: it measures noise. Raising k usually increases recall and lowers precision.
+
+</QA>
+
+<QA q="What is faithfulness (groundedness)?">
+
+Whether every statement in the answer can be supported by the retrieved context. It detects hallucination in RAG. It is typically measured by splitting the answer into claims and asking a judge model whether each claim is entailed by the context.
+
+</QA>
+
+<QA q="The retrieved chunk is correct but the answer is still wrong. What do you check?">
+
+The prompt (clear grounding rule, question after context), noise from too many or duplicate chunks, the position of the key chunk in a long context, chunk boundaries cutting the needed sentence, the model's capability, temperature, and whether conflicting or outdated chunks were also retrieved.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'The first relevant chunk is at rank 2. Its reciprocal rank is?',
+      options: ['2', '1', '0.5', '0'],
+      answer: 2,
+      why: 'Reciprocal rank = 1 / rank.',
+    },
+    {
+      q: 'Which metric tells you the answer contains only supported claims?',
+      options: ['Recall@k', 'Faithfulness', 'MRR', 'Tokens per second'],
+      answer: 1,
+      why: 'Faithfulness checks the answer against the retrieved context.',
+    },
+    {
+      q: 'Recall@5 is low. Where is the problem?',
+      options: ['Generation', 'Retrieval', 'The UI', 'The API key'],
+      answer: 1,
+      why: 'The right chunks are not being fetched.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Metric | Stage | Meaning |
+| --- | --- | --- |
+| Recall@k | retrieval | relevant chunks found in top k |
+| Precision@k | retrieval | share of top k that is relevant |
+| Hit rate@k | retrieval | at least one relevant in top k |
+| MRR | retrieval | 1 / rank of first relevant |
+| nDCG | retrieval | rank quality over all relevant |
+| Faithfulness | generation | claims supported by context |
+| Answer relevance | generation | answers the question asked |
+| Correctness | generation | matches reference answer |
+| Refusal accuracy | generation | "I don't know" when it should |
+| Tools | | Ragas, DeepEval, TruLens |
+| Rule | | fix retrieval before generation |
+
+</CheatSheet>

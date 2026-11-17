@@ -1,0 +1,213 @@
+---
+id: genai-model-types
+title: Types of generative models
+summary: "The main kinds of generative models are LLMs for text, diffusion models for images and video, embedding models that turn content into vectors, and multimodal models that mix text, images and audio."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+A kitchen has different tools: a **mixer** for chutney, an **oven** for baking, a **weighing scale** that makes nothing but measures everything. GenAI is the same. An **LLM** writes text, a **diffusion model** paints images, and an **embedding model** is the weighing scale: it creates nothing, but it measures **meaning** so you can compare things.
+
+</Analogy>
+
+## Simple explanation
+
+| Model type | Input → output | How it generates | Used for |
+| --- | --- | --- | --- |
+| **LLM** (large language model) | text → text | predicts the **next token**, again and again | chat, code, summaries |
+| **Diffusion model** | text → image / video | starts from **noise** and removes it step by step | image and video generation |
+| **Embedding model** | text / image → **vector** (list of numbers) | one pass, no generation | search, RAG, recommendations |
+| **Multimodal model** | text + image + audio → text (or more) | an LLM that also reads images and audio | reading screenshots, charts, voice |
+| **Speech models** | audio → text (STT), text → audio (TTS) | specialised networks | call transcripts, voice bots |
+
+**Open vs closed models**:
+
+- **Closed (API) models**: you call them over the internet and pay per token. Easy to start, strongest quality, but your data leaves your servers and you depend on the provider.
+- **Open-weight models**: you download the weights and run them yourself. More control and privacy, but you manage GPUs and scaling.
+
+**Model sizes**: providers usually offer a **large** model (smartest, slowest, costliest) and **small** models (fast and cheap). A common design is to send easy requests to a small model and hard ones to a large model. This is called **model routing**.
+
+**Parameters** are the numbers the model learned (its weights). "7B" means 7 billion parameters. More parameters usually means more ability, more memory and more cost.
+
+**Reasoning (thinking) models** spend extra tokens working through a problem before answering. They are better at multi-step problems and slower and costlier per request.
+
+## Code example
+
+How a **diffusion** model works, shown with numbers instead of pixels: start from random noise and move a little toward the target on every step:
+
+```python
+import random
+
+random.seed(3)
+target = [0.9, 0.1, 0.8, 0.2]                 # the "image" the model wants to reach
+image = [random.random() for _ in target]     # start: pure noise
+
+print("step 0:", [round(x, 2) for x in image])
+for step in range(1, 5):
+    # each step removes part of the "noise" (the gap to the target)
+    image = [x + 0.5 * (t - x) for x, t in zip(image, target)]
+    print(f"step {step}:", [round(x, 2) for x in image])
+```
+
+```output
+step 0: [0.24, 0.54, 0.37, 0.6]
+step 1: [0.57, 0.32, 0.58, 0.4]
+step 2: [0.73, 0.21, 0.69, 0.3]
+step 3: [0.82, 0.16, 0.75, 0.25]
+step 4: [0.86, 0.13, 0.77, 0.23]
+```
+
+Choosing a model by the job:
+
+```python
+def pick_model(task):
+    rules = {
+        "write an email": "small LLM (cheap, fast)",
+        "plan a database migration": "large or reasoning LLM",
+        "make a poster": "diffusion model",
+        "find similar documents": "embedding model",
+        "read a chart screenshot": "multimodal LLM",
+        "transcribe a call": "speech-to-text model",
+    }
+    return rules.get(task, "start with a small LLM, upgrade if quality is low")
+
+for task in ["make a poster", "find similar documents", "write an email", "summarise a PDF"]:
+    print(f"{task:<24} -> {pick_model(task)}")
+```
+
+```output
+make a poster            -> diffusion model
+find similar documents   -> embedding model
+write an email           -> small LLM (cheap, fast)
+summarise a PDF          -> start with a small LLM, upgrade if quality is low
+```
+
+<Playground kind="python">
+
+```python
+# Try other step sizes: 0.1 needs many steps, 1.0 jumps there in one step.
+import random
+
+random.seed(3)
+target = [0.9, 0.1, 0.8, 0.2]
+image = [random.random() for _ in target]
+step_size = 0.3
+
+for step in range(8):
+    error = sum(abs(t - x) for x, t in zip(image, target))
+    print(f"step {step}: error {error:.3f}")
+    image = [x + step_size * (t - x) for x, t in zip(image, target)]
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Using an LLM where an embedding model is the right tool">
+
+<Wrong>
+
+```text
+To find similar support tickets, send all 50,000 tickets to an LLM and ask "which are similar?"
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Embed every ticket once with an embedding model, store the vectors, and compare vectors.
+It costs a tiny fraction and answers in milliseconds.
+```
+
+</Right>
+
+Embedding models are built for similarity. LLMs are for reading and writing.
+
+</Mistake>
+
+<Mistake title="Always choosing the biggest model">
+
+<Wrong>
+
+```text
+Use the largest model for every request, including "classify this message as billing or tech".
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Use a small model for simple, high-volume work and keep the large model for hard requests.
+```
+
+</Right>
+
+Small models are often many times cheaper and faster, and good enough for simple tasks.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the difference between an LLM and a diffusion model?">
+
+An LLM generates text one token at a time, each chosen from a probability distribution over the vocabulary (autoregressive). A diffusion model generates an image or video by starting from random noise and removing noise over many steps, guided by the text prompt.
+
+</QA>
+
+<QA q="What is an embedding model and how is it different from an LLM?">
+
+An embedding model maps text (or images) to a fixed-length vector so that similar meanings are close together. It does not generate text. It is used for semantic search, RAG retrieval, clustering and recommendations, and is much cheaper than an LLM.
+
+</QA>
+
+<QA q="Open-weight vs API models: how do you choose?">
+
+API models give the best quality with no infrastructure, at a per-token price, with data leaving your network. Open-weight models give privacy, control, fixed costs at high volume and offline use, but need GPUs and operations work. Choose by data sensitivity, volume, latency needs and team skills.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which model type turns text into a vector for similarity search?',
+      options: ['Diffusion model', 'Embedding model', 'Text-to-speech model', 'Reasoning model'],
+      answer: 1,
+      why: 'Embedding models output vectors; they do not generate content.',
+    },
+    {
+      q: 'How does a diffusion model create an image?',
+      options: ['Predicts the next word', 'Removes noise step by step', 'Copies a training image', 'Sorts pixels'],
+      answer: 1,
+      why: 'It starts from noise and denoises toward an image that matches the prompt.',
+    },
+    {
+      q: 'What does "7B" mean for a model?',
+      options: ['7 billion users', '7 billion parameters', '7 GB of RAM', '7 billion tokens of context'],
+      answer: 1,
+      why: 'B counts the learned weights (parameters).',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Use |
+| --- | --- |
+| Write, summarise, code | **LLM** |
+| Image or video from text | **Diffusion model** |
+| Similar meaning / search / RAG | **Embedding model** |
+| Read images, charts, screenshots | **Multimodal LLM** |
+| Audio → text / text → audio | **STT / TTS** models |
+| Multi-step hard problems | **Reasoning** model |
+| Cheap and fast, simple task | **Small** model |
+| Privacy, offline, full control | **Open-weight** model you host |
+| Mix of easy and hard requests | **Model routing** |
+
+</CheatSheet>

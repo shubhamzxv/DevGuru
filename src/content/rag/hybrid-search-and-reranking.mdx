@@ -1,0 +1,286 @@
+---
+id: rag-hybrid-search-and-reranking
+title: Hybrid search and reranking
+summary: "Hybrid search combines keyword search (BM25) with vector search so both exact terms and meanings are matched; a reranker then re-scores the candidates and puts the best few on top."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Hiring for a job. First a **quick filter** over 500 CVs: one person checks for exact keywords ("Python", "AWS"), another looks for people with **similar experience** even if the words differ. Their two shortlists are **merged**. Then a senior interviewer **reads the top 20 carefully** and picks the best 5. Keyword + meaning = **hybrid search**. The careful final read = **reranking**.
+
+</Analogy>
+
+## Simple explanation
+
+**Vector search** is good at meaning but can miss **exact terms**: an order id `ORD-88213`, an error code `E502`, a product name, a person's name.
+
+**Keyword search (BM25)** is the opposite: great at exact terms, blind to synonyms ("money back" vs "refund").
+
+| | Vector (dense) | Keyword (sparse, BM25) |
+| --- | --- | --- |
+| Matches | meaning, paraphrases | exact words, ids, codes |
+| Misses | rare exact tokens | synonyms |
+| Needs | embedding model | inverted index |
+
+**Hybrid search** runs both and merges the results.
+
+**BM25 in simple words**: a chunk scores higher when it contains the query words **often** (but with diminishing returns), when those words are **rare** in the collection, and when the chunk is **not overly long**.
+
+**Merging with RRF (Reciprocal Rank Fusion)**: scores from the two searches are on different scales, so RRF uses only the **rank**. Each result gets `1 / (k + rank)` from each list (k is usually 60), and the values are added. Items ranked high in **both** lists win.
+
+**Reranking**: the first search is fast but rough. A **reranker** (a **cross-encoder** model) reads the **question and one chunk together** and gives a precise relevance score. It is too slow for millions of chunks, so it is used on the top 20–100 candidates only.
+
+**The two-stage pattern** used by most good RAG systems:
+
+`hybrid search (top 50)  →  rerank  →  best 5 into the prompt`
+
+| Model | Reads | Speed | Use |
+| --- | --- | --- | --- |
+| **Bi-encoder** (embedding model) | question and chunk **separately** | very fast | first-stage retrieval |
+| **Cross-encoder** (reranker) | question and chunk **together** | slow, accurate | second-stage reranking |
+
+## Code example
+
+BM25 written out, showing that it finds the exact code a meaning-based search may miss:
+
+```python
+import math
+from collections import Counter
+
+DOCS = [
+    "Error E502 means the payment gateway timed out",
+    "If a payment fails, retry after two minutes",
+    "Refunds for failed payments are automatic",
+    "Error E404 means the page was not found",
+]
+
+def tokenize(text):
+    return text.lower().replace(",", "").split()
+
+tokenized = [tokenize(d) for d in DOCS]
+avg_len = sum(len(t) for t in tokenized) / len(tokenized)
+doc_freq = Counter(word for t in tokenized for word in set(t))
+N = len(DOCS)
+
+def bm25(query, doc_tokens, k1=1.5, b=0.75):
+    counts = Counter(doc_tokens)
+    score = 0.0
+    for word in tokenize(query):
+        if word not in counts:
+            continue
+        idf = math.log((N - doc_freq[word] + 0.5) / (doc_freq[word] + 0.5) + 1)
+        tf = counts[word]
+        score += idf * tf * (k1 + 1) / (tf + k1 * (1 - b + b * len(doc_tokens) / avg_len))
+    return score
+
+for query in ["E502", "payment error"]:
+    print("query:", query)
+    for score, doc in sorted(((bm25(query, t), d) for t, d in zip(tokenized, DOCS)), reverse=True):
+        if score > 0:
+            print(f"   {score:.2f}  {doc}")
+```
+
+```output
+query: E502
+   1.17  Error E502 means the payment gateway timed out
+query: payment error
+   1.35  Error E502 means the payment gateway timed out
+   0.67  If a payment fails, retry after two minutes
+   0.67  Error E404 means the page was not found
+```
+
+Merging a keyword ranking and a vector ranking with **RRF**:
+
+```python
+keyword_ranking = ["doc_E502", "doc_E404", "doc_retry"]           # BM25 order
+vector_ranking = ["doc_retry", "doc_refund", "doc_E502"]          # embedding order
+
+def rrf(rankings, k=60):
+    scores = {}
+    for ranking in rankings:
+        for rank, doc in enumerate(ranking, start=1):
+            scores[doc] = scores.get(doc, 0) + 1 / (k + rank)
+    return sorted(scores.items(), key=lambda kv: -kv[1])
+
+for doc, score in rrf([keyword_ranking, vector_ranking]):
+    print(f"{score:.4f}  {doc}")
+```
+
+```output
+0.0323  doc_E502
+0.0323  doc_retry
+0.0161  doc_E404
+0.0161  doc_refund
+```
+
+Two-stage retrieval: a cheap first pass, then a careful rerank of the few candidates. The reranker here is a simple scoring function standing in for a cross-encoder model:
+
+```python
+QUESTION = "how do I reset my password"
+CANDIDATES = [                                   # from the first-stage hybrid search
+    "Password rules: at least 8 characters",
+    "To reset your password, open Settings and choose Forgot password",
+    "Reset the router by holding the button for 10 seconds",
+    "Contact support if you cannot log in",
+]
+
+def rerank_score(question, passage):
+    """Stand-in for a cross-encoder: rewards passages that cover the question's key ideas together."""
+    q = set(question.lower().split()) - {"how", "do", "i", "my"}
+    p = set(passage.lower().replace(",", "").split())
+    coverage = len(q & p) / len(q)
+    bonus = 0.3 if "to reset your password" in passage.lower() else 0
+    return round(coverage + bonus, 2)
+
+reranked = sorted(CANDIDATES, key=lambda p: -rerank_score(QUESTION, p))
+for p in reranked:
+    print(rerank_score(QUESTION, p), p)
+print("\nsend to the LLM:", reranked[:2])
+```
+
+```output
+1.3 To reset your password, open Settings and choose Forgot password
+0.5 Password rules: at least 8 characters
+0.5 Reset the router by holding the button for 10 seconds
+0.0 Contact support if you cannot log in
+
+send to the LLM: ['To reset your password, open Settings and choose Forgot password', 'Password rules: at least 8 characters']
+```
+
+<Playground kind="python">
+
+```python
+# Change the two rankings and see which document RRF puts first.
+def rrf(rankings, k=60):
+    scores = {}
+    for ranking in rankings:
+        for rank, doc in enumerate(ranking, start=1):
+            scores[doc] = scores.get(doc, 0) + 1 / (k + rank)
+    return sorted(scores, key=lambda d: -scores[d])
+
+keyword = ["A", "B", "C", "D"]
+vector = ["C", "A", "E", "B"]
+print("fused order:", rrf([keyword, vector]))
+
+# A document that is 1st in one list but missing from the other:
+print("fused order:", rrf([["X", "A", "B"], ["A", "B", "C"]]))
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Vector search only, for data full of ids and codes">
+
+<Wrong>
+
+```python
+hits = vector_store.search(embed("status of ticket TCK-20931"), k=5)     # similar tickets, wrong id
+```
+
+</Wrong>
+
+<Right>
+
+```python
+hits = hybrid_search("status of ticket TCK-20931", k=5)                   # BM25 finds the exact id
+```
+
+</Right>
+
+Embeddings blur rare tokens such as ids. Keyword search matches them exactly.
+
+</Mistake>
+
+<Mistake title="Adding raw scores from two different searches">
+
+<Wrong>
+
+```python
+final = bm25_score + cosine_score        # 14.2 + 0.83: BM25 dominates
+```
+
+</Wrong>
+
+<Right>
+
+```python
+final = rrf([bm25_ranking, vector_ranking])     # or normalise both scores before weighting
+```
+
+</Right>
+
+BM25 scores and cosine scores are on different scales. Combine ranks, or normalise first.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is hybrid search and why use it?">
+
+Running a sparse keyword search (BM25) and a dense vector search together and fusing the results. Dense search captures meaning and paraphrases; sparse search captures exact terms such as ids, codes and names. The combination gives higher recall than either alone.
+
+</QA>
+
+<QA q="What is Reciprocal Rank Fusion?">
+
+A way to merge ranked lists using only positions. Each document's score is the sum over lists of 1 / (k + rank), with k typically 60. It needs no score normalisation and favours documents that rank well in several lists.
+
+</QA>
+
+<QA q="What is a reranker and how does it differ from an embedding model?">
+
+A reranker is usually a cross-encoder: it takes the query and a passage together as one input and outputs a relevance score, so it sees their interaction and is more accurate. An embedding model (bi-encoder) encodes them separately, which allows pre-computed vectors and fast search but is less precise. Rerankers are applied only to the top candidates because they are slow.
+
+</QA>
+
+<QA q="How does BM25 score a document?">
+
+It sums, for each query term, an inverse-document-frequency weight multiplied by a saturating term-frequency factor that is normalised by document length. Parameters k1 controls how quickly term frequency saturates and b controls the strength of length normalisation.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which search finds the exact code "E502" most reliably?',
+      options: ['Vector search', 'Keyword search (BM25)', 'Random sampling', 'Reranking alone'],
+      answer: 1,
+      why: 'Keyword search matches the exact token.',
+    },
+    {
+      q: 'RRF combines results using?',
+      options: ['Raw scores', 'Ranks in each list', 'Chunk length', 'Embedding dimensions'],
+      answer: 1,
+      why: 'Each list contributes 1 / (k + rank).',
+    },
+    {
+      q: 'Where does a reranker run?',
+      options: ['Over every chunk in the database', 'Over the top candidates from the first search', 'Before chunking', 'Inside the tokenizer'],
+      answer: 1,
+      why: 'It is accurate but slow, so it re-scores only a short list.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Dense search | embeddings; meaning |
+| Sparse search | BM25; exact words, ids, codes |
+| Hybrid | run both, fuse |
+| RRF | score = Σ 1 / (60 + rank) |
+| BM25 | term frequency × rarity, length-normalised |
+| Bi-encoder | query and chunk encoded separately; fast |
+| Cross-encoder | query + chunk together; accurate, slow |
+| Two-stage | retrieve 20–100 → rerank → keep 3–8 |
+| Never | add raw BM25 and cosine scores |
+| Tune | weights and k on a retrieval eval set |
+
+</CheatSheet>

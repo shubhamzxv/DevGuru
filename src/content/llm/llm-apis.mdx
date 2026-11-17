@@ -1,0 +1,304 @@
+---
+id: llm-llm-apis
+title: Calling LLM APIs
+summary: "An LLM API call is an HTTP POST with a model name, a list of messages and settings; the reply contains the text, a stop reason and token usage, and can be streamed token by token."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Calling an LLM API is like sending a **letter with the full file attached** every time. The clerk at the other end has **no memory** of your earlier letters. So each letter must carry the rules, the earlier conversation and the new question. The reply comes back with a **bill** for the pages read and written.
+
+</Analogy>
+
+## Simple explanation
+
+Every provider's API has the same core parts:
+
+| Part of the request | Meaning |
+| --- | --- |
+| **model** | which model to use |
+| **system prompt** | standing rules and role |
+| **messages** | the conversation: a list of `role` + `content` (`user`, `assistant`) |
+| **max tokens** | cap on the answer length |
+| **temperature** etc. | sampling settings |
+| **tools** | optional tool definitions |
+| **stream** | send the answer piece by piece |
+
+| Part of the response | Meaning |
+| --- | --- |
+| **content** | the generated text (or tool calls) |
+| **stop reason** | why it stopped: finished, hit max tokens, wants a tool |
+| **usage** | input and output token counts (your bill) |
+
+**Things every backend engineer must handle**:
+
+- **Stateless**: resend the history on each call
+- **API key**: keep it in an environment variable on the **server**. Never in frontend code or Git
+- **Errors**: `401` bad key, `429` rate limit, `5xx` or overloaded → retry with **exponential backoff**; `400` → fix the request, do not retry
+- **Timeouts**: answers can take many seconds; set a timeout and stream
+- **Streaming**: the API sends **server-sent events (SSE)**; you forward chunks to the user as they arrive
+- **Stop reason = max tokens** means the answer was **cut off**
+- **Prompt caching**: a long, repeated start of the prompt (system prompt, documents) can be cached by the provider for lower cost and latency
+- **Batch APIs**: cheaper processing for jobs that do not need an instant answer
+
+Request and response field names differ a little between providers, so read the documentation of the one you use.
+
+## Code example
+
+What a request body and a response look like. This is the general shape; exact field names vary by provider:
+
+```python
+import json
+
+request = {
+    "model": "MODEL_NAME",
+    "max_tokens": 200,
+    "temperature": 0.2,
+    "system": "You are a support agent. Answer in one sentence.",
+    "messages": [
+        {"role": "user", "content": "Do you deliver to Leh?"},
+        {"role": "assistant", "content": "Yes, in 6 to 8 days."},
+        {"role": "user", "content": "And is cash on delivery available there?"},
+    ],
+}
+response = {
+    "content": [{"type": "text", "text": "Yes, cash on delivery is available in Leh."}],
+    "stop_reason": "end_turn",
+    "usage": {"input_tokens": 58, "output_tokens": 11},
+}
+
+print(json.dumps(request, indent=2)[:330] + " ...")
+print()
+print("answer:", response["content"][0]["text"])
+print("stopped because:", response["stop_reason"])
+usage = response["usage"]
+cost = usage["input_tokens"] / 1e6 * 3.00 + usage["output_tokens"] / 1e6 * 15.00     # example prices
+print(f"tokens in/out: {usage['input_tokens']}/{usage['output_tokens']} -> ${cost:.6f}")
+```
+
+```output
+{
+  "model": "MODEL_NAME",
+  "max_tokens": 200,
+  "temperature": 0.2,
+  "system": "You are a support agent. Answer in one sentence.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Do you deliver to Leh?"
+    },
+    {
+      "role": "assistant",
+      "content": "Yes, in 6 to 8 days."
+    },
+    {
+      "role": "us ...
+
+answer: Yes, cash on delivery is available in Leh.
+stopped because: end_turn
+tokens in/out: 58/11 -> $0.000339
+```
+
+A chat loop over a **stateless** API. The stand-in model only knows what is in `messages`:
+
+```python
+def fake_api(messages):
+    """Answers from the messages it receives, like a real stateless API."""
+    text = " ".join(m["content"] for m in messages)
+    if "my name is" in text.lower():
+        name = text.lower().split("my name is")[1].split()[0].strip(".").title()
+        return f"Your name is {name}."
+    return "I don't know your name."
+
+history = [{"role": "user", "content": "Hi, my name is Asha."}]
+history.append({"role": "assistant", "content": "Hello Asha!"})
+
+question = {"role": "user", "content": "What is my name?"}
+print("only the new message ->", fake_api([question]))
+print("history + new message ->", fake_api(history + [question]))
+```
+
+```output
+only the new message -> I don't know your name.
+history + new message -> Your name is Asha.
+```
+
+Handling a streamed reply: chunks arrive one by one and you join them:
+
+```python
+def fake_stream():
+    for chunk in ["Cash ", "on ", "delivery ", "is ", "available."]:
+        yield {"type": "text_delta", "text": chunk}
+    yield {"type": "message_stop", "stop_reason": "end_turn", "output_tokens": 6}
+
+parts = []
+for event in fake_stream():
+    if event["type"] == "text_delta":
+        parts.append(event["text"])
+        print(f"chunk {len(parts)}: {event['text']!r}")        # send to the browser right away
+    else:
+        print("done:", event["stop_reason"], "| tokens:", event["output_tokens"])
+print("full text:", "".join(parts))
+```
+
+```output
+chunk 1: 'Cash '
+chunk 2: 'on '
+chunk 3: 'delivery '
+chunk 4: 'is '
+chunk 5: 'available.'
+done: end_turn | tokens: 6
+full text: Cash on delivery is available.
+```
+
+<Playground kind="none">
+
+```python
+# A real call with one provider's Python SDK (Anthropic shown; others are similar).
+# pip install anthropic      and set the environment variable ANTHROPIC_API_KEY
+# Pick a current model name from the provider's models page.
+import anthropic
+
+client = anthropic.Anthropic()            # reads the API key from the environment
+
+response = client.messages.create(
+    model="MODEL_NAME",
+    max_tokens=200,
+    system="You are a support agent. Answer in one sentence.",
+    messages=[{"role": "user", "content": "Do you deliver to Leh?"}],
+)
+print(response.content[0].text)
+print(response.stop_reason, response.usage.input_tokens, response.usage.output_tokens)
+
+# Streaming
+with client.messages.stream(
+    model="MODEL_NAME",
+    max_tokens=200,
+    messages=[{"role": "user", "content": "Explain COD in one line."}],
+) as stream:
+    for text in stream.text_stream:
+        print(text, end="", flush=True)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Hard-coding the API key">
+
+<Wrong>
+
+```python
+client = Client(api_key="sk-live-abc123...")      # committed to Git
+```
+
+</Wrong>
+
+<Right>
+
+```python
+import os
+client = Client(api_key=os.environ["LLM_API_KEY"])    # from env / secrets manager
+```
+
+</Right>
+
+Leaked keys are found by bots within minutes. Rotate any key that was ever committed.
+
+</Mistake>
+
+<Mistake title="Not checking the stop reason">
+
+<Wrong>
+
+```python
+data = json.loads(response.text)      # crashes: the JSON was cut off at max_tokens
+```
+
+</Wrong>
+
+<Right>
+
+```python
+if response.stop_reason == "max_tokens":
+    raise ValueError("answer truncated: raise max_tokens or shorten the task")
+data = json.loads(response.text)
+```
+
+</Right>
+
+A truncated answer looks like a normal reply unless you check why generation stopped.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the roles in a chat API and what is each for?">
+
+`system` holds standing instructions and the persona. `user` holds the person's messages. `assistant` holds the model's earlier replies (and tool calls). Tool results are sent back in a tool or user-side result message, depending on the provider.
+
+</QA>
+
+<QA q="How do you handle rate limits and failures from an LLM provider?">
+
+Retry `429` and transient `5xx` errors with exponential backoff and jitter, respect `Retry-After`, cap retries, set timeouts, use a queue for bursts, keep a fallback model or provider, and track tokens per minute so you stay inside limits. Do not retry `400` or `401` errors.
+
+</QA>
+
+<QA q="How does streaming work and why use it?">
+
+With `stream` enabled the server keeps the HTTP response open and sends server-sent events containing small text deltas, then a final event with the stop reason and usage. The backend forwards these to the client. It cuts time to first token from seconds to a fraction of a second, which makes the app feel fast.
+
+</QA>
+
+<QA q="What is prompt caching?">
+
+A provider feature that stores the processed form of a long, unchanged prefix of the prompt (system prompt, tool definitions, documents). Later requests that begin with the same prefix are billed at a lower rate and start faster. Put stable content first and changing content last to benefit.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'The response says stop reason "max_tokens". What happened?',
+      options: ['The answer is complete', 'The answer was cut off', 'The key is invalid', 'The model wants a tool'],
+      answer: 1,
+      why: 'Generation hit the output cap before finishing.',
+    },
+    {
+      q: 'Which status code means "slow down, rate limited"?',
+      options: ['200', '401', '429', '404'],
+      answer: 2,
+      why: '429 Too Many Requests: back off and retry.',
+    },
+    {
+      q: 'Where should the API key live?',
+      options: ['In the React app', 'In Git', 'In a server-side environment variable', 'In the prompt'],
+      answer: 2,
+      why: 'Keys must stay on the server and out of source control.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Request | model, system, messages, max tokens, temperature, tools, stream |
+| Response | content, stop reason, usage |
+| Roles | system, user, assistant (+ tool results) |
+| Stateless | resend history |
+| Key | env variable, server only |
+| 429 / 5xx | retry with backoff + jitter |
+| 400 / 401 | fix request or key; no retry |
+| Streaming | SSE text deltas; fast first token |
+| Truncation | stop reason = max tokens |
+| Cost | usage.input + usage.output tokens |
+| Cheaper | prompt caching, batch API, small models |
+
+</CheatSheet>

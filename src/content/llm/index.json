@@ -1,0 +1,84 @@
+{
+  "name": "LLMs",
+  "icon": "🧠",
+  "tagline": "Tokens, transformers, prompts and APIs",
+  "order": 14,
+  "playground": "python",
+  "modules": [
+    {
+      "title": "How LLMs work",
+      "topics": [
+        {
+          "id": "llm-what-is-an-llm",
+          "slug": "what-is-an-llm",
+          "title": "What is an LLM?"
+        },
+        {
+          "id": "llm-tokens",
+          "slug": "tokens",
+          "title": "Tokens and tokenization"
+        },
+        {
+          "id": "llm-transformers-and-attention",
+          "slug": "transformers-and-attention",
+          "title": "Transformers and attention"
+        },
+        {
+          "id": "llm-context-window",
+          "slug": "context-window",
+          "title": "Context window"
+        }
+      ]
+    },
+    {
+      "title": "Controlling output",
+      "topics": [
+        {
+          "id": "llm-sampling",
+          "slug": "sampling",
+          "title": "Temperature, top-p and top-k"
+        },
+        {
+          "id": "llm-structured-output",
+          "slug": "structured-output",
+          "title": "Structured output (JSON)"
+        },
+        {
+          "id": "llm-tool-calling",
+          "slug": "tool-calling",
+          "title": "Tool calling (function calling)"
+        }
+      ]
+    },
+    {
+      "title": "In production",
+      "topics": [
+        {
+          "id": "llm-llm-apis",
+          "slug": "llm-apis",
+          "title": "Calling LLM APIs"
+        },
+        {
+          "id": "llm-fine-tuning",
+          "slug": "fine-tuning",
+          "title": "Fine-tuning, LoRA and quantization"
+        },
+        {
+          "id": "llm-evaluation",
+          "slug": "evaluation",
+          "title": "Evaluation, cost and latency"
+        }
+      ]
+    },
+    {
+      "title": "Revision",
+      "topics": [
+        {
+          "id": "llm-interview-revision",
+          "slug": "interview-revision",
+          "title": "LLM interview revision"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,272 @@
+---
+id: genai-building-genai-apps
+title: Building GenAI apps (prompt vs RAG vs fine-tuning)
+summary: "To make a model work for your product, start with a good prompt, add RAG when it needs your data, add tools when it must act, and fine-tune only when you need a fixed style or behaviour that prompts cannot give."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+You hire a smart graduate. First you **explain the job clearly** (prompt). If they need company facts, you hand them the **policy binder to look things up** (RAG). If they must do things, you give them **access to the systems** (tools). Only if they still do not write in the company style after all that do you send them for **months of training** (fine-tuning).
+
+</Analogy>
+
+## Simple explanation
+
+**Four ways to adapt a model**, from cheapest to costliest:
+
+| Approach | What it changes | Use when | Cost / effort |
+| --- | --- | --- | --- |
+| **Prompt engineering** | the instructions | always first | lowest |
+| **RAG** | adds your documents to the prompt at question time | answers need **your data** or **fresh** data | medium |
+| **Tools / agents** | lets the model call your APIs | it must **look up live data** or **take actions** | medium |
+| **Fine-tuning** | the model's weights | you need a fixed **style, format or skill**, or a smaller cheaper model for one task | highest |
+
+A key interview line: **RAG gives the model knowledge. Fine-tuning changes its behaviour.** They can be combined.
+
+**A typical GenAI backend**:
+
+```text
+User → your API → (guardrails) → build prompt (+ retrieved context) → LLM API
+                                                  ↑                      ↓
+                                        vector DB / tools        validate output → User
+```
+
+**Production concerns**:
+
+| Concern | What to do |
+| --- | --- |
+| **Cost** | priced per **token** (input and output); use small models, shorter prompts, caching |
+| **Latency** | **stream** the answer; smaller models; fewer LLM calls; cap output length |
+| **Reliability** | timeouts, retries with backoff, fallback model, handle rate limits (429) |
+| **Quality** | an **eval set** you run on every change |
+| **Caching** | **prompt caching** for long repeated prefixes; response cache for identical questions |
+| **Observability** | log prompt, output, tokens, latency, cost per request |
+| **Security** | keep API keys on the server, never in the browser; guardrails |
+
+**Streaming** sends tokens to the user as they are generated, so the first words appear in under a second even if the full answer takes ten.
+
+## Code example
+
+Estimating the monthly bill. Prices here are example numbers; check your provider's price page:
+
+```python
+def monthly_cost(requests_per_day, input_tokens, output_tokens, price_in, price_out):
+    """Prices are per 1 million tokens."""
+    per_request = input_tokens / 1e6 * price_in + output_tokens / 1e6 * price_out
+    return per_request, per_request * requests_per_day * 30
+
+plans = {
+    "large model": (3.00, 15.00),
+    "small model": (0.25, 1.25),
+}
+for name, (price_in, price_out) in plans.items():
+    per_request, month = monthly_cost(10_000, input_tokens=2_000, output_tokens=300,
+                                      price_in=price_in, price_out=price_out)
+    print(f"{name}: ${per_request:.5f} per request, ${month:,.0f} per month")
+```
+
+```output
+large model: $0.01050 per request, $3,150 per month
+small model: $0.00087 per request, $262 per month
+```
+
+Retry with **exponential backoff** for rate limits and brief failures:
+
+```python
+import random
+
+random.seed(4)
+attempts_log = []
+
+def flaky_llm_call():
+    attempts_log.append(1)
+    if len(attempts_log) < 3:
+        raise TimeoutError("rate limited")
+    return "answer"
+
+def call_with_retry(fn, max_attempts=5, base_delay=1.0):
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return fn()
+        except TimeoutError as e:
+            delay = base_delay * 2 ** (attempt - 1) + random.uniform(0, 0.5)   # backoff + jitter
+            print(f"attempt {attempt} failed ({e}); wait {delay:.1f}s")      # real code: time.sleep(delay)
+    raise RuntimeError("gave up: use the fallback model")
+
+print(call_with_retry(flaky_llm_call))
+```
+
+```output
+attempt 1 failed (rate limited); wait 1.1s
+attempt 2 failed (rate limited); wait 2.1s
+answer
+```
+
+A response cache: the same question is answered once:
+
+```python
+import hashlib
+
+cache = {}
+calls = {"llm": 0}
+
+def expensive_llm(prompt):
+    calls["llm"] += 1
+    return f"answer to: {prompt}"
+
+def cached_llm(prompt):
+    key = hashlib.sha256(prompt.strip().lower().encode()).hexdigest()
+    if key not in cache:
+        cache[key] = expensive_llm(prompt)
+    return cache[key]
+
+for q in ["What is your refund policy?", "what is your refund policy?  ", "Do you ship to Pune?"]:
+    cached_llm(q)
+print("questions: 3 | LLM calls:", calls["llm"])
+```
+
+```output
+questions: 3 | LLM calls: 2
+```
+
+<Playground kind="python">
+
+```python
+# Decide the approach for a feature. Edit the answers and re-run.
+def choose(needs_private_data, needs_live_actions, needs_fixed_style, prompt_alone_works):
+    plan = ["clear prompt + examples"]
+    if prompt_alone_works:
+        return plan
+    if needs_private_data:
+        plan.append("RAG over your documents")
+    if needs_live_actions:
+        plan.append("tools (APIs the model can call)")
+    if needs_fixed_style:
+        plan.append("fine-tune (after collecting good examples)")
+    return plan
+
+print("HR policy bot:   ", choose(True, False, False, False))
+print("Order assistant: ", choose(True, True, False, False))
+print("Brand-voice ads: ", choose(False, False, True, False))
+print("Email rewriter:  ", choose(False, False, False, True))
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Fine-tuning to add company knowledge">
+
+<Wrong>
+
+```text
+"Our docs change weekly, so let's fine-tune the model on them every week."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Put the docs in a vector database and use RAG. Updating a document is just re-indexing it,
+and answers can cite the source."
+```
+
+</Right>
+
+Fine-tuning is slow to update and does not reliably store facts. RAG is the tool for knowledge.
+
+</Mistake>
+
+<Mistake title="Calling the LLM API from the browser">
+
+<Wrong>
+
+```javascript
+fetch("https://api.llm-provider.com/v1/chat", { headers: { Authorization: "Bearer sk-live-..." } })
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Browser → your backend (auth, rate limit, guardrails) → LLM API with the key from an env variable
+```
+
+</Right>
+
+Anything in frontend code is public. A leaked key means someone else spends your money.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="RAG vs fine-tuning: when do you use which?">
+
+RAG when the model needs private, large or frequently changing knowledge and answers should cite sources; it changes the prompt, not the model. Fine-tuning when you need consistent style, format or task behaviour, or want a small model to match a large one on a narrow task. Start with prompting, add RAG for knowledge, fine-tune last; they can be combined.
+
+</QA>
+
+<QA q="How do you reduce the cost of an LLM feature?">
+
+Use the smallest model that passes your evals, shorten prompts and retrieved context, cap output tokens, cache (prompt caching and response caching), batch non-urgent work, route easy requests to cheaper models, and monitor cost per request.
+
+</QA>
+
+<QA q="How do you reduce latency?">
+
+Stream tokens to the user, use faster or smaller models, reduce output length, cut the number of sequential LLM calls (run independent calls in parallel), cache, and keep prompts short. Time to first token matters most for chat.
+
+</QA>
+
+<QA q="How do you make LLM calls reliable in production?">
+
+Timeouts, retries with exponential backoff and jitter, handling 429 rate limits, a fallback model or provider, idempotent requests, output validation with a repair retry, circuit breakers, and queues for background work.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Your bot must answer from policy PDFs that change monthly. Best approach?',
+      options: ['Fine-tuning', 'RAG', 'Higher temperature', 'A bigger context only'],
+      answer: 1,
+      why: 'RAG adds current documents at question time and is easy to update.',
+    },
+    {
+      q: 'What are LLM APIs usually priced by?',
+      options: ['Requests', 'Tokens in and out', 'Minutes', 'Users'],
+      answer: 1,
+      why: 'You pay per input and output token; output usually costs more.',
+    },
+    {
+      q: 'Why stream responses?',
+      options: ['Lower cost', 'The user sees the first words quickly', 'Better accuracy', 'It avoids rate limits'],
+      answer: 1,
+      why: 'Streaming improves perceived speed; total time and cost stay about the same.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Do |
+| --- | --- |
+| Better answers, same model | improve the prompt, add examples |
+| Your / fresh knowledge | **RAG** |
+| Live data or actions | **tools / agents** |
+| Fixed style or narrow skill | **fine-tune** |
+| Lower cost | small model, short prompts, caching, max tokens |
+| Lower latency | streaming, parallel calls, small model |
+| Reliability | timeout, retry + backoff, fallback |
+| Quality control | eval set on every change |
+| Security | key on server, guardrails, validate output |
+| Visibility | log tokens, cost, latency per request |
+
+</CheatSheet>

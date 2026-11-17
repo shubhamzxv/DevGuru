@@ -1,0 +1,255 @@
+---
+id: llm-sampling
+title: Temperature, top-p and top-k
+summary: "Sampling settings control how the next token is picked: temperature sets how random the choice is, top-k keeps only the k most likely tokens, and top-p keeps the smallest set of tokens whose probabilities add up to p."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Ordering at your regular restaurant. **Temperature 0**: you always order your favourite dish. **Medium temperature**: usually the favourite, sometimes the second or third choice. **High temperature**: you might point at anything on the menu. **Top-k / top-p** are like saying "choose, but only from the **chef's top few** dishes".
+
+</Analogy>
+
+## Simple explanation
+
+At each step the model gives a score (**logit**) to every token. **Softmax** turns scores into probabilities. Sampling settings change how one token is chosen from them.
+
+| Setting | What it does | Low value | High value |
+| --- | --- | --- | --- |
+| **temperature** | divides the scores before softmax | sharp: almost always the top token | flat: more surprising tokens |
+| **top-k** | keep only the **k** most likely tokens | very focused | more variety |
+| **top-p** (nucleus) | keep the smallest set whose probabilities sum to **p** | very focused | more variety |
+| **max tokens** | hard cap on output length | short answers | long answers |
+| **stop sequences** | text that ends the output when generated | | |
+
+**How to choose**:
+
+| Task | Typical setting |
+| --- | --- |
+| Extraction, classification, code, SQL, JSON | **temperature 0 – 0.2** |
+| General chat and explanations | around **0.7** |
+| Brainstorming, stories, marketing lines | **0.9 – 1.0+** |
+
+**Good to know**:
+
+- **Temperature 0** means "pick the most likely token" (greedy). Answers become mostly repeatable, but providers do **not** guarantee identical output every time
+- Change **temperature or top-p**, usually not both
+- Low temperature does **not** make facts correct. It only makes the model's most likely answer come out every time, right or wrong
+- Some providers fix or ignore these settings on reasoning models, so check the documentation of the model you use
+
+## Code example
+
+The same model scores under different temperatures. Watch the probabilities sharpen or flatten:
+
+```python
+import math
+
+logits = {"Delhi": 4.0, "Mumbai": 2.5, "Paris": 1.0, "banana": -1.0}   # prompt: "The capital of India is"
+
+def softmax_with_temperature(logits, temperature):
+    scaled = {tok: score / temperature for tok, score in logits.items()}
+    biggest = max(scaled.values())
+    exps = {tok: math.exp(s - biggest) for tok, s in scaled.items()}
+    total = sum(exps.values())
+    return {tok: e / total for tok, e in exps.items()}
+
+for t in (0.2, 1.0, 2.0):
+    probs = softmax_with_temperature(logits, t)
+    print(f"temperature {t}: " + "  ".join(f"{tok} {p:.2f}" for tok, p in probs.items()))
+```
+
+```output
+temperature 0.2: Delhi 1.00  Mumbai 0.00  Paris 0.00  banana 0.00
+temperature 1.0: Delhi 0.78  Mumbai 0.17  Paris 0.04  banana 0.01
+temperature 2.0: Delhi 0.56  Mumbai 0.27  Paris 0.13  banana 0.05
+```
+
+Top-k and top-p remove unlikely tokens, then the rest are re-scaled to sum to 1:
+
+```python
+probs = {"Delhi": 0.55, "Mumbai": 0.25, "Kolkata": 0.10, "Paris": 0.06, "banana": 0.04}
+
+def top_k(probs, k):
+    kept = dict(sorted(probs.items(), key=lambda kv: -kv[1])[:k])
+    total = sum(kept.values())
+    return {tok: round(p / total, 2) for tok, p in kept.items()}
+
+def top_p(probs, p):
+    kept, running = {}, 0.0
+    for tok, prob in sorted(probs.items(), key=lambda kv: -kv[1]):
+        kept[tok] = prob
+        running += prob
+        if running >= p:
+            break
+    total = sum(kept.values())
+    return {tok: round(pr / total, 2) for tok, pr in kept.items()}
+
+print("top-k 2  :", top_k(probs, 2))
+print("top-p 0.9:", top_p(probs, 0.9))
+print("top-p 0.5:", top_p(probs, 0.5))
+```
+
+```output
+top-k 2  : {'Delhi': 0.69, 'Mumbai': 0.31}
+top-p 0.9: {'Delhi': 0.61, 'Mumbai': 0.28, 'Kolkata': 0.11}
+top-p 0.5: {'Delhi': 1.0}
+```
+
+Sampling 1,000 times at two temperatures shows the effect on real choices:
+
+```python
+import math, random
+from collections import Counter
+
+logits = {"Delhi": 4.0, "Mumbai": 2.5, "Paris": 1.0, "banana": -1.0}
+
+def sample(temperature, n=1000):
+    exps = {t: math.exp(s / temperature) for t, s in logits.items()}
+    total = sum(exps.values())
+    tokens, weights = list(exps), [e / total for e in exps.values()]
+    return Counter(random.choices(tokens, weights=weights, k=n))
+
+random.seed(42)
+for t in (0.3, 1.5):
+    print(f"temperature {t}:", dict(sample(t).most_common()))
+```
+
+```output
+temperature 0.3: {'Delhi': 988, 'Mumbai': 12}
+temperature 1.5: {'Delhi': 651, 'Mumbai': 252, 'Paris': 76, 'banana': 21}
+```
+
+<Playground kind="python">
+
+```python
+# Try your own temperature values.
+import math
+
+logits = {"sunny": 3.0, "cloudy": 2.0, "rainy": 1.5, "purple": -2.0}
+temperature = 0.5            # change me: 0.1, 1, 3
+
+exps = {t: math.exp(s / temperature) for t, s in logits.items()}
+total = sum(exps.values())
+for tok, e in exps.items():
+    p = e / total
+    print(f"{tok:<7} {p:.3f} {'#' * round(p * 40)}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="High temperature for structured or factual tasks">
+
+<Wrong>
+
+```python
+llm(prompt="Extract the invoice total as JSON", temperature=1.2)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+llm(prompt="Extract the invoice total as JSON", temperature=0)
+```
+
+</Right>
+
+For extraction, code and JSON you want the most likely output every time, not creativity.
+
+</Mistake>
+
+<Mistake title="Believing temperature 0 guarantees correct or identical answers">
+
+<Wrong>
+
+```text
+"With temperature 0 the answer is always the same and always true."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Temperature 0 makes output mostly repeatable. It can still be wrong, and tiny differences
+can still happen. For tests, compare meaning or use a fixed eval set, not exact strings."
+```
+
+</Right>
+
+Determinism is about repeatability, not truth.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What does temperature do?">
+
+It scales the logits before softmax. A temperature below 1 sharpens the distribution so high-probability tokens dominate; above 1 flattens it so unlikely tokens are chosen more often. At 0 decoding is greedy: the most likely token is always chosen.
+
+</QA>
+
+<QA q="What is the difference between top-k and top-p sampling?">
+
+Top-k keeps a fixed number of the most likely tokens. Top-p (nucleus sampling) keeps the smallest set of tokens whose cumulative probability reaches p, so the number of candidates adapts: few when the model is confident, more when it is unsure. Both then renormalise and sample.
+
+</QA>
+
+<QA q="Which settings would you use for a JSON extraction API and for a slogan generator?">
+
+Extraction: temperature near 0, a strict schema or structured output, a suitable max tokens. Slogans: temperature around 0.9 to 1.0 or a high top-p, and ask for several candidates.
+
+</QA>
+
+<QA q="Does a low temperature reduce hallucinations?">
+
+It reduces random variation but not systematic errors. If the model's most likely answer is wrong, a low temperature returns that wrong answer every time. Grounding with retrieved context or tools is what reduces hallucinations.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Temperature 0 means?',
+      options: ['Random output', 'Always pick the most likely token', 'No output', 'Maximum creativity'],
+      answer: 1,
+      why: 'It is greedy decoding.',
+    },
+    {
+      q: 'top-p = 0.9 keeps?',
+      options: ['The 9 best tokens', 'The smallest set of tokens adding up to 90% probability', '90% of the vocabulary', 'Tokens above 0.9 each'],
+      answer: 1,
+      why: 'That set is called the nucleus.',
+    },
+    {
+      q: 'Best temperature for generating SQL?',
+      options: ['0 to 0.2', '0.8', '1.2', '2.0'],
+      answer: 0,
+      why: 'Code needs the most likely, repeatable output.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Setting | Effect | Typical use |
+| --- | --- | --- |
+| `temperature=0` | greedy, repeatable | extraction, code, JSON |
+| `temperature≈0.7` | balanced | chat |
+| `temperature≥1` | creative, riskier | brainstorming |
+| `top_k=k` | only the k best tokens | cut the long tail |
+| `top_p=p` | tokens covering probability p | adaptive cut |
+| `max_tokens` | cap output length | cost and latency control |
+| `stop` | end at a given text | stop after one item |
+| Softmax | scores → probabilities | |
+| Rule | tune temperature **or** top-p | |
+
+</CheatSheet>

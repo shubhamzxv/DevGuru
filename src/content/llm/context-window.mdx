@@ -1,0 +1,246 @@
+---
+id: llm-context-window
+title: Context window
+summary: "The context window is the maximum number of tokens a model can handle in one request, counting the system prompt, history, documents and the answer; anything outside it does not exist for the model."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Think of a **whiteboard** of fixed size. Everything the model can use must be written on it: your rules, the chat so far, the pasted document and space for the answer. When the board is full, something old must be **wiped** to write something new. The model has **no notebook** behind the board.
+
+</Analogy>
+
+## Simple explanation
+
+The **context window** is the model's working space, measured in **tokens**. Sizes range from a few thousand tokens on small models to hundreds of thousands, or a million and more, on large ones.
+
+**What uses the window**:
+
+`system prompt + conversation history + documents / tool results + the model's answer`
+
+**Key facts**:
+
+- LLM APIs are **stateless**. The model remembers nothing between calls. A "chat" works because **your app resends the whole history** on every request
+- So a long chat gets **more expensive and slower with every turn**
+- If input + requested output is larger than the window, the API returns an **error** (or the app silently drops old messages)
+- `max_tokens` limits only the **output**
+
+**Ways to manage the window**:
+
+| Strategy | How |
+| --- | --- |
+| **Sliding window** | keep the system prompt and the last N messages |
+| **Summarise** | replace old messages with a short summary |
+| **Retrieve** | store everything outside, fetch only relevant pieces (RAG, memory) |
+| **Trim tool results** | return only the fields needed, not whole API responses |
+| **Prompt caching** | the provider reuses a repeated long prefix at lower cost |
+
+**Bigger is not always better**: with very long contexts, models can miss details buried in the middle (often called **lost in the middle** or **context rot**), cost rises and replies slow down. Put the most important material near the **start or the end**, and send only what is relevant.
+
+## Code example
+
+Keeping a chat inside a token budget with a **sliding window**. The system prompt is always kept:
+
+```python
+def tokens(text):
+    return max(1, len(text) // 4)            # rough estimate
+
+def fit_to_budget(system, history, budget):
+    used = tokens(system)
+    kept = []
+    for msg in reversed(history):            # newest first
+        cost = tokens(msg["content"])
+        if used + cost > budget:
+            break
+        kept.append(msg)
+        used += cost
+    return [{"role": "system", "content": system}] + kept[::-1], used
+
+system = "You are a helpful travel assistant. Answer in two sentences."
+history = [
+    {"role": "user", "content": "I want to plan a trip to Jaipur in December with my parents."},
+    {"role": "assistant", "content": "Great choice! December is cool and pleasant. How many days do you have?"},
+    {"role": "user", "content": "Three days. We like forts and local food, but my father cannot walk a lot."},
+    {"role": "assistant", "content": "Then pick Amer Fort with a jeep ride, City Palace, and food at Chokhi Dhani."},
+    {"role": "user", "content": "Which of these is closest to the railway station?"},
+]
+
+for budget in (200, 60):
+    messages, used = fit_to_budget(system, history, budget)
+    print(f"budget {budget}: kept {len(messages) - 1} of {len(history)} messages, {used} tokens")
+    print("  oldest kept:", messages[1]["content"][:45] + "...")
+```
+
+```output
+budget 200: kept 5 of 5 messages, 96 tokens
+  oldest kept: I want to plan a trip to Jaipur in December w...
+budget 60: kept 2 of 5 messages, 46 tokens
+  oldest kept: Then pick Amer Fort with a jeep ride, City Pa...
+```
+
+With the small budget the model no longer sees that the father cannot walk much. That is how chatbots "forget".
+
+Why long chats cost more each turn: every request resends everything before it:
+
+```python
+turn_tokens = 150                 # each user message + reply
+system_tokens = 300
+total_billed = 0
+for turn in range(1, 11):
+    input_tokens = system_tokens + turn_tokens * (turn - 1) + 50     # history + new question
+    total_billed += input_tokens
+    if turn in (1, 5, 10):
+        print(f"turn {turn:>2}: input {input_tokens:>5} tokens | total billed so far {total_billed:>6}")
+```
+
+```output
+turn  1: input   350 tokens | total billed so far    350
+turn  5: input   950 tokens | total billed so far   3250
+turn 10: input  1700 tokens | total billed so far  10250
+```
+
+<Playground kind="python">
+
+```python
+# Summarise old messages instead of dropping them.
+history = [
+    "User: I am vegetarian and allergic to peanuts.",
+    "Bot: Noted.",
+    "User: Suggest a breakfast.",
+    "Bot: Poha without peanuts.",
+    "User: And lunch?",
+    "Bot: Rajma chawal.",
+    "User: What about dinner?",
+]
+
+def compress(history, keep_last=3):
+    old, recent = history[:-keep_last], history[-keep_last:]
+    # A real app would ask an LLM to write this summary.
+    summary = "Summary: user is vegetarian, allergic to peanuts; breakfast and lunch already suggested."
+    return [summary] + recent if old else recent
+
+for line in compress(history):
+    print(line)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Sending only the new message">
+
+<Wrong>
+
+```python
+reply = llm(messages=[{"role": "user", "content": "And what about its population?"}])
+# the model has no idea what "its" means
+```
+
+</Wrong>
+
+<Right>
+
+```python
+history.append({"role": "user", "content": "And what about its population?"})
+reply = llm(messages=history)        # resend the conversation
+```
+
+</Right>
+
+The API is stateless. Your application owns the conversation memory.
+
+</Mistake>
+
+<Mistake title="Stuffing everything because the window is big">
+
+<Wrong>
+
+```text
+"The model has a huge window, so paste all 300 pages for every question."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Retrieve the few pages that matter. It is cheaper, faster, and the model is less likely
+to miss the key detail."
+```
+
+</Right>
+
+You pay for every input token on every request, and accuracy can drop with very long context.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is the context window?">
+
+The maximum number of tokens the model can process in a single request, including system prompt, conversation history, retrieved documents, tool results and the generated output. The model cannot use anything outside it.
+
+</QA>
+
+<QA q="How does a chatbot remember earlier messages if the API is stateless?">
+
+The application stores the conversation and sends the relevant history with every request. Long-term memory is done by saving facts or summaries in a database and adding the relevant ones to the prompt.
+
+</QA>
+
+<QA q="What do you do when a conversation exceeds the context window?">
+
+Keep the system prompt, then apply a strategy: a sliding window of recent turns, summarising older turns, retrieving only relevant earlier messages by embedding search, and trimming large tool results. Count tokens before each call and leave room for the output.
+
+</QA>
+
+<QA q="If context windows are huge, is RAG still needed?">
+
+Yes. Sending everything costs tokens on every request, is slower, and accuracy can fall when key facts are buried in long context. Retrieval also scales to data far larger than any window, keeps data fresh and gives citations and access control.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What counts toward the context window?',
+      options: ['Only the user message', 'Input and output tokens together', 'Only the system prompt', 'Only the answer'],
+      answer: 1,
+      why: 'Prompt, history, documents and the generated answer all share the window.',
+    },
+    {
+      q: 'Who keeps the chat history between API calls?',
+      options: ['The model', 'Your application', 'The tokenizer', 'The GPU'],
+      answer: 1,
+      why: 'The API is stateless, so the app resends history.',
+    },
+    {
+      q: 'What does max_tokens limit?',
+      options: ['The input size', 'The output length', 'The number of requests', 'The model size'],
+      answer: 1,
+      why: 'It caps how many tokens the model may generate.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Context window | max tokens per request (input + output) |
+| Stateless API | resend history every call |
+| Long chats | each turn costs more than the last |
+| Too long | error, or oldest messages dropped |
+| Sliding window | keep system + last N messages |
+| Summarise | compress old turns |
+| Retrieve | fetch only relevant pieces |
+| Prompt caching | cheaper repeated prefix |
+| Lost in the middle | key facts buried mid-context get missed |
+| `max_tokens` | caps output only |
+
+</CheatSheet>

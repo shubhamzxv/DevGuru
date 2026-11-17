@@ -1,0 +1,236 @@
+---
+id: genai-ai-agents
+title: AI agents and tool use
+summary: "An AI agent is an LLM running in a loop: it decides which tool to call, your code runs the tool, the result goes back to the model, and this repeats until the task is done."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+A **chatbot** is like a helpdesk person who can only **talk**. An **agent** is like an office assistant who can also **do things**: open the file cabinet, call the courier, check the calendar, and come back with the job finished. The assistant thinks, acts, looks at the result, and thinks again.
+
+</Analogy>
+
+## Simple explanation
+
+An LLM by itself only produces text. It cannot check today's weather or read your database. **Tools** fix that.
+
+A **tool** is a function you describe to the model: a name, a description and the inputs it takes. The model can answer with "**call this tool with these arguments**" instead of normal text.
+
+**The agent loop**:
+
+1. Send the user's goal and the list of tools to the model
+2. The model replies with either a **final answer** or a **tool call**
+3. **Your code** runs the tool (the model never runs anything itself)
+4. Send the tool's result back to the model
+5. Repeat from step 2 until the model gives a final answer, or a step limit is reached
+
+This think → act → observe cycle is often called **ReAct** (reason + act).
+
+| Term | Meaning |
+| --- | --- |
+| **Tool / function calling** | the model outputs a structured request to call a function |
+| **Agent** | an LLM + tools + a loop that keeps going until done |
+| **Workflow** | fixed steps written by you; the LLM fills in each step |
+| **Multi-agent** | several agents with different roles; one often coordinates |
+| **Memory** | notes saved outside the model and added back into the prompt |
+| **MCP** | a standard way to plug tools and data into AI apps (see the MCP track) |
+
+**Workflow or agent?** Use a **workflow** when the steps are known (classify → look up → reply). Use an **agent** when the steps depend on what is found on the way (debugging, research). Agents are more flexible but slower, costlier and harder to predict.
+
+**Safety rules for agents**: limit the number of steps, give each tool the least access it needs, ask a human before risky actions (payments, deletes, emails), and log every tool call.
+
+## Code example
+
+A complete agent loop. The "model" here is a small Python function standing in for a real LLM, so you can see every step of the loop:
+
+```python
+import json
+
+# 1. Tools: plain Python functions
+def get_weather(city):
+    return {"Delhi": "34°C, sunny", "Mumbai": "29°C, rain"}.get(city, "unknown")
+
+def calculator(expression):
+    return str(eval(expression, {"__builtins__": {}}))   # demo only: never eval user input in real code
+
+TOOLS = {"get_weather": get_weather, "calculator": calculator}
+
+# 2. A fake model: decides the next step from the conversation so far
+def fake_model(messages):
+    tool_results = [m for m in messages if m["role"] == "tool"]
+    if len(tool_results) == 0:
+        return {"tool": "get_weather", "args": {"city": "Delhi"}}
+    if len(tool_results) == 1:
+        return {"tool": "calculator", "args": {"expression": "34 * 9 / 5 + 32"}}
+    return {"answer": f"Delhi is {tool_results[0]['content']}. That is {tool_results[1]['content']}°F."}
+
+# 3. The agent loop
+def run_agent(goal, max_steps=5):
+    messages = [{"role": "user", "content": goal}]
+    for step in range(1, max_steps + 1):
+        decision = fake_model(messages)
+        if "answer" in decision:
+            print(f"step {step}: final answer")
+            return decision["answer"]
+        result = TOOLS[decision["tool"]](**decision["args"])        # OUR code runs the tool
+        print(f"step {step}: call {decision['tool']}({json.dumps(decision['args'])}) -> {result}")
+        messages.append({"role": "tool", "content": result})
+    return "Stopped: step limit reached"
+
+print(run_agent("What is the weather in Delhi, in Fahrenheit too?"))
+```
+
+```output
+step 1: call get_weather({"city": "Delhi"}) -> 34°C, sunny
+step 2: call calculator({"expression": "34 * 9 / 5 + 32"}) -> 93.2
+step 3: final answer
+Delhi is 34°C, sunny. That is 93.2°F.
+```
+
+<Playground kind="python">
+
+```python
+# Add a tool and a guard. Here the agent must ask before a risky tool.
+RISKY = {"send_refund"}
+
+def lookup_order(order_id):
+    return {"A1": "delivered, ₹499"}.get(order_id, "not found")
+
+def send_refund(order_id):
+    return f"refund sent for {order_id}"
+
+TOOLS = {"lookup_order": lookup_order, "send_refund": send_refund}
+plan = [("lookup_order", "A1"), ("send_refund", "A1")]   # what the model decided
+
+def human_approves(tool, arg):
+    print(f"   approval needed for {tool}({arg}) -> denied in this demo")
+    return False
+
+for tool, arg in plan:
+    if tool in RISKY and not human_approves(tool, arg):
+        print(f"{tool}: skipped")
+        continue
+    print(f"{tool}: {TOOLS[tool](arg)}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="No step limit">
+
+<Wrong>
+
+```python
+while True:                       # the model keeps calling tools forever
+    decision = model(messages)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+for step in range(max_steps):     # stop after N steps and report
+    decision = model(messages)
+```
+
+</Right>
+
+A confused agent can loop, burning tokens and money. Always cap steps, time and cost.
+
+</Mistake>
+
+<Mistake title="Giving an agent a powerful tool with no check">
+
+<Wrong>
+
+```text
+Tool: run_sql(query)  -- full write access to the production database
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Tool: get_order(order_id)  -- read-only, one narrow job
+Risky tools (refund, delete, email) need human approval first.
+```
+
+</Right>
+
+Text the agent reads (a web page, an email) may contain hidden instructions. Narrow tools limit the damage.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is an AI agent?">
+
+A system where an LLM runs in a loop with tools: it decides the next action, the application executes the tool call, the result is fed back, and the loop continues until the goal is met or a limit is hit. The model plans; the application acts.
+
+</QA>
+
+<QA q="How does tool calling (function calling) work?">
+
+You send the model tool definitions (name, description, JSON Schema of inputs). When useful, the model returns a structured tool call instead of text. Your code validates the arguments, runs the function and returns the result as a tool message; the model then continues with that result.
+
+</QA>
+
+<QA q="When would you choose a workflow over an agent?">
+
+When the steps are known in advance and reliability matters. A workflow has fixed code paths with LLM calls inside, so it is cheaper, faster and easy to test. Agents fit open-ended tasks where the path cannot be planned upfront.
+
+</QA>
+
+<QA q="What are the main risks with agents and how do you reduce them?">
+
+Loops and runaway cost (step, time and budget limits), wrong or harmful actions (least-privilege tools, human approval for risky actions, dry-run modes), prompt injection through tool results (treat tool output as data, restrict what tools can reach), and poor traceability (log every step and tool call).
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Who actually runs a tool in tool calling?',
+      options: ['The model', 'Your application code', 'The GPU', 'The user’s browser always'],
+      answer: 1,
+      why: 'The model only asks; your code executes and returns the result.',
+    },
+    {
+      q: 'What makes something an agent and not a single LLM call?',
+      options: ['A bigger model', 'A loop with tools until the task is done', 'A longer prompt', 'Streaming'],
+      answer: 1,
+      why: 'Agent = LLM + tools + loop.',
+    },
+    {
+      q: 'Steps are fixed and known. What should you build?',
+      options: ['A multi-agent system', 'A workflow', 'A fine-tuned model', 'A vector database'],
+      answer: 1,
+      why: 'Fixed steps are cheaper and more reliable as a workflow.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Tool | function + description + input schema |
+| Tool call | model output asking to run a tool |
+| Agent loop | model → tool call → run → result → model → … → answer |
+| ReAct | reason, act, observe, repeat |
+| Workflow | fixed steps, predictable, cheaper |
+| Agent | flexible steps, slower, harder to test |
+| Limits | max steps, timeout, budget |
+| Safety | least privilege, human approval, logs |
+| Memory | saved notes re-added to the prompt |
+| MCP | standard plug for tools and data |
+
+</CheatSheet>

@@ -1,0 +1,231 @@
+---
+id: genai-what-is-generative-ai
+title: What is Generative AI?
+summary: "Generative AI is AI that creates new content such as text, images, audio and code, by learning patterns from huge amounts of data and then producing something new that follows those patterns."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Think of two students. One only **marks** answer sheets: right or wrong. The other has read thousands of essays and can **write a new essay** on any topic you give.
+
+Old-style AI is mostly the first student: it **judges** (spam or not spam). **Generative AI** is the second student: it **creates**.
+
+</Analogy>
+
+## Simple explanation
+
+**Generative AI (GenAI)** is a kind of AI that **produces new content**: text, images, audio, video or code.
+
+How the names fit together:
+
+| Term | Meaning | Example |
+| --- | --- | --- |
+| **AI** | machines doing tasks that need intelligence | chess program, maps route |
+| **Machine learning (ML)** | AI that **learns from data** instead of fixed rules | spam filter |
+| **Deep learning** | ML with large **neural networks** | face unlock |
+| **Generative AI** | deep learning that **creates** content | chat assistants, image generators |
+| **LLM** | a generative model for **text** | the model behind a chat assistant |
+
+**Discriminative vs generative**:
+
+- A **discriminative** model answers "which label?": is this email spam, is this a cat?
+- A **generative** model answers "what comes next?" or "make me one": write an email, draw a cat.
+
+**How it works, in one line**: the model is **trained** on a huge amount of data and learns its patterns. When you give it a **prompt**, it produces output piece by piece, each time picking what is likely to come next.
+
+Two phases you must know:
+
+- **Training**: the expensive, one-time learning step (weeks on many GPUs). Done by the model maker.
+- **Inference**: using the trained model to answer a prompt. This is what happens every time you chat.
+
+**What it is good at**: drafting, summarising, translating, explaining, writing code, extracting data from messy text.
+
+**What to remember**: it predicts **likely** output, not **true** output. It can be confidently wrong (a **hallucination**), so important facts need checking.
+
+## Code example
+
+A tiny "generative model" in pure Python. It learns which word follows which word (training), then writes new sentences (inference). Real models are billions of times bigger, but the idea is the same:
+
+```python
+import random
+from collections import defaultdict
+
+text = ("i like tea . i like coffee . you like tea . "
+        "i drink tea daily . you drink coffee daily .")
+
+# Training: remember which word follows which
+follows = defaultdict(list)
+words = text.split()
+for current, nxt in zip(words, words[1:]):
+    follows[current].append(nxt)
+
+print("after 'like':", follows["like"])
+print("after 'drink':", follows["drink"])
+
+# Inference: start with a word and keep picking a likely next word
+random.seed(7)
+def generate(start, length=6):
+    out = [start]
+    for _ in range(length):
+        out.append(random.choice(follows[out[-1]]))
+        if out[-1] == ".":
+            break
+    return " ".join(out)
+
+for start in ("i", "you", "i"):
+    print(generate(start))
+```
+
+```output
+after 'like': ['tea', 'coffee', 'tea']
+after 'drink': ['tea', 'coffee']
+i like tea .
+you like tea daily .
+i like tea .
+```
+
+Notice: the model can write a sentence that was **never in the training text**. That is generation. It also has no idea whether the sentence is true.
+
+<Playground kind="python">
+
+```python
+# Change the training text and see how the "model" writes differently.
+import random
+from collections import defaultdict
+
+text = ("the cat sat on the mat . the dog sat on the sofa . "
+        "the cat ate the fish . the dog ate the bone .")
+
+follows = defaultdict(list)
+words = text.split()
+for current, nxt in zip(words, words[1:]):
+    follows[current].append(nxt)
+
+random.seed(1)
+for _ in range(4):
+    out = ["the"]
+    while out[-1] != "." and len(out) < 10:
+        out.append(random.choice(follows[out[-1]]))
+    print(" ".join(out))
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Treating the output as a fact database">
+
+<Wrong>
+
+```text
+Ask the model for a court case number or a medicine dose and paste the answer directly.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Use the model to draft and explain. Check facts, numbers and quotes against a real source,
+or give the model the source text and ask it to answer only from that (RAG).
+```
+
+</Right>
+
+The model generates what sounds right. It does not look things up unless you connect it to a source.
+
+</Mistake>
+
+<Mistake title="Mixing up training and inference">
+
+<Wrong>
+
+```text
+"The model learns from my chat, so tomorrow it will know what I told it today."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"The model's weights do not change when I chat. It only sees what is in the current
+conversation (the context). Memory features work by adding saved notes to that context."
+```
+
+</Right>
+
+Chatting is inference. Learning new knowledge permanently needs training or fine-tuning.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is Generative AI and how is it different from traditional ML?">
+
+Generative AI creates new content (text, images, audio, code) by learning the patterns of its training data. Traditional, discriminative ML mostly predicts a label or a number for an input, such as spam or not spam. Generative models learn to produce data; discriminative models learn to separate classes.
+
+</QA>
+
+<QA q="What is the difference between training and inference?">
+
+Training adjusts the model's weights on a large dataset; it is slow and expensive and done before release. Inference runs the fixed model on a prompt to produce output; it happens on every request and its cost depends on the number of tokens.
+
+</QA>
+
+<QA q="What is a foundation model?">
+
+A large model trained on broad data that can be adapted to many tasks with prompts, retrieval or fine-tuning, instead of training a new model for every task. LLMs and large image models are foundation models.
+
+</QA>
+
+<QA q="Name real uses of Generative AI in a backend product.">
+
+Customer-support assistants over company documents (RAG), summarising tickets and calls, extracting fields from invoices into JSON, code review help, search that understands meaning, and agents that call internal APIs to finish a task.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which task is generative?',
+      options: ['Marking an email as spam', 'Writing a reply to an email', 'Detecting a face', 'Predicting a house price'],
+      answer: 1,
+      why: 'Writing a reply creates new content. The others predict a label or a number.',
+    },
+    {
+      q: 'What happens to the model weights when you chat with a model?',
+      options: ['They update after every message', 'Nothing: chatting is inference', 'They reset', 'They are sent to your browser'],
+      answer: 1,
+      why: 'Inference uses the trained weights without changing them.',
+    },
+    {
+      q: 'A confident but wrong answer from a model is called?',
+      options: ['Overfitting', 'A hallucination', 'A token', 'An embedding'],
+      answer: 1,
+      why: 'The model produced likely-sounding text that is not true.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | One line |
+| --- | --- |
+| Generative AI | AI that creates text, images, audio, video, code |
+| Discriminative model | predicts a label: spam / not spam |
+| Generative model | produces new data that looks like its training data |
+| Foundation model | one big model reused for many tasks |
+| LLM | generative model for text |
+| Training | learning weights from data (once, expensive) |
+| Inference | using the model on a prompt (every request) |
+| Prompt | the input you give the model |
+| Hallucination | fluent but false output |
+| Multimodal | handles more than one kind of input: text + image + audio |
+
+</CheatSheet>

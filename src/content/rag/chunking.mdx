@@ -1,0 +1,272 @@
+---
+id: rag-chunking
+title: Chunking documents
+summary: "Chunking splits documents into small pieces before embedding; chunk size, overlap and where you cut decide whether retrieval finds a complete, focused passage."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Cutting a **pizza**. Slices too big: nobody can hold one. Slices too small: just crumbs, no real bite. And if you cut **through** a topping, each slice gets half of it. **Chunking** is slicing documents: the right size, cut at natural lines, with a little **overlap** so nothing is lost at the edges.
+
+</Analogy>
+
+## Simple explanation
+
+**Why chunk at all?**
+
+- Embedding models have an **input limit**
+- One vector for 50 pages is too vague to match a specific question
+- You want to put only the **relevant part** into the prompt, not the whole document
+
+**The trade-off**:
+
+| Chunk size | Good | Bad |
+| --- | --- | --- |
+| **Small** (100–200 tokens) | precise matches | misses surrounding context |
+| **Large** (800–1,500 tokens) | full context | vague embedding, more tokens, more noise |
+
+A common starting point: **300–500 tokens with 10–20% overlap**, then measure and adjust.
+
+**Overlap** repeats the end of one chunk at the start of the next, so a sentence cut at the border is still complete in one of them.
+
+**Chunking strategies**:
+
+| Strategy | How it cuts | Use for |
+| --- | --- | --- |
+| **Fixed size** | every N characters or tokens | quick start, messy text |
+| **Recursive** | tries paragraphs, then sentences, then words, to stay under the size | the usual default |
+| **Structure-aware** | by headings, sections, table rows, functions | Markdown, HTML, code, contracts |
+| **Semantic** | cuts where the topic changes (embedding distance between sentences) | long mixed documents |
+| **Parent-child** | search small chunks, return their larger parent section | precise search + full context |
+
+**Always store metadata** with each chunk: source file, page or section title, date, language, access level. It lets you **filter** searches, show **citations**, and delete or update a document's chunks later.
+
+**Tip**: adding the document title and section heading to the text of each chunk often improves retrieval, because a chunk like "It lasts 12 months" means little alone.
+
+## Code example
+
+Fixed-size chunking with overlap. See how a sentence gets cut, and how overlap keeps it whole in the next chunk:
+
+```python
+def fixed_chunks(text, size, overlap):
+    step = size - overlap
+    return [text[i:i + size] for i in range(0, len(text), step) if text[i:i + size].strip()]
+
+text = ("Refunds take 7 working days. Returns are free within 10 days. "
+        "Electronics have a 12 month warranty. Batteries are covered for 6 months.")
+
+for chunk in fixed_chunks(text, size=60, overlap=0):
+    print(repr(chunk))
+print("--- with overlap 20 ---")
+for chunk in fixed_chunks(text, size=60, overlap=20):
+    print(repr(chunk))
+```
+
+```output
+'Refunds take 7 working days. Returns are free within 10 days'
+'. Electronics have a 12 month warranty. Batteries are covere'
+'d for 6 months.'
+--- with overlap 20 ---
+'Refunds take 7 working days. Returns are free within 10 days'
+' free within 10 days. Electronics have a 12 month warranty. '
+' 12 month warranty. Batteries are covered for 6 months.'
+'d for 6 months.'
+```
+
+Sentence-aware chunking: keep whole sentences, and pack them up to a size limit:
+
+```python
+import re
+
+def sentence_chunks(text, max_chars, overlap_sentences=1):
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    chunks, current = [], []
+    for s in sentences:
+        if current and len(" ".join(current + [s])) > max_chars:
+            chunks.append(" ".join(current))
+            current = current[-overlap_sentences:]          # carry the last sentence over
+        current.append(s)
+    chunks.append(" ".join(current))
+    return chunks
+
+text = ("Refunds take 7 working days. Returns are free within 10 days. "
+        "Electronics have a 12 month warranty. Batteries are covered for 6 months. "
+        "Contact support on chat for faster help.")
+
+for i, chunk in enumerate(sentence_chunks(text, max_chars=75), 1):
+    print(f"{i}. {chunk}")
+```
+
+```output
+1. Refunds take 7 working days. Returns are free within 10 days.
+2. Returns are free within 10 days. Electronics have a 12 month warranty.
+3. Electronics have a 12 month warranty. Batteries are covered for 6 months.
+4. Batteries are covered for 6 months. Contact support on chat for faster help.
+```
+
+Structure-aware chunking of Markdown, with **metadata** on every chunk:
+
+```python
+doc = """# Returns
+Returns are free within 10 days.
+# Warranty
+Electronics have a 12 month warranty.
+Batteries are covered for 6 months.
+"""
+
+chunks, title = [], None
+for line in doc.strip().splitlines():
+    if line.startswith("# "):
+        title = line[2:]
+        chunks.append({"text": "", "meta": {"source": "policy.md", "section": title}})
+    else:
+        chunks[-1]["text"] += (" " if chunks[-1]["text"] else "") + line
+
+for c in chunks:
+    c["text"] = f"{c['meta']['section']}: {c['text']}"       # put the heading into the chunk text
+    print(c)
+```
+
+```output
+{'text': 'Returns: Returns are free within 10 days.', 'meta': {'source': 'policy.md', 'section': 'Returns'}}
+{'text': 'Warranty: Electronics have a 12 month warranty. Batteries are covered for 6 months.', 'meta': {'source': 'policy.md', 'section': 'Warranty'}}
+```
+
+<Playground kind="python">
+
+```python
+# Try different sizes and overlaps and count the chunks.
+text = "word " * 1000                      # a 1,000-word document
+
+def count_chunks(n_words, size, overlap):
+    step = size - overlap
+    return len(range(0, n_words, step))
+
+for size, overlap in [(100, 0), (100, 20), (300, 30), (500, 50)]:
+    n = count_chunks(1000, size, overlap)
+    print(f"size {size:>3}, overlap {overlap:>2}: {n:>2} chunks, {n * size:>5} words stored")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Cutting in the middle of sentences and tables">
+
+<Wrong>
+
+```python
+chunks = [text[i:i + 500] for i in range(0, len(text), 500)]     # splits words, rows, code
+```
+
+</Wrong>
+
+<Right>
+
+```python
+chunks = recursive_split(text, max_tokens=400, overlap=50,
+                         separators=["\n## ", "\n\n", "\n", ". ", " "])
+```
+
+</Right>
+
+Cut at natural borders first (headings, paragraphs, sentences) and only fall back to hard cuts.
+
+</Mistake>
+
+<Mistake title="Chunks without metadata">
+
+<Wrong>
+
+```python
+store.add(vector=embed(chunk), text=chunk)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+store.add(vector=embed(chunk), text=chunk,
+          metadata={"source": "policy.pdf", "page": 4, "section": "Warranty",
+                    "updated": "2026-10-01", "access": "public"})
+```
+
+</Right>
+
+Without metadata you cannot cite, filter by date or permission, or remove an outdated document's chunks.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Why is chunking needed in RAG?">
+
+Embedding models have input limits, a single vector for a long document is too coarse to match specific questions, and the prompt should contain only relevant passages to save tokens and reduce noise. Chunking creates focused, retrievable units.
+
+</QA>
+
+<QA q="How do you choose chunk size and overlap?">
+
+Start around 300 to 500 tokens with 10 to 20 percent overlap, then tune with a retrieval eval set. Short factual content suits smaller chunks; explanations and legal text need larger ones. Overlap protects information at boundaries at the cost of extra storage.
+
+</QA>
+
+<QA q="What chunking strategies do you know?">
+
+Fixed-size, recursive splitting on a list of separators, structure-aware splitting by headings, sections, table rows or code units, semantic chunking at topic shifts, and parent-child (small-to-big) where small chunks are searched and their larger parents are sent to the model.
+
+</QA>
+
+<QA q="What metadata would you store with each chunk?">
+
+Document id and source path or URL, page or section title, chunk position, timestamps and version, language, document type, and access-control tags. It enables filtering, citations, freshness rules and deleting or re-indexing a document.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is overlap for?',
+      options: ['Saving storage', 'Keeping text at chunk borders complete in at least one chunk', 'Faster embedding', 'Encrypting chunks'],
+      answer: 1,
+      why: 'A sentence cut at the edge still appears whole in the neighbour.',
+    },
+    {
+      q: 'Very large chunks usually cause?',
+      options: ['More precise matches', 'Vague embeddings and more noise in the prompt', 'Lower cost', 'No effect'],
+      answer: 1,
+      why: 'One vector covers too many topics.',
+    },
+    {
+      q: 'Which strategy fits Markdown documentation best?',
+      options: ['Random cuts', 'Structure-aware splitting by headings', 'One chunk per file', 'One chunk per word'],
+      answer: 1,
+      why: 'Headings mark natural topic borders.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Start with | 300–500 tokens, 10–20% overlap |
+| Small chunks | precise, less context |
+| Large chunks | context, vaguer match, more tokens |
+| Overlap | protects sentences at borders |
+| Fixed size | simple baseline |
+| Recursive | paragraphs → sentences → words |
+| Structure-aware | headings, tables, code functions |
+| Semantic | cut at topic change |
+| Parent-child | search small, return big |
+| Metadata | source, page, section, date, access |
+| Trick | prepend title + heading to chunk text |
+| Tune with | a retrieval eval set |
+
+</CheatSheet>

@@ -1,0 +1,262 @@
+---
+id: llm-evaluation
+title: Evaluation, cost and latency
+summary: "Evals are tests for LLM features: a fixed set of inputs with expected results or rubrics, scored automatically, so you can compare prompts and models on quality, cost and latency before shipping."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+A school does not judge a teacher by one student's answer on one day. It uses a **fixed exam paper** for the whole class and compares marks year to year. **Evals** are the exam paper for your LLM feature. Without it, every prompt change is a guess.
+
+</Analogy>
+
+## Simple explanation
+
+LLM output varies, so "I tried three questions and it looked fine" is not testing. An **eval** has three parts:
+
+1. A **dataset**: real inputs (50 to a few hundred), covering normal, tricky and harmful cases
+2. The **expected** answer, or a **rubric** describing a good answer
+3. A **scorer** that turns each output into pass/fail or a score
+
+**Kinds of scorer**:
+
+| Scorer | Good for | Limit |
+| --- | --- | --- |
+| **Exact match / contains** | classification, extraction, numbers | fails on valid rewordings |
+| **Code checks** | valid JSON, schema, SQL runs, tests pass | only checks what code can check |
+| **Similarity** (embeddings, overlap) | "close enough" text | can miss factual errors |
+| **LLM-as-judge** | tone, helpfulness, faithfulness to a source | the judge can be wrong or biased; verify it against human labels |
+| **Human review** | final truth, building the first labels | slow and costly |
+
+**Run evals on every change**: a new prompt, a new model version, a new retrieval setting. Keep the results so you can see regressions.
+
+**Also measure**:
+
+| Metric | Meaning |
+| --- | --- |
+| **TTFT** | time to first token: how fast the reply starts |
+| **Tokens per second** | generation speed |
+| **p50 / p95 latency** | typical and slow-case response time |
+| **Cost per request** | from input and output tokens |
+| **Error rate** | timeouts, rate limits, invalid output |
+
+**Public benchmarks** (leaderboards) help shortlist models, but they do not tell you how a model does on **your** task. Your own eval set decides.
+
+**In production**: collect thumbs up/down, track escalations to humans, sample and review real conversations, and add every failure you find to the eval set.
+
+## Code example
+
+A small eval harness comparing two prompt versions on the same test set:
+
+```python
+TEST_SET = [
+    ("I was charged twice", "billing"),
+    ("Parcel not received", "delivery"),
+    ("Refund not credited yet", "billing"),
+    ("Change my delivery address", "delivery"),
+    ("Do you have a store in Goa?", "other"),
+    ("Invoice shows wrong GST", "billing"),
+]
+
+def model_v1(text):                         # stands in for prompt version 1
+    t = text.lower()
+    if "charged" in t or "refund" in t:
+        return "billing"
+    if "parcel" in t or "delivery" in t:
+        return "delivery"
+    return "other"
+
+def model_v2(text):                         # version 2: also knows about invoices
+    t = text.lower()
+    if "invoice" in t or "gst" in t:
+        return "billing"
+    return model_v1(text)
+
+def run_eval(model):
+    failures = [(q, want, model(q)) for q, want in TEST_SET if model(q) != want]
+    return (len(TEST_SET) - len(failures)) / len(TEST_SET), failures
+
+for name, model in (("v1", model_v1), ("v2", model_v2)):
+    accuracy, failures = run_eval(model)
+    print(f"{name}: accuracy {accuracy:.0%}")
+    for q, want, got in failures:
+        print(f"   FAIL {q!r}: wanted {want}, got {got}")
+```
+
+```output
+v1: accuracy 83%
+   FAIL 'Invoice shows wrong GST': wanted billing, got other
+v2: accuracy 100%
+```
+
+Latency percentiles. The average hides the slow requests that users remember:
+
+```python
+import statistics
+
+latencies_ms = [820, 790, 910, 760, 4200, 880, 830, 3900, 800, 850, 870, 795, 905, 840, 815, 860, 890, 780, 825, 6100]
+ordered = sorted(latencies_ms)
+
+def percentile(values, p):
+    index = min(len(values) - 1, round(p / 100 * len(values)) - 1)
+    return values[max(0, index)]
+
+print("average:", round(statistics.mean(latencies_ms)), "ms")
+print("p50:", percentile(ordered, 50), "ms")
+print("p95:", percentile(ordered, 95), "ms")
+print("slower than 2 s:", sum(1 for x in latencies_ms if x > 2000), "of", len(latencies_ms))
+```
+
+```output
+average: 1421 ms
+p50: 840 ms
+p95: 4200 ms
+slower than 2 s: 3 of 20
+```
+
+<Playground kind="python">
+
+```python
+# An LLM-as-judge rubric, scored here by a stand-in function.
+RUBRIC = """Score the answer from 1 to 5.
+5 = fully supported by the source and answers the question
+3 = partly supported or incomplete
+1 = contradicts the source or makes things up
+Reply with only the number."""
+
+source = "Warranty is 12 months. Battery is covered for 6 months."
+cases = [
+    ("How long is the warranty?", "12 months."),
+    ("Is the battery covered?", "Yes, for 2 years."),
+]
+
+def fake_judge(question, answer, source):
+    numbers = [w for w in answer.replace(".", "").split() if w.isdigit()]
+    return 5 if all(n in source for n in numbers) else 1
+
+print(RUBRIC.splitlines()[0])
+for q, a in cases:
+    print(f"score {fake_judge(q, a, source)} | Q: {q} | A: {a}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Shipping a prompt change after trying two examples">
+
+<Wrong>
+
+```text
+"I asked it two questions and both answers looked better. Deploying."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Ran the 120-question eval set: accuracy 86% → 91%, no new failures in the safety cases,
+cost per request unchanged. Deploying."
+```
+
+</Right>
+
+A change that fixes one case often breaks another. Only a fixed test set shows it.
+
+</Mistake>
+
+<Mistake title="Trusting an LLM judge without checking it">
+
+<Wrong>
+
+```text
+Use a judge prompt for all scoring and never compare it with human labels.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Label 50 examples by hand, check the judge agrees with humans on them, then use the judge
+at scale and re-check from time to time.
+```
+
+</Right>
+
+A judge is a model too. Measure how often it agrees with people before relying on it.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you evaluate an LLM application?">
+
+Build a representative dataset with expected outputs or rubrics; score with exact match and code checks where possible and LLM-as-judge or human review for open-ended quality; run it for every prompt, model or retrieval change; track quality together with latency and cost; and feed production failures back into the dataset.
+
+</QA>
+
+<QA q="What is LLM-as-judge and what are its risks?">
+
+Using a model with a rubric to grade another model's output, for example for faithfulness or helpfulness. Risks: the judge can be inconsistent, lenient, biased toward longer answers or its own style, and wrong on domain facts. Calibrate against human labels, use clear rubrics and structured scores.
+
+</QA>
+
+<QA q="What latency metrics matter for a chat product?">
+
+Time to first token, tokens per second and end-to-end p50/p95/p99 latency. Averages hide slow outliers, so percentiles are used. Streaming improves perceived latency; output length drives total time.
+
+</QA>
+
+<QA q="Are public benchmarks enough to choose a model?">
+
+No. They help shortlist, but they may not match your domain, language or format, and can be affected by training-data leakage. Decide using your own eval set, with cost, latency, context size, rate limits and data policy as extra criteria.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What is an eval set?',
+      options: ['A bigger model', 'Fixed inputs with expected results, used to score changes', 'A vector index', 'A fine-tuning job'],
+      answer: 1,
+      why: 'It makes quality measurable and comparable.',
+    },
+    {
+      q: 'What does p95 latency of 4 s mean?',
+      options: ['The average is 4 s', '95% of requests finish within 4 s', '95 requests took 4 s', '5% finish within 4 s'],
+      answer: 1,
+      why: 'Only the slowest 5% take longer.',
+    },
+    {
+      q: 'Best scorer for "is the output valid JSON matching the schema"?',
+      options: ['A human', 'A code check', 'An LLM judge', 'A leaderboard'],
+      answer: 1,
+      why: 'Code checks are exact, fast and free.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Eval | dataset + expected / rubric + scorer |
+| Exact match | labels, numbers, extraction |
+| Code check | JSON valid, tests pass, SQL runs |
+| LLM-as-judge | open-ended quality; calibrate with humans |
+| Human review | ground truth, spot checks |
+| Run when | every prompt, model or retrieval change |
+| TTFT | time to first token |
+| p50 / p95 | typical / slow-case latency |
+| Cost | tokens in × price + tokens out × price |
+| Benchmarks | shortlist only; your eval decides |
+| Production | feedback, sampling, add failures to the set |
+
+</CheatSheet>

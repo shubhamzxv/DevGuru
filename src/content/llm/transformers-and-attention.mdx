@@ -1,0 +1,259 @@
+---
+id: llm-transformers-and-attention
+title: Transformers and attention
+summary: "The transformer is the neural network design behind LLMs; its key idea, self-attention, lets every token look at every other token and decide which ones matter for its meaning."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+In a group discussion, when someone says "**it** was delicious", you look back in your mind for what "it" means: the biryani mentioned earlier, not the traffic. You gave **more attention** to one earlier word. **Self-attention** lets the model do this for every word, with every other word, all at once.
+
+</Analogy>
+
+## Simple explanation
+
+The **transformer** (from the 2017 paper "Attention Is All You Need") replaced older designs (RNN, LSTM) that read text one word at a time and forgot long-range links.
+
+**The path of a prompt through a transformer**:
+
+1. **Tokens → embeddings**: each token id becomes a vector (a list of numbers) that carries meaning
+2. **Positional information** is added, because attention alone does not know word order
+3. A stack of **layers** (dozens), each with:
+   - **Self-attention**: every token gathers information from the other tokens
+   - A **feed-forward network**: processes each token's new vector
+4. The final vector of the last token is turned into **probabilities for the next token**
+
+**Self-attention in simple steps**, for one token:
+
+1. Compare it with every token (a **dot product** gives a score: higher = more related)
+2. Turn the scores into weights that add up to 1 (**softmax**)
+3. Build a new vector as the **weighted mix** of all token vectors
+
+The real model learns three projections for this, called **query, key and value**. **Multi-head attention** runs several attentions in parallel; one head may track grammar, another may track what a pronoun refers to.
+
+**Three transformer families**:
+
+| Type | Sees | Good for | Example use |
+| --- | --- | --- | --- |
+| **Decoder-only** | only tokens to the left (**causal mask**) | generating text | chat LLMs |
+| **Encoder-only** | the whole text, both sides | understanding, embeddings | embedding and classification models |
+| **Encoder-decoder** | encoder reads, decoder writes | translation, summarising | translation models |
+
+**Why transformers won**: all tokens are processed **in parallel** (fast training on GPUs), and any token can link directly to any other, however far apart.
+
+**The cost**: attention compares every token with every other one, so work grows roughly with the **square** of the length. This is one reason context windows have limits and long prompts are slower.
+
+## Code example
+
+Self-attention by hand for the sentence "the cat drank milk". Each word has a tiny 3-number vector; we compute who "drank" pays attention to:
+
+```python
+import math
+
+vectors = {                      # made-up 3D embeddings: [animal-ness, action-ness, food-ness]
+    "the":   [0.1, 0.0, 0.1],
+    "cat":   [0.9, 0.2, 0.1],
+    "drank": [0.3, 0.9, 0.6],
+    "milk":  [0.1, 0.3, 0.9],
+}
+
+def dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+def softmax(scores):
+    exps = [math.exp(s) for s in scores]
+    total = sum(exps)
+    return [e / total for e in exps]
+
+query = vectors["drank"]
+words = list(vectors)
+scores = [dot(query, vectors[w]) for w in words]          # 1. compare
+weights = softmax([s * 4 for s in scores])                # 2. weights that sum to 1 (x4 to sharpen)
+
+for w, s, a in zip(words, scores, weights):
+    print(f"drank -> {w:<6} score {s:.2f}  attention {a:.2f} {'#' * round(a * 30)}")
+
+new_vector = [sum(a * vectors[w][i] for w, a in zip(words, weights)) for i in range(3)]   # 3. mix
+print("new vector for 'drank':", [round(x, 2) for x in new_vector])
+print("weights sum to:", round(sum(weights), 2))
+```
+
+```output
+drank -> the    score 0.09  attention 0.01 
+drank -> cat    score 0.51  attention 0.04 #
+drank -> drank  score 1.26  attention 0.80 ########################
+drank -> milk   score 0.84  attention 0.15 ####
+new vector for 'drank': [0.29, 0.78, 0.62]
+weights sum to: 1.0
+```
+
+The **causal mask** of a decoder-only model: each token may look only at itself and earlier tokens:
+
+```python
+tokens = ["the", "cat", "drank", "milk"]
+print(" " * 8 + " ".join(f"{t:<6}" for t in tokens))
+for i, t in enumerate(tokens):
+    row = ["see" if j <= i else "-" for j in range(len(tokens))]
+    print(f"{t:<8}" + " ".join(f"{c:<6}" for c in row))
+
+n = len(tokens)
+print("\nattention pairs for", n, "tokens:", n * n, "| for 4,000 tokens:", 4000 * 4000)
+```
+
+```output
+        the    cat    drank  milk  
+the     see    -      -      -     
+cat     see    see    -      -     
+drank   see    see    see    -     
+milk    see    see    see    see   
+
+attention pairs for 4 tokens: 16 | for 4,000 tokens: 16000000
+```
+
+<Playground kind="python">
+
+```python
+# The word "bank" gets a different meaning from its neighbours.
+import math
+
+vectors = {                   # [river-ness, money-ness]
+    "bank":  [0.5, 0.5],      # ambiguous on its own
+    "river": [1.0, 0.0],
+    "water": [0.9, 0.1],
+    "loan":  [0.0, 1.0],
+    "money": [0.1, 0.9],
+}
+
+def contextual_bank(sentence):
+    q = vectors["bank"]
+    scores = [sum(a * b for a, b in zip(q, vectors[w])) * 3 for w in sentence]
+    exps = [math.exp(s) for s in scores]
+    weights = [e / sum(exps) for e in exps]
+    return [round(sum(w * vectors[word][i] for word, w in zip(sentence, weights)), 2) for i in range(2)]
+
+print("river water bank ->", contextual_bank(["river", "water", "bank"]))
+print("money loan bank  ->", contextual_bank(["money", "loan", "bank"]))
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Saying transformers read text word by word">
+
+<Wrong>
+
+```text
+"The transformer reads the sentence one word at a time, like an RNN."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"It processes all tokens in parallel. Attention links every token to every other token;
+position information is added separately. Only the OUTPUT is produced one token at a time."
+```
+
+</Right>
+
+Parallel input processing is the main reason transformers train fast on GPUs.
+
+</Mistake>
+
+<Mistake title="Ignoring that long prompts cost more than linearly">
+
+<Wrong>
+
+```text
+"Sending 10x more context will take 10x the compute."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Attention work grows roughly with the square of the length, so very long prompts are slower
+and costlier. Send the context that matters."
+```
+
+</Right>
+
+Retrieval (RAG) exists partly to avoid stuffing everything into the prompt.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is self-attention?">
+
+A mechanism where each token computes a relevance score with every other token in the sequence (query-key dot products), normalises the scores with softmax, and builds its new representation as the weighted sum of the value vectors. It lets a token's meaning depend on its context, at any distance.
+
+</QA>
+
+<QA q="Why did transformers replace RNNs and LSTMs?">
+
+RNNs process tokens sequentially, which is slow to train and loses information over long distances. Transformers process all positions in parallel and connect any two tokens directly through attention, so they scale to huge datasets and capture long-range dependencies better.
+
+</QA>
+
+<QA q="What is the difference between encoder-only, decoder-only and encoder-decoder models?">
+
+Encoder-only models read the whole input in both directions and output representations: used for embeddings and classification. Decoder-only models use a causal mask and generate text left to right: used for chat LLMs. Encoder-decoder models encode an input and decode an output: used for translation and summarisation.
+
+</QA>
+
+<QA q="Why are positional encodings needed?">
+
+Attention treats the input as a set and has no built-in notion of order. Positional encodings (or learned or rotary position embeddings) add each token's position to its vector so that "dog bites man" differs from "man bites dog".
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does self-attention compute for a token?',
+      options: ['Its spelling', 'How much every other token matters to it', 'Its token id', 'The model size'],
+      answer: 1,
+      why: 'Scores become weights, and the token becomes a weighted mix of the others.',
+    },
+    {
+      q: 'Which model type is used for chat LLMs?',
+      options: ['Encoder-only', 'Decoder-only', 'Diffusion', 'RNN'],
+      answer: 1,
+      why: 'Decoder-only models generate text left to right with a causal mask.',
+    },
+    {
+      q: 'Attention weights for one token add up to?',
+      options: ['0', '1', '100', 'The number of tokens'],
+      answer: 1,
+      why: 'Softmax turns scores into a distribution that sums to 1.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Meaning |
+| --- | --- |
+| Transformer | network design behind LLMs (2017) |
+| Embedding | vector for each token |
+| Positional encoding | adds word order |
+| Self-attention | each token weighs all other tokens |
+| Query / key / value | learned projections used in attention |
+| Multi-head | several attentions in parallel |
+| Feed-forward | per-token processing after attention |
+| Layer | attention + feed-forward, stacked many times |
+| Causal mask | a token cannot see later tokens |
+| Decoder-only | chat LLMs |
+| Encoder-only | embeddings, classification |
+| Cost | grows about with length squared |
+
+</CheatSheet>

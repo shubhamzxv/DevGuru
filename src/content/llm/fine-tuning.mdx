@@ -1,0 +1,236 @@
+---
+id: llm-fine-tuning
+title: Fine-tuning, LoRA and quantization
+summary: "Fine-tuning trains an existing model further on your examples to change its behaviour; LoRA does this cheaply by training small add-on matrices, and quantization shrinks a model by storing its weights with fewer bits."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+A trained chef joins your restaurant. **Prompting** is telling the chef today's orders. **Fine-tuning** is weeks of practice on **your** recipes until the house style becomes a habit. **LoRA** is like giving the chef a small **recipe card clipped to the apron** instead of retraining everything. **Quantization** is packing the same kitchen into a **smaller van**: a little less precise, far easier to move.
+
+</Analogy>
+
+## Simple explanation
+
+**Fine-tuning** = continuing the training of a pre-trained model on your own examples (pairs of input and ideal output), so the **weights change**.
+
+**Use it for**: a consistent **style or format**, a narrow **skill** (classify our tickets, write our kind of SQL), shorter prompts, or making a **small model** good enough to replace a large one.
+
+**Do not use it for**: adding **facts that change** (use RAG), or problems a better prompt would solve.
+
+| Method | What is trained | Cost | Note |
+| --- | --- | --- | --- |
+| **Full fine-tuning** | all weights | very high | needs lots of GPU memory; a full copy of the model per task |
+| **LoRA** (Low-Rank Adaptation) | small extra matrices; original weights **frozen** | low | adapter files of a few MB; swap adapters per task |
+| **QLoRA** | LoRA on a **quantized** base model | lower | fine-tune on a single GPU |
+| **PEFT** | umbrella term: parameter-efficient fine-tuning | | LoRA is the most common PEFT method |
+
+**How LoRA saves so much**: a weight matrix of size `d × d` is not changed directly. Instead two thin matrices `A` (`d × r`) and `B` (`r × d`) are trained, with a small **rank** `r` such as 8. Their product is added to the original. Trainable numbers drop from `d²` to `2·d·r`.
+
+**Quantization**: store each weight with fewer bits (16-bit → 8-bit → 4-bit). The model needs much less memory and runs on smaller hardware, with a small loss in quality.
+
+**Distillation**: train a small **student** model to copy a large **teacher** model's answers.
+
+**What you need for fine-tuning**: hundreds to thousands of **high-quality examples**, a held-out **test set**, and a baseline (the best prompt) to compare against. Risks: **overfitting** (memorising the examples) and **catastrophic forgetting** (losing general ability).
+
+## Code example
+
+How many numbers LoRA trains compared with full fine-tuning:
+
+```python
+def lora_numbers(d, rank, layers):
+    full = d * d * layers
+    lora = 2 * d * rank * layers
+    return full, lora
+
+for rank in (4, 8, 64):
+    full, lora = lora_numbers(d=4096, rank=rank, layers=64)
+    print(f"rank {rank:>2}: full {full:>13,} | LoRA {lora:>10,} | {lora / full * 100:.2f}% of full")
+```
+
+```output
+rank  4: full 1,073,741,824 | LoRA  2,097,152 | 0.20% of full
+rank  8: full 1,073,741,824 | LoRA  4,194,304 | 0.39% of full
+rank 64: full 1,073,741,824 | LoRA 33,554,432 | 3.12% of full
+```
+
+Memory needed to load a model at different precisions:
+
+```python
+def memory_gb(params_billion, bits):
+    return params_billion * 1e9 * bits / 8 / 1e9
+
+for params in (7, 70):
+    row = "  ".join(f"{bits}-bit {memory_gb(params, bits):>5.1f} GB" for bits in (32, 16, 8, 4))
+    print(f"{params}B model: {row}")
+```
+
+```output
+7B model: 32-bit  28.0 GB  16-bit  14.0 GB  8-bit   7.0 GB  4-bit   3.5 GB
+70B model: 32-bit 280.0 GB  16-bit 140.0 GB  8-bit  70.0 GB  4-bit  35.0 GB
+```
+
+A LoRA update in miniature: the big matrix stays frozen, and the small `A × B` product is added on top:
+
+```python
+W = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]      # frozen 3x3 weights (9 numbers)
+A = [[0.5], [0.0], [0.2]]                                     # 3x1  (trainable)
+B = [[0.1, 0.0, 0.3]]                                         # 1x3  (trainable)  -> rank 1
+
+delta = [[sum(A[i][k] * B[k][j] for k in range(1)) for j in range(3)] for i in range(3)]
+adapted = [[round(W[i][j] + delta[i][j], 2) for j in range(3)] for i in range(3)]
+
+print("trainable numbers:", len(A) * len(A[0]) + len(B) * len(B[0]), "instead of", len(W) * len(W[0]))
+for row in adapted:
+    print(row)
+```
+
+```output
+trainable numbers: 6 instead of 9
+[1.05, 0.0, 0.15]
+[0.0, 1.0, 0.0]
+[0.02, 0.0, 1.06]
+```
+
+<Playground kind="python">
+
+```python
+# Fine-tuning data is usually JSON Lines: one example per line.
+import json
+
+examples = [
+    {"messages": [
+        {"role": "system", "content": "Classify the ticket: billing, delivery or other."},
+        {"role": "user", "content": "I was charged twice for one order"},
+        {"role": "assistant", "content": "billing"}]},
+    {"messages": [
+        {"role": "system", "content": "Classify the ticket: billing, delivery or other."},
+        {"role": "user", "content": "Parcel shows delivered but I did not get it"},
+        {"role": "assistant", "content": "delivery"}]},
+]
+
+jsonl = "\n".join(json.dumps(e) for e in examples)
+print(jsonl[:160] + " ...")
+print("\nexamples:", len(examples), "| need hundreds or more, plus a separate test set")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Fine-tuning before trying prompts and RAG">
+
+<Wrong>
+
+```text
+Day 1: "Let's fine-tune a model so it knows our product catalogue."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+First: a strong prompt with examples. Then RAG for the catalogue. Measure on a test set.
+Fine-tune only for a behaviour gap that remains.
+```
+
+</Right>
+
+Fine-tuning costs data, time and maintenance, and facts go stale the day after training.
+
+</Mistake>
+
+<Mistake title="No held-out test set">
+
+<Wrong>
+
+```text
+Train on all 500 examples and check quality on the same 500.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Train on 400, validate on 50, test on 50 the model never saw. Compare with the prompt-only baseline.
+```
+
+</Right>
+
+Scoring on training data hides overfitting.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is fine-tuning and when is it the right choice?">
+
+Further training of a pre-trained model on task-specific examples so its weights change. It is right when you need consistent style, format or task behaviour that prompts cannot reliably produce, want shorter prompts and lower latency, or want a small model to perform a narrow task well. It is not the tool for frequently changing knowledge.
+
+</QA>
+
+<QA q="Explain LoRA.">
+
+Low-Rank Adaptation freezes the original weights and learns a low-rank update: two small matrices A and B whose product is added to selected weight matrices. With rank r, a d by d layer trains 2·d·r values instead of d squared, often under 1% of the model. Adapters are small files that can be merged into the weights or swapped per task.
+
+</QA>
+
+<QA q="What is quantization and what is the trade-off?">
+
+Representing weights with fewer bits, for example 4-bit or 8-bit instead of 16-bit floats. It cuts memory and often speeds up inference, allowing models to run on smaller GPUs or laptops, at the cost of a small accuracy loss that grows as the bit width shrinks.
+
+</QA>
+
+<QA q="Fine-tuning vs RAG?">
+
+RAG supplies knowledge at request time from an external store: easy to update, citeable, no training. Fine-tuning changes how the model behaves: tone, format, task skill. Use RAG for facts, fine-tuning for behaviour, and both together when you need a specialised model that also answers from current documents.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does LoRA train?',
+      options: ['All model weights', 'Small low-rank matrices added to frozen weights', 'Only the tokenizer', 'The prompt'],
+      answer: 1,
+      why: 'The base model stays frozen; small adapters learn the change.',
+    },
+    {
+      q: 'A 7B model at 4-bit needs about how much memory for weights?',
+      options: ['28 GB', '14 GB', '3.5 GB', '0.5 GB'],
+      answer: 2,
+      why: '7 billion × 4 bits = 3.5 GB.',
+    },
+    {
+      q: 'Your product prices change daily. How should the model learn them?',
+      options: ['Fine-tune daily', 'RAG or a tool', 'Quantize', 'Raise temperature'],
+      answer: 1,
+      why: 'Changing facts belong in retrieval or tools.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Term | Meaning |
+| --- | --- |
+| Fine-tuning | more training on your examples; weights change |
+| Full fine-tuning | all weights; costly |
+| LoRA | train small A×B matrices; base frozen |
+| Rank `r` | size of the adapter; bigger = more capacity |
+| QLoRA | LoRA on a 4-bit base model |
+| PEFT | parameter-efficient fine-tuning methods |
+| Quantization | fewer bits per weight; less memory |
+| Distillation | small student copies large teacher |
+| Data | JSONL examples + held-out test set |
+| Risks | overfitting, forgetting, stale facts |
+| Order | prompt → RAG → fine-tune |
+
+</CheatSheet>

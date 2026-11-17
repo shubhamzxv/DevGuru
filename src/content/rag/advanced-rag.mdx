@@ -1,0 +1,270 @@
+---
+id: rag-advanced-rag
+title: Advanced RAG (query rewriting, HyDE, agentic, GraphRAG)
+summary: "Advanced RAG improves the basic pipeline before retrieval (rewrite or expand the query), during retrieval (filters, parent-child chunks) and after it (rerank, compress), and can let an agent decide when and what to search."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+A new library assistant takes your question word for word and brings whatever matches. An **experienced librarian** first asks what you really mean, searches under **several different wordings**, brings the **whole chapter** when one paragraph is not enough, and goes **back for more** if the first books do not answer the question. Advanced RAG makes the pipeline behave like that librarian.
+
+</Analogy>
+
+## Simple explanation
+
+**Basic (naive) RAG** = embed the question → top-k → prompt. It breaks on vague questions, multi-part questions and answers spread over several documents.
+
+**Improvements by stage**:
+
+| Stage | Technique | What it does |
+| --- | --- | --- |
+| **Before retrieval** | **Query rewriting** | an LLM cleans up or completes the question (fix typos, add context from chat) |
+| | **Multi-query** | generate 3–5 wordings, search each, merge the results |
+| | **Decomposition** | split "compare A and B" into one search for A and one for B |
+| | **HyDE** | ask an LLM to write a **hypothetical answer**, embed **that**, and search with it |
+| | **Routing** | pick the right index or tool for the question (docs, SQL, web) |
+| **During retrieval** | **Hybrid search** | keyword + vector |
+| | **Metadata filters / self-query** | an LLM turns "2026 invoices from Pune" into filters |
+| | **Parent-child (small-to-big)** | match small chunks, return their bigger parent section |
+| | **Contextual chunks** | add a short "where this chunk comes from" line to each chunk before embedding |
+| **After retrieval** | **Reranking** | re-score candidates with a cross-encoder |
+| | **Compression** | keep only the sentences that matter |
+| | **Deduplication** | remove near-identical chunks |
+
+**Why HyDE works**: a question ("how long do refunds take?") and its answer ("refunds take 7 days") are worded differently. A made-up answer looks more like the real answer chunk, so its embedding lands closer to it. The made-up answer is **thrown away** after the search.
+
+**Agentic RAG**: instead of one fixed search, an **agent** gets a search tool and decides: do I need to search? with what query? are the results enough, or should I search again? Better for multi-step questions; slower and costlier.
+
+**GraphRAG**: build a **knowledge graph** of entities and relationships from the documents (person → works at → company). Good for questions that need **connections across many documents** or a summary of a whole collection; expensive to build and maintain.
+
+**Corrective / self-checking RAG**: grade the retrieved chunks; if they look weak, rewrite the query or use another source before answering.
+
+**Advice**: start simple. Add one technique at a time and keep it only if your **eval numbers** improve, because each one adds latency and cost.
+
+## Code example
+
+**Multi-query**: search with several wordings and merge, keeping each chunk's best rank:
+
+```python
+INDEX = {
+    "c1": "refund processed within 7 working days",
+    "c2": "money is returned to the original payment method",
+    "c3": "return window is 10 days from delivery",
+    "c4": "express delivery in 1 day",
+}
+
+def search(query, k=2):
+    q = set(query.lower().split())
+    scored = [(len(q & set(text.split())), cid) for cid, text in INDEX.items()]
+    return [cid for score, cid in sorted(scored, reverse=True)[:k] if score > 0]
+
+question = "when do I get my money back"
+variants = [question, "refund processed days", "return window delivery"]    # an LLM would write these
+
+print("single query:", search(question))
+merged = {}
+for v in variants:
+    for rank, cid in enumerate(search(v), start=1):
+        merged[cid] = min(merged.get(cid, 99), rank)
+print("multi-query: ", sorted(merged, key=merged.get))
+```
+
+```output
+single query: ['c2']
+multi-query:  ['c2', 'c1', 'c3', 'c4']
+```
+
+**Parent-child retrieval**: match a small, precise chunk, but give the model the whole parent section:
+
+```python
+PARENTS = {
+    "warranty": ("Warranty policy. Electronics have a 12 month warranty. Batteries are covered for 6 months. "
+                 "Physical damage and water damage are not covered. Keep the invoice to claim warranty."),
+    "returns": "Returns policy. Returns are free within 10 days. Items must be unused and in original packing.",
+}
+CHILDREN = [("warranty", s.strip()) for s in PARENTS["warranty"].split(".") if s.strip()] + \
+           [("returns", s.strip()) for s in PARENTS["returns"].split(".") if s.strip()]
+
+def best_child(question):
+    q = set(question.lower().replace("?", "").split())
+    return max(CHILDREN, key=lambda c: len(q & set(c[1].lower().split())))
+
+parent_id, child = best_child("are batteries covered?")
+print("matched child:", child)
+print("sent to LLM  :", PARENTS[parent_id])
+```
+
+```output
+matched child: Batteries are covered for 6 months
+sent to LLM  : Warranty policy. Electronics have a 12 month warranty. Batteries are covered for 6 months. Physical damage and water damage are not covered. Keep the invoice to claim warranty.
+```
+
+**HyDE** in miniature: the hypothetical answer shares more words with the real chunk than the question does:
+
+```python
+chunk = "refunds are processed within 7 working days after we receive the item"
+question = "how long until i get my money back"
+hypothetical = "refunds are usually processed within a few working days after the item is received"   # LLM-written guess
+
+def overlap(a, b):
+    a, b = set(a.split()), set(b.split())
+    return round(len(a & b) / len(a | b), 2)
+
+print("question vs chunk:           ", overlap(question, chunk))
+print("hypothetical answer vs chunk:", overlap(hypothetical, chunk))
+```
+
+```output
+question vs chunk:            0.0
+hypothetical answer vs chunk: 0.53
+```
+
+<Playground kind="python">
+
+```python
+# Agentic RAG loop: search, check, search again if needed.
+KNOWLEDGE = {
+    "ceo of acme": "Acme's CEO is Priya Nair.",
+    "priya nair education": "Priya Nair studied at IIT Madras.",
+}
+
+def search(query):
+    return KNOWLEDGE.get(query.lower(), "no result")
+
+def agent(question, max_steps=3):
+    notes = []
+    plan = ["ceo of acme", "priya nair education"]       # a real agent decides each query from the notes
+    for step, query in enumerate(plan[:max_steps], 1):
+        result = search(query)
+        notes.append(result)
+        print(f"step {step}: search({query!r}) -> {result}")
+    return " ".join(notes)
+
+print("answer context:", agent("Where did the CEO of Acme study?"))
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Adding every technique at once">
+
+<Wrong>
+
+```text
+Sprint 1: multi-query + HyDE + reranker + GraphRAG + agents. Latency 14 seconds, nobody knows what helped.
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Baseline → measure → add hybrid search → measure → add reranker → measure. Keep what improves
+recall or faithfulness enough to justify its latency and cost.
+```
+
+</Right>
+
+Each technique adds LLM calls or compute. Prove its value on your eval set.
+
+</Mistake>
+
+<Mistake title="Using HyDE's made-up answer as the final answer">
+
+<Wrong>
+
+```python
+answer = llm("Answer this: " + question)        # hypothetical answer, not grounded
+return answer
+```
+
+</Wrong>
+
+<Right>
+
+```python
+guess = llm("Write a short plausible answer: " + question)
+chunks = search(embed(guess))                   # use the guess ONLY to search
+return llm(grounded_prompt(question, chunks))
+```
+
+</Right>
+
+The hypothetical answer may be wrong. It is a search key, never something shown to the user.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What are the limits of naive RAG and how do you address them?">
+
+Vague or conversational queries retrieve poorly (query rewriting, HyDE), multi-part questions need several searches (decomposition, multi-query), exact terms are missed (hybrid search), relevant chunks rank low (reranking), small chunks lack context (parent-child, contextual chunks), and single-shot retrieval cannot follow multi-hop questions (agentic RAG, GraphRAG).
+
+</QA>
+
+<QA q="What is HyDE?">
+
+Hypothetical Document Embeddings: an LLM first writes a plausible answer to the question; that text is embedded and used as the search query, because an answer-like passage is closer in embedding space to real answer passages than a short question is. The retrieved real chunks are then used for the grounded final answer.
+
+</QA>
+
+<QA q="What is agentic RAG?">
+
+A design where an LLM agent controls retrieval through tools: it decides whether to search, formulates queries, reads results, searches again or uses other sources when information is missing, and then answers. It handles multi-step and open-ended questions better than a fixed pipeline, at higher latency and cost.
+
+</QA>
+
+<QA q="When would you use GraphRAG?">
+
+When questions depend on relationships between entities across many documents (multi-hop) or need a global summary of a corpus. A knowledge graph of entities, relations and community summaries is built during indexing and used with or instead of vector search. It costs more to build and keep updated, so it is used when vector RAG measurably fails on such questions.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In HyDE, what is embedded for the search?',
+      options: ['The user question', 'An LLM-written hypothetical answer', 'The system prompt', 'The whole document'],
+      answer: 1,
+      why: 'An answer-shaped text lands nearer to real answer chunks.',
+    },
+    {
+      q: 'Parent-child retrieval returns?',
+      options: ['Only the tiny matched chunk', 'The larger parent section of the matched chunk', 'A random chunk', 'The full database'],
+      answer: 1,
+      why: 'Search small for precision, return big for context.',
+    },
+    {
+      q: 'Which approach suits "who reports to the manager of the team that owns service X"?',
+      options: ['Single top-k search', 'Multi-hop: agentic RAG or GraphRAG', 'Lower temperature', 'Bigger chunks only'],
+      answer: 1,
+      why: 'The answer needs several linked lookups.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Technique | Fixes |
+| --- | --- |
+| Query rewriting | vague or follow-up questions |
+| Multi-query | one wording misses relevant chunks |
+| Decomposition | multi-part questions |
+| HyDE | question and answer worded differently |
+| Routing | several data sources |
+| Self-query filters | "only 2026", "only my team" |
+| Parent-child | small chunks lack context |
+| Contextual chunks | chunks unclear on their own |
+| Reranking | right chunk ranked low |
+| Compression | too much noise in the prompt |
+| Agentic RAG | multi-step questions |
+| GraphRAG | relationships across documents |
+| Rule | add one at a time; keep only if evals improve |
+
+</CheatSheet>

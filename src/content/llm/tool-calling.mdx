@@ -1,0 +1,277 @@
+---
+id: llm-tool-calling
+title: Tool calling (function calling)
+summary: "With tool calling you describe functions to the model; when it needs one, it returns the function name and arguments as JSON, your code runs it, and you send the result back for the final answer."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+A manager cannot go to the warehouse, but can write a **slip**: "Check stock of item 42". An assistant takes the slip, checks the shelf and brings back the answer. The manager then replies to the customer. The LLM is the manager: it **writes the slip** (the tool call). **Your code** is the assistant that does the work.
+
+</Analogy>
+
+## Simple explanation
+
+**Tool calling** (also called **function calling**) lets a model use live data and take actions.
+
+**The flow, in four messages**:
+
+1. **You → model**: the user's question + a list of **tool definitions**
+2. **Model → you**: "call `get_order` with `{"order_id": "A17"}`" (a **tool call**, not an answer)
+3. **You → model**: the **tool result** (after your code ran the function)
+4. **Model → you**: the final answer in normal language
+
+**A tool definition has three parts**:
+
+| Part | Purpose |
+| --- | --- |
+| **name** | which function, for example `get_order` |
+| **description** | when and why to use it. The model chooses tools mostly from this text |
+| **input schema** | a **JSON Schema** of the arguments |
+
+**Important points**:
+
+- The model **never executes** anything. It only produces JSON. Your code decides whether and how to run it
+- **Validate the arguments** like any untrusted input, and check the **user's permissions** in your code
+- The model may ask for **several tools at once** (parallel tool calls) or call tools over several turns
+- Each tool result is matched to its call by an **id**
+- Return **errors as tool results** ("order not found") so the model can recover or tell the user
+- **Tool choice** settings let you force a tool, forbid tools, or leave it to the model (auto)
+- Tool definitions are sent on every request, so they **cost tokens**. Keep the list short and the descriptions clear
+
+**MCP** builds on this idea: it is a standard way for servers to **offer** tools to any AI app (see the MCP track).
+
+## Code example
+
+The complete flow with a stand-in model, showing the real message shapes:
+
+```python
+import json
+
+TOOLS = [{
+    "name": "get_order",
+    "description": "Look up the status of a customer's order by its id.",
+    "input_schema": {
+        "type": "object",
+        "properties": {"order_id": {"type": "string", "description": "Order id like A17"}},
+        "required": ["order_id"],
+    },
+}]
+
+ORDERS = {"A17": {"status": "shipped", "eta": "Thursday"}}
+
+def get_order(order_id):
+    return ORDERS.get(order_id) or {"error": f"order {order_id} not found"}
+
+def fake_model(messages, tools):
+    last = messages[-1]
+    if last["role"] == "user":                                  # step 2: ask for a tool
+        return {"type": "tool_call", "id": "call_1", "name": "get_order", "arguments": {"order_id": "A17"}}
+    result = json.loads(last["content"])                        # step 4: use the result
+    return {"type": "text", "text": f"Your order is {result['status']} and arrives on {result['eta']}."}
+
+messages = [{"role": "user", "content": "Where is my order A17?"}]
+reply = fake_model(messages, TOOLS)
+print("model:", reply)
+
+if reply["type"] == "tool_call":
+    result = get_order(**reply["arguments"])                    # step 3: OUR code runs it
+    print("tool result:", result)
+    messages.append({"role": "assistant", "tool_call": reply})
+    messages.append({"role": "tool", "tool_call_id": reply["id"], "content": json.dumps(result)})
+    reply = fake_model(messages, TOOLS)
+
+print("final:", reply["text"])
+```
+
+```output
+model: {'type': 'tool_call', 'id': 'call_1', 'name': 'get_order', 'arguments': {'order_id': 'A17'}}
+tool result: {'status': 'shipped', 'eta': 'Thursday'}
+final: Your order is shipped and arrives on Thursday.
+```
+
+Validating arguments before running a tool. The model can send wrong or dangerous arguments:
+
+```python
+SCHEMA = {
+    "type": "object",
+    "properties": {"order_id": {"type": "string"}, "limit": {"type": "integer"}},
+    "required": ["order_id"],
+}
+TYPES = {"string": str, "integer": int}
+
+def validate_args(args, schema):
+    for key in schema["required"]:
+        if key not in args:
+            return f"missing required argument: {key}"
+    for key, value in args.items():
+        if key not in schema["properties"]:
+            return f"unknown argument: {key}"
+        expected = TYPES[schema["properties"][key]["type"]]
+        if not isinstance(value, expected):
+            return f"{key} must be {schema['properties'][key]['type']}"
+    return "ok"
+
+for args in [{"order_id": "A17"}, {"limit": 5}, {"order_id": 17}, {"order_id": "A17", "drop_table": True}]:
+    print(args, "->", validate_args(args, SCHEMA))
+```
+
+```output
+{'order_id': 'A17'} -> ok
+{'limit': 5} -> missing required argument: order_id
+{'order_id': 17} -> order_id must be string
+{'order_id': 'A17', 'drop_table': True} -> unknown argument: drop_table
+```
+
+<Playground kind="python">
+
+```python
+# Parallel tool calls: the model asks for two tools in one reply.
+import json
+
+def get_weather(city):
+    return {"Delhi": 34, "Shimla": 18}.get(city)
+
+def get_distance(a, b):
+    return 343 if {a, b} == {"Delhi", "Shimla"} else None
+
+REGISTRY = {"get_weather": get_weather, "get_distance": get_distance}
+
+tool_calls = [   # what a model might return for: "Is Shimla cooler than Delhi, and how far is it?"
+    {"id": "c1", "name": "get_weather", "arguments": {"city": "Delhi"}},
+    {"id": "c2", "name": "get_weather", "arguments": {"city": "Shimla"}},
+    {"id": "c3", "name": "get_distance", "arguments": {"a": "Delhi", "b": "Shimla"}},
+]
+
+results = []
+for call in tool_calls:
+    output = REGISTRY[call["name"]](**call["arguments"])
+    results.append({"tool_call_id": call["id"], "content": json.dumps(output)})
+
+for r in results:
+    print(r)
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="A vague tool description">
+
+<Wrong>
+
+```json
+{ "name": "search", "description": "Searches." }
+```
+
+</Wrong>
+
+<Right>
+
+```json
+{
+  "name": "search_orders",
+  "description": "Find a customer's past orders by date range or product name. Use when the user asks about previous purchases. Returns at most 10 orders."
+}
+```
+
+</Right>
+
+The model picks tools from their names and descriptions. Say what it does, when to use it and what it returns.
+
+</Mistake>
+
+<Mistake title="Trusting the model for authorization">
+
+<Wrong>
+
+```python
+def get_order(order_id, user_id):       # the model supplies user_id
+    return db.orders.find(order_id, user_id)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+def get_order(order_id):
+    return db.orders.find(order_id, user_id=session.user_id)   # from your auth, not from the model
+```
+
+</Right>
+
+Never let the model choose whose data to read. Take identity from your own session.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Explain how function calling works.">
+
+The application sends the model tool definitions (name, description, JSON Schema). If the model decides a tool is needed, it returns a structured tool call with arguments instead of text. The application validates and executes the function, sends the result back as a tool message linked by id, and the model produces the final answer or more tool calls.
+
+</QA>
+
+<QA q="Does the LLM execute the function?">
+
+No. The model only outputs the name and arguments. Execution, validation, authorization, timeouts and error handling all happen in the application, which is what makes tool use controllable.
+
+</QA>
+
+<QA q="How do you make tool calling reliable?">
+
+Clear names and descriptions, strict schemas with enums and required fields, few well-scoped tools, argument validation, helpful error results the model can act on, limits on loop steps, idempotent or confirmed write operations, and evals that check the right tool is chosen.
+
+</QA>
+
+<QA q="What is the difference between tool calling and MCP?">
+
+Tool calling is the model API feature for requesting a function. MCP is a protocol between applications and tool providers: an MCP server publishes tools, resources and prompts, and any MCP-capable host can discover and use them. The host still passes those tools to the model through tool calling.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'What does the model return when it wants to use a tool?',
+      options: ['The tool’s result', 'The tool name and JSON arguments', 'Python code to run', 'Nothing'],
+      answer: 1,
+      why: 'A structured request; your code runs the tool.',
+    },
+    {
+      q: 'What describes a tool’s arguments?',
+      options: ['A regex', 'JSON Schema', 'A SQL table', 'An embedding'],
+      answer: 1,
+      why: 'The input schema is JSON Schema.',
+    },
+    {
+      q: 'A tool fails with "not found". What should you return to the model?',
+      options: ['Nothing', 'The error as the tool result', 'A fake success', 'Restart the chat'],
+      answer: 1,
+      why: 'The model can then explain or try something else.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Tool definition | name + description + JSON Schema |
+| Step 1 | send question + tools |
+| Step 2 | model returns tool call (name, arguments, id) |
+| Step 3 | your code validates, runs, returns result with the id |
+| Step 4 | model writes the final answer |
+| Parallel calls | several tool calls in one reply |
+| Tool choice | auto / force a tool / none |
+| Errors | return them as tool results |
+| Security | validate args, auth in code, confirm writes |
+| Cost | tool definitions count as input tokens |
+
+</CheatSheet>

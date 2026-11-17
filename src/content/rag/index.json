@@ -1,0 +1,79 @@
+{
+  "name": "RAG",
+  "icon": "📚",
+  "tagline": "Answer from your own documents",
+  "order": 15,
+  "playground": "python",
+  "modules": [
+    {
+      "title": "Basics",
+      "topics": [
+        {
+          "id": "rag-what-is-rag",
+          "slug": "what-is-rag",
+          "title": "What is RAG?"
+        },
+        {
+          "id": "rag-embeddings",
+          "slug": "embeddings",
+          "title": "Embeddings and similarity"
+        },
+        {
+          "id": "rag-chunking",
+          "slug": "chunking",
+          "title": "Chunking documents"
+        },
+        {
+          "id": "rag-vector-databases",
+          "slug": "vector-databases",
+          "title": "Vector databases and ANN search"
+        }
+      ]
+    },
+    {
+      "title": "Pipeline",
+      "topics": [
+        {
+          "id": "rag-retrieval-pipeline",
+          "slug": "retrieval-pipeline",
+          "title": "Build a RAG pipeline step by step"
+        },
+        {
+          "id": "rag-hybrid-search-and-reranking",
+          "slug": "hybrid-search-and-reranking",
+          "title": "Hybrid search and reranking"
+        },
+        {
+          "id": "rag-grounded-prompts",
+          "slug": "grounded-prompts",
+          "title": "Grounded prompts and citations"
+        }
+      ]
+    },
+    {
+      "title": "Quality",
+      "topics": [
+        {
+          "id": "rag-rag-evaluation",
+          "slug": "rag-evaluation",
+          "title": "Evaluating RAG"
+        },
+        {
+          "id": "rag-advanced-rag",
+          "slug": "advanced-rag",
+          "title": "Advanced RAG (query rewriting, HyDE, agentic, GraphRAG)"
+        }
+      ]
+    },
+    {
+      "title": "Revision",
+      "topics": [
+        {
+          "id": "rag-interview-revision",
+          "slug": "interview-revision",
+          "title": "RAG interview revision"
+        }
+      ]
+    }
+  ]
+}

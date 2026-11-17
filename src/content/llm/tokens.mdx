@@ -1,0 +1,260 @@
+---
+id: llm-tokens
+title: Tokens and tokenization
+summary: "Models read and write tokens, which are pieces of words; tokens decide the cost, the speed and the size limit of every request."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+A long train is not moved as one piece. It is a chain of **coaches**. Text for a model is the same: before the model sees it, the text is cut into small coaches called **tokens**. You pay per coach, and the platform (context window) fits only so many coaches.
+
+</Analogy>
+
+## Simple explanation
+
+A **token** is a chunk of text: a whole short word, a piece of a longer word, a space plus a word, a punctuation mark or a digit group.
+
+**Tokenization** has two directions:
+
+- **Encode**: text → list of token ids (numbers)
+- **Decode**: token ids → text
+
+**Rules of thumb for English**: 1 token ≈ **4 characters** ≈ **¾ of a word**. So 1,000 tokens ≈ 750 words. Code, numbers, rare words and many non-English scripts (Hindi, Tamil) usually need **more tokens** for the same meaning.
+
+**Why not whole words?** A word-level vocabulary would need millions of entries and still fail on new words. **Subword** tokenizers such as **BPE (Byte Pair Encoding)** start from characters and repeatedly **merge the most frequent pair** into a new token. Common words become one token; rare words are built from pieces. Any text can be encoded.
+
+**Why tokens matter to a backend engineer**:
+
+| Area | Effect |
+| --- | --- |
+| **Cost** | priced per input token and per output token |
+| **Limits** | context window and `max_tokens` are counted in tokens |
+| **Speed** | output is generated token by token |
+| **Rate limits** | tokens per minute (TPM) |
+
+Each model family has its **own tokenizer**, so the same text has different token counts on different models. Use the provider's token counter for exact numbers.
+
+**Special tokens** mark things like the start or end of text and the boundaries between chat roles.
+
+## Code example
+
+A small BPE tokenizer trained in front of you. Watch frequent pairs get merged into bigger tokens:
+
+```python
+from collections import Counter
+
+corpus = "low lower lowest slow slower slowest"
+words = [list(w) + ["_"] for w in corpus.split()]      # "_" marks the end of a word
+
+def most_frequent_pair(words):
+    pairs = Counter()
+    for w in words:
+        pairs.update(zip(w, w[1:]))
+    return pairs.most_common(1)[0]
+
+def merge(words, pair):
+    merged = []
+    for w in words:
+        out, i = [], 0
+        while i < len(w):
+            if i + 1 < len(w) and (w[i], w[i + 1]) == pair:
+                out.append(w[i] + w[i + 1]); i += 2
+            else:
+                out.append(w[i]); i += 1
+        merged.append(out)
+    return merged
+
+merges = []
+for step in range(1, 7):
+    pair, count = most_frequent_pair(words)
+    words = merge(words, pair)
+    merges.append(pair)
+    print(f"merge {step}: {pair[0]!r} + {pair[1]!r} (seen {count} times)")
+
+print()
+for w in words:
+    print(w)
+```
+
+```output
+merge 1: 'l' + 'o' (seen 6 times)
+merge 2: 'lo' + 'w' (seen 6 times)
+merge 3: 'low' + 'e' (seen 4 times)
+merge 4: 'low' + '_' (seen 2 times)
+merge 5: 'lowe' + 'r' (seen 2 times)
+merge 6: 'lower' + '_' (seen 2 times)
+
+['low_']
+['lower_']
+['lowe', 's', 't', '_']
+['s', 'low_']
+['s', 'lower_']
+['s', 'lowe', 's', 't', '_']
+```
+
+Estimating tokens and cost with the 4-characters rule:
+
+```python
+def rough_tokens(text):
+    return max(1, round(len(text) / 4))
+
+samples = {
+    "short question": "What is the capital of India?",
+    "email": "Hello team, " + "please review the attached report and share feedback by Friday. " * 6,
+    "code": "def add(a, b):\n    return a + b\n" * 10,
+}
+price_per_million = 3.00           # example input price in dollars
+for name, text in samples.items():
+    t = rough_tokens(text)
+    print(f"{name:<15} {len(text):>4} chars ≈ {t:>4} tokens ≈ ${t / 1e6 * price_per_million:.6f}")
+```
+
+```output
+short question    29 chars ≈    7 tokens ≈ $0.000021
+email            396 chars ≈   99 tokens ≈ $0.000297
+code             320 chars ≈   80 tokens ≈ $0.000240
+```
+
+<Playground kind="python">
+
+```python
+# Encode new words with merges learned from a tiny corpus.
+merges = [("l", "o"), ("lo", "w"), ("e", "r"), ("s", "t"), ("e", "st")]
+
+def encode(word):
+    tokens = list(word)
+    for a, b in merges:                      # apply merges in the order they were learned
+        i, out = 0, []
+        while i < len(tokens):
+            if i + 1 < len(tokens) and tokens[i] == a and tokens[i + 1] == b:
+                out.append(a + b); i += 2
+            else:
+                out.append(tokens[i]); i += 1
+        tokens = out
+    return tokens
+
+for word in ["lower", "lowest", "flower", "tester"]:
+    print(f"{word:<8} -> {encode(word)}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Counting words or characters as tokens">
+
+<Wrong>
+
+```python
+if len(text.split()) < 8000:        # "under the 8k token limit"
+    send(text)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+if count_tokens(text) < 8000:       # the provider's tokenizer or token-count API
+    send(text)
+```
+
+</Right>
+
+Words and tokens differ, and code or Hindi text can use far more tokens than the word count suggests.
+
+</Mistake>
+
+<Mistake title="Forgetting output tokens">
+
+<Wrong>
+
+```text
+"The prompt is 500 tokens, so each call costs 500 tokens."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Cost = input tokens + output tokens (output is usually priced several times higher).
+Set max_tokens to cap the output."
+```
+
+</Right>
+
+Long answers are often the bigger part of the bill and the latency.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is a token?">
+
+The unit of text a model processes: a word, part of a word, punctuation or whitespace, mapped to an integer id. In English a token averages about four characters. Limits, pricing and speed are all measured in tokens.
+
+</QA>
+
+<QA q="How does Byte Pair Encoding work?">
+
+Start with a vocabulary of single characters or bytes. Count adjacent pairs in the training text and merge the most frequent pair into a new token. Repeat until the vocabulary reaches the target size. Frequent words end up as single tokens, rare words split into known pieces, and no word is ever out of vocabulary.
+
+</QA>
+
+<QA q="Why do LLMs use subword tokens instead of words or characters?">
+
+Word vocabularies are huge and cannot handle unseen words. Character sequences are very long, which costs compute and makes patterns harder to learn. Subwords are a balance: a manageable vocabulary, short sequences and full coverage.
+
+</QA>
+
+<QA q="Why does token count matter in system design?">
+
+It sets the cost per request, decides whether input fits the context window, drives latency through output length, and counts against tokens-per-minute rate limits. So you budget tokens: trim history, limit retrieved chunks and cap output.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'About how many English words is 1,000 tokens?',
+      options: ['250', '750', '1,000', '4,000'],
+      answer: 1,
+      why: 'One token is about three-quarters of a word.',
+    },
+    {
+      q: 'What does BPE merge at each step?',
+      options: ['The longest word', 'The most frequent adjacent pair', 'Random letters', 'All vowels'],
+      answer: 1,
+      why: 'The most common pair becomes a new token.',
+    },
+    {
+      q: 'Is the token count of a text the same on every model?',
+      options: ['Yes', 'No, each model family has its own tokenizer', 'Only for English', 'Only for code'],
+      answer: 1,
+      why: 'Different tokenizers split text differently.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Token | piece of text → integer id |
+| English rule | 1 token ≈ 4 chars ≈ 0.75 word |
+| Encode / decode | text → ids / ids → text |
+| BPE | merge the most frequent pair, repeat |
+| Subword | common word = 1 token, rare word = pieces |
+| Cost | input tokens + output tokens |
+| Limits | context window, `max_tokens`, tokens per minute |
+| More tokens | code, numbers, non-English scripts |
+| Exact count | provider's tokenizer or count API |
+| Special tokens | start/end and chat-role markers |
+
+</CheatSheet>

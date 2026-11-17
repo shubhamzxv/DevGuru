@@ -1,0 +1,248 @@
+---
+id: rag-interview-revision
+title: RAG interview revision
+summary: "One-page RAG revision: the two pipelines, every design choice with a default, the common failure causes with fixes, the metrics and a system design answer you can give in an interview."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+Your **one-page RAG notes** before an interview: what happens at each step, which default to say, and how to debug when the answer is wrong.
+
+</Analogy>
+
+## Simple explanation
+
+**The two pipelines** (draw these on the whiteboard):
+
+`Indexing:  load → chunk → embed → store (vector + text + metadata)`
+
+`Query:  rewrite → embed → hybrid search + filters → rerank → grounded prompt → LLM → check citations`
+
+**Design choices and sensible defaults**
+
+| Choice | Default to say | Why |
+| --- | --- | --- |
+| Chunk size | 300–500 tokens, 10–20% overlap | focused but complete |
+| Chunking | recursive, structure-aware for Markdown / HTML | cut at natural borders |
+| Embedding model | one model for docs and queries; supports your languages | comparable vectors |
+| Store | pgvector if you already use Postgres; dedicated DB at large scale | fewer systems |
+| Index | HNSW | fast, high recall |
+| Search | hybrid (BM25 + vector) with RRF | meaning + exact terms |
+| Candidates | retrieve 20–50, rerank, keep 3–8 | recall then precision |
+| Filters | tenant / permission / date in the query | security and freshness |
+| Prompt | only from sources, cite, "I don't know" | grounding |
+| Temperature | 0 | repeatable, factual |
+| Evals | recall@k, MRR, faithfulness, refusal tests | know what to fix |
+
+**Debugging order when an answer is wrong**:
+
+1. **Was the right chunk retrieved?** If no: chunking, embeddings, hybrid search, query rewriting, filters
+2. **Was it ranked high enough to reach the prompt?** If no: reranker, top-k
+3. **Was it in the prompt but ignored?** Then: prompt, noise, context order, model
+4. **Is the source itself wrong or old?** Then: re-index, remove stale documents
+
+## Code example
+
+A failure diagnoser: given what happened at each stage, name the stage to fix:
+
+```python
+def diagnose(relevant_id, retrieved, sent_to_llm, answer_correct):
+    if answer_correct:
+        return "ok"
+    if relevant_id not in retrieved:
+        return "RETRIEVAL: right chunk not found (chunking / embeddings / hybrid / query rewrite)"
+    if relevant_id not in sent_to_llm:
+        return "RANKING: found but cut off (add a reranker or raise top-k)"
+    return "GENERATION: chunk was in the prompt (fix prompt, reduce noise, check model)"
+
+cases = [
+    ("c5", ["c5", "c2", "c9"], ["c5", "c2"], True),
+    ("c5", ["c1", "c2", "c9"], ["c1", "c2"], False),
+    ("c5", ["c1", "c2", "c5"], ["c1", "c2"], False),
+    ("c5", ["c5", "c2", "c9"], ["c5", "c2"], False),
+]
+for i, case in enumerate(cases, 1):
+    print(f"case {i}: {diagnose(*case)}")
+```
+
+```output
+case 1: ok
+case 2: RETRIEVAL: right chunk not found (chunking / embeddings / hybrid / query rewrite)
+case 3: RANKING: found but cut off (add a reranker or raise top-k)
+case 4: GENERATION: chunk was in the prompt (fix prompt, reduce noise, check model)
+```
+
+Sizing a RAG index, a common estimation question:
+
+```python
+documents = 20_000
+pages_per_doc = 10
+tokens_per_page = 500
+chunk_tokens, overlap = 400, 50
+dimensions = 1024
+
+total_tokens = documents * pages_per_doc * tokens_per_page
+chunks = total_tokens // (chunk_tokens - overlap)
+vector_bytes = chunks * dimensions * 4                       # float32 = 4 bytes
+embed_cost = total_tokens / 1e6 * 0.10                       # example price per million tokens
+
+print(f"total tokens: {total_tokens:,}")
+print(f"chunks: {chunks:,}")
+print(f"vector storage: {vector_bytes / 1e9:.2f} GB (+ index overhead and text)")
+print(f"one-time embedding cost at $0.10/M tokens: ${embed_cost:.2f}")
+```
+
+```output
+total tokens: 100,000,000
+chunks: 285,714
+vector storage: 1.17 GB (+ index overhead and text)
+one-time embedding cost at $0.10/M tokens: $10.00
+```
+
+<Playground kind="python">
+
+```python
+# Self-test: match the symptom to the first thing to try.
+fixes = {
+    "Misses exact product codes": "Hybrid search (add BM25)",
+    "Follow-up questions retrieve junk": "Rewrite to a standalone question",
+    "Right chunk is rank 12": "Reranker",
+    "Answers quote last year's policy": "Re-index; delete stale chunks; date filter",
+    "Chunks start mid-sentence": "Sentence / structure-aware chunking with overlap",
+    "User sees another team's documents": "Permission filter inside the search query",
+    "Bot answers questions it has no document for": "Score threshold + 'I don't know' rule",
+    "Answer adds facts not in sources": "Stricter grounding + faithfulness check",
+}
+for symptom, fix in fixes.items():
+    print(f"{symptom:<46} -> {fix}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Describing RAG as 'the model searches the database'">
+
+<Wrong>
+
+```text
+"In RAG the LLM queries the vector database and learns the documents."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Our application retrieves the relevant chunks and places them in the prompt. The LLM only
+reads that prompt; its weights never change."
+```
+
+</Right>
+
+Retrieval is your code's job (unless you build agentic RAG, where the model asks for a search through a tool).
+
+</Mistake>
+
+<Mistake title="Forgetting security in a design answer">
+
+<Wrong>
+
+```text
+"All company documents go into one index and everyone can ask anything."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"Each chunk stores access tags. The retriever filters by the user's permissions in the query,
+so restricted text never reaches the prompt."
+```
+
+</Right>
+
+Interviewers expect access control, PII handling and prompt-injection awareness in a RAG design.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Design a RAG system for 1 million internal documents.">
+
+Ingestion: connectors pull documents and permissions; a queue feeds workers that extract text, chunk (structure-aware, about 400 tokens, overlap), embed in batches and upsert into a vector store with HNSW, keyed by document id with ACL, date and source metadata; changes are detected by hash and re-indexed. Query: authenticate, rewrite the question, run hybrid search filtered by the user's permissions, rerank the top 50 to 5, build a grounded prompt with numbered sources, stream the LLM answer, verify citations. Operations: caching, rate limits, logging of chunk ids, evals for retrieval and faithfulness, monitoring of cost and latency.
+
+</QA>
+
+<QA q="How do you reduce hallucinations in RAG?">
+
+Improve retrieval recall (hybrid search, reranking, better chunks), apply a relevance threshold, use a strict grounded prompt with an "I don't know" option and required citations, set temperature to 0, verify citations and faithfulness after generation, and keep the index fresh.
+
+</QA>
+
+<QA q="How do you handle access control in RAG?">
+
+Store permission metadata (tenant, groups, roles) with each chunk at indexing time and apply it as a filter inside the retrieval query using the authenticated user's identity. Sync permission changes, never rely on the LLM to hide content, and avoid caching answers across users with different rights.
+
+</QA>
+
+<QA q="How do you keep latency low in a RAG API?">
+
+Fast ANN index and metadata filters, embedding and search in tens of milliseconds, rerank only a small candidate set, limit context tokens, stream the generation, cache embeddings of frequent queries and whole answers where safe, run independent steps in parallel, and use a smaller model when quality allows.
+
+</QA>
+
+<QA q="With very large context windows, why not send all documents to the model?">
+
+Cost and latency grow with every token on every request, accuracy drops when key facts are buried in long context, most corpora are far larger than any window, and retrieval gives freshness, citations and per-user access control.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'First thing to check when a RAG answer is wrong?',
+      options: ['Change the LLM', 'Whether the right chunk was retrieved', 'Raise temperature', 'Rebuild the UI'],
+      answer: 1,
+      why: 'Most failures are retrieval failures.',
+    },
+    {
+      q: 'Where must permission filtering happen?',
+      options: ['In the system prompt', 'Inside the retrieval query', 'In the browser', 'After the answer is shown'],
+      answer: 1,
+      why: 'Restricted text must never reach the prompt.',
+    },
+    {
+      q: 'A typical two-stage retrieval is?',
+      options: ['Retrieve 5, send 50', 'Retrieve 20–50, rerank, send 3–8', 'Retrieve 1', 'Send everything'],
+      answer: 1,
+      why: 'Wide first for recall, then narrow for precision.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Area | Remember |
+| --- | --- |
+| Indexing | load → chunk → embed → store + metadata |
+| Query | rewrite → embed → hybrid + filter → rerank → prompt → LLM |
+| Chunks | 300–500 tokens, 10–20% overlap |
+| Similarity | cosine on embeddings |
+| Index | HNSW (ANN) |
+| Hybrid | BM25 + vectors, fused with RRF |
+| Rerank | cross-encoder on top 20–50 |
+| Prompt | sources only, cite, "I don't know", temperature 0 |
+| Metrics | recall@k, MRR, faithfulness, relevance |
+| Security | permission filters, PII, injection in documents |
+| Freshness | upsert / delete by doc id on change |
+| Advanced | multi-query, HyDE, parent-child, agentic, GraphRAG |
+| Debug | retrieval → ranking → generation → source |
+
+</CheatSheet>

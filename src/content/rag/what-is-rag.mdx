@@ -1,0 +1,258 @@
+---
+id: rag-what-is-rag
+title: What is RAG?
+summary: "Retrieval-Augmented Generation first finds the pieces of your documents that match the question, then gives them to the LLM so it answers from that text instead of from memory."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+A **closed-book exam** tests only what you remember, and you may guess. An **open-book exam** lets you find the right page first and then write the answer from it. **RAG** turns every question into an open-book exam for the model: **find the page, then answer**.
+
+</Analogy>
+
+## Simple explanation
+
+**RAG** = **R**etrieval-**A**ugmented **G**eneration.
+
+- **Retrieval**: search your documents for the parts that match the question
+- **Augmented**: add those parts to the prompt
+- **Generation**: the LLM writes the answer using them
+
+**Why it is needed**: an LLM does not know your company's documents, does not know anything after its training cutoff, and guesses when it lacks facts. RAG fixes all three **without retraining** the model.
+
+**Two pipelines**:
+
+**1. Indexing (done once, and again when documents change)**
+
+1. **Load** documents (PDF, HTML, tickets, database rows)
+2. **Chunk**: split them into small pieces
+3. **Embed**: turn each chunk into a vector with an embedding model
+4. **Store** vectors + text + metadata in a **vector database**
+
+**2. Query (done for every question)**
+
+1. **Embed** the question with the same embedding model
+2. **Retrieve** the top-k most similar chunks
+3. **Build the prompt**: instructions + chunks + question
+4. **Generate** the answer, with **citations**
+
+| Benefit | Why |
+| --- | --- |
+| Fewer hallucinations | the answer is grounded in real text |
+| Fresh knowledge | update the index, not the model |
+| Citations | you know which chunk each fact came from |
+| Access control | retrieve only what this user may see |
+| Cheaper than fine-tuning | no training run |
+
+**RAG can still fail**: if retrieval brings the wrong chunks, the answer will be wrong or "I don't know". Most RAG problems are **retrieval problems**.
+
+## Code example
+
+The smallest possible RAG: retrieve by shared words, then build a grounded prompt. Later topics replace word matching with embeddings:
+
+```python
+DOCS = [
+    "Refunds are processed within 7 working days after we receive the returned item.",
+    "Standard delivery takes 3 to 5 days. Express delivery takes 1 day in metro cities.",
+    "You can pay by UPI, credit card, debit card or cash on delivery.",
+    "The warranty on electronics is 12 months from the date of purchase.",
+]
+
+STOPWORDS = {"the", "a", "is", "are", "on", "of", "to", "in", "by", "or", "we", "you", "can", "how", "long", "does", "what", "do", "i"}
+
+def words(text):
+    return {w.strip(".,?").lower() for w in text.split()} - STOPWORDS
+
+def retrieve(question, k=2):
+    scored = [(len(words(question) & words(doc)), doc) for doc in DOCS]
+    scored = [(s, d) for s, d in scored if s > 0]
+    return [d for s, d in sorted(scored, key=lambda x: -x[0])[:k]]
+
+def build_prompt(question, chunks):
+    context = "\n".join(f"[{i}] {c}" for i, c in enumerate(chunks, 1))
+    return (f"Answer using only the sources below. Cite like [1]. "
+            f"If the answer is not there, say you don't know.\n\n{context}\n\nQuestion: {question}")
+
+question = "How long does delivery take?"
+chunks = retrieve(question)
+print(build_prompt(question, chunks))
+print()
+print("retrieved for 'Do you have a store in Goa?':", retrieve("Do you have a store in Goa?"))
+```
+
+```output
+Answer using only the sources below. Cite like [1]. If the answer is not there, say you don't know.
+
+[1] Standard delivery takes 3 to 5 days. Express delivery takes 1 day in metro cities.
+[2] You can pay by UPI, credit card, debit card or cash on delivery.
+
+Question: How long does delivery take?
+
+retrieved for 'Do you have a store in Goa?': []
+```
+
+<Playground kind="diagram">
+
+```json
+{
+  "nodes": [
+    { "id": "docs", "label": "Documents", "icon": "📄", "col": 0, "row": 0, "info": "PDFs, help pages, tickets, database rows: your private knowledge.", "example": "refund-policy.pdf" },
+    { "id": "chunker", "label": "Chunker", "icon": "✂️", "col": 1, "row": 0, "info": "Splits each document into small overlapping pieces.", "example": "400 tokens, 50 overlap" },
+    { "id": "embedder", "label": "Embedding model", "icon": "🔢", "col": 2, "row": 0, "info": "Turns text into a vector. The same model is used for chunks and questions.", "example": "[0.12, -0.48, ...]" },
+    { "id": "vdb", "label": "Vector DB", "icon": "🗄️", "col": 3, "row": 0, "info": "Stores vectors, text and metadata; finds the nearest vectors fast.", "example": "top_k = 5" },
+    { "id": "user", "label": "User question", "icon": "🙋", "col": 0, "row": 2, "info": "A question in normal language.", "example": "How long do refunds take?" },
+    { "id": "prompt", "label": "Prompt builder", "icon": "🧩", "col": 3, "row": 2, "info": "Instructions + retrieved chunks + question.", "example": "Answer only from the sources" },
+    { "id": "llm", "label": "LLM", "icon": "🧠", "col": 4, "row": 2, "info": "Writes the answer from the chunks and cites them.", "example": "7 working days [1]" }
+  ],
+  "edges": [
+    ["docs", "chunker", "load"],
+    ["chunker", "embedder", "chunks"],
+    ["embedder", "vdb", "vectors"],
+    ["user", "embedder", "embed question"],
+    ["vdb", "prompt", "top-k chunks"],
+    ["user", "prompt", "question"],
+    ["prompt", "llm", "grounded prompt"]
+  ],
+  "flows": [
+    {
+      "name": "Indexing (once)",
+      "steps": [
+        ["docs", "Load the documents."],
+        ["chunker", "Split into chunks with a little overlap."],
+        ["embedder", "Embed every chunk."],
+        ["vdb", "Store vector + text + metadata (source, date, access)."]
+      ]
+    },
+    {
+      "name": "Answering a question",
+      "steps": [
+        ["user", "The user asks a question."],
+        ["embedder", "Embed the question with the same model."],
+        ["vdb", "Find the 5 nearest chunks."],
+        ["prompt", "Put the chunks and the question in one prompt."],
+        ["llm", "Generate an answer with citations."]
+      ]
+    }
+  ]
+}
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Blaming the LLM for a retrieval problem">
+
+<Wrong>
+
+```text
+"The answer is wrong, let's switch to a bigger model."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"First print the retrieved chunks. Is the right passage among them? If not, fix chunking,
+embeddings or search before touching the LLM."
+```
+
+</Right>
+
+If the right text never reaches the prompt, no model can answer correctly.
+
+</Mistake>
+
+<Mistake title="No way to say 'I don't know'">
+
+<Wrong>
+
+```text
+Prompt: "Use the context to answer the question."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+Prompt: "Answer only from the sources. If they do not contain the answer, say you don't know."
+```
+
+</Right>
+
+Without this line the model fills gaps from memory, and you are back to hallucinations.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is RAG and why is it used?">
+
+Retrieval-Augmented Generation retrieves relevant passages from an external knowledge source and adds them to the LLM prompt so the answer is grounded in them. It gives the model private and current knowledge, reduces hallucinations, enables citations and access control, and avoids retraining.
+
+</QA>
+
+<QA q="Explain the RAG pipeline end to end.">
+
+Indexing: load documents, split into chunks, embed each chunk, store vectors with text and metadata in a vector store. Query: embed the question with the same model, retrieve top-k chunks by similarity (often hybrid search plus reranking), build a prompt with instructions, chunks and the question, generate the answer with citations, and optionally validate it.
+
+</QA>
+
+<QA q="RAG vs fine-tuning?">
+
+RAG supplies knowledge at query time: easy to update, citeable, good for large or changing data. Fine-tuning changes the model's behaviour: style, format or a narrow skill. They solve different problems and are often combined.
+
+</QA>
+
+<QA q="Where does RAG usually fail?">
+
+Mostly in retrieval: poor chunking, a weak embedding model for the domain, missing keyword matches (ids, codes), no reranking, wrong metadata filters, or stale indexes. Generation can also ignore the context or mix in memory, which grounded prompts and faithfulness checks address.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'In RAG, what happens first when a question arrives?',
+      options: ['The LLM answers', 'Relevant chunks are retrieved', 'The model is fine-tuned', 'Documents are re-chunked'],
+      answer: 1,
+      why: 'Retrieve, then generate.',
+    },
+    {
+      q: 'How do you update a RAG system when a policy changes?',
+      options: ['Retrain the LLM', 'Re-index the changed document', 'Raise temperature', 'Nothing'],
+      answer: 1,
+      why: 'Knowledge lives in the index, not in the model.',
+    },
+    {
+      q: 'The right passage was not retrieved. The answer will most likely be?',
+      options: ['Correct anyway', 'Wrong or "I don’t know"', 'Faster', 'Cited correctly'],
+      answer: 1,
+      why: 'The model can only ground its answer in what it receives.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Step | What happens |
+| --- | --- |
+| Load | read PDFs, pages, tickets |
+| Chunk | split into pieces (with overlap) |
+| Embed | chunk → vector |
+| Store | vector DB: vector + text + metadata |
+| Query embed | question → vector (same model) |
+| Retrieve | top-k nearest chunks |
+| Augment | instructions + chunks + question |
+| Generate | answer with citations |
+| Debug order | retrieval first, then prompt, then model |
+| Key line | "answer only from the sources, else say you don't know" |
+
+</CheatSheet>

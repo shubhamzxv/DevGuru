@@ -1,0 +1,232 @@
+---
+id: genai-interview-revision
+title: Generative AI interview revision
+summary: "One-page revision of Generative AI for interviews: key terms, how a GenAI request flows through a backend, the prompt vs RAG vs fine-tuning choice, agents, risks and a full cheat sheet."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+This is the **last-night revision sheet**: every GenAI word an interviewer may use, each with a one-line meaning you can say out loud.
+
+</Analogy>
+
+## Simple explanation
+
+**The 20 words to know**
+
+| Word | One-line meaning |
+| --- | --- |
+| **Generative AI** | AI that creates content |
+| **LLM** | text model that predicts the next token |
+| **Token** | a piece of a word; the unit of cost and limits |
+| **Context window** | how many tokens the model can read at once |
+| **Prompt** | the input; system + user + history |
+| **Temperature** | randomness of the output |
+| **Embedding** | a vector that represents meaning |
+| **Vector database** | stores embeddings and finds the nearest ones |
+| **RAG** | retrieve documents, then generate an answer from them |
+| **Fine-tuning** | extra training to change behaviour |
+| **Hallucination** | fluent but false output |
+| **Tool calling** | the model asks your code to run a function |
+| **Agent** | LLM + tools + loop |
+| **MCP** | open standard to connect AI apps to tools and data |
+| **Guardrails** | checks on input, output and actions |
+| **Prompt injection** | hidden instructions in text the model reads |
+| **Multimodal** | text + image + audio in one model |
+| **Diffusion** | image generation by removing noise |
+| **Inference** | running the model on a request |
+| **Evals** | tests that score model output |
+
+**How one request flows** (say this in a design round):
+
+1. The user sends a question to **your API** (auth, rate limit)
+2. **Input guardrails**: validate, mask PII
+3. **Retrieve** context if needed (vector search)
+4. **Build the prompt**: system rules + context + question
+5. **Call the LLM** (stream, timeout, retry)
+6. If the model asks for a **tool**, run it and loop
+7. **Output guardrails**: validate format, check grounding
+8. Return the answer with **citations**; **log** tokens, cost, latency
+
+## Code example
+
+The whole flow as a small pipeline, with the model replaced by a stand-in function:
+
+```python
+DOCS = {
+    "refund": "Refunds are processed within 7 working days.",
+    "shipping": "We ship across India in 3 to 5 days.",
+}
+
+def input_guardrail(q):
+    if len(q) > 200:
+        raise ValueError("question too long")
+    return q.strip()
+
+def retrieve(q):
+    return [text for key, text in DOCS.items() if key in q.lower()]
+
+def build_prompt(q, context):
+    return f"Answer only from the context.\nContext: {' '.join(context) or 'none'}\nQuestion: {q}"
+
+def fake_llm(prompt):
+    context = prompt.split("Context: ")[1].split("\n")[0]
+    return "I don't know." if context == "none" else context
+
+def output_guardrail(answer, context):
+    return answer if answer == "I don't know." or answer in " ".join(context) else "I don't know."
+
+def answer(q):
+    q = input_guardrail(q)
+    context = retrieve(q)
+    reply = output_guardrail(fake_llm(build_prompt(q, context)), context)
+    return reply, len(context)
+
+for q in ["How long does a refund take?", "Do you sell gift cards?"]:
+    reply, n = answer(q)
+    print(f"Q: {q}\nA: {reply}  (sources: {n})")
+```
+
+```output
+Q: How long does a refund take?
+A: Refunds are processed within 7 working days.  (sources: 1)
+Q: Do you sell gift cards?
+A: I don't know.  (sources: 0)
+```
+
+<Playground kind="python">
+
+```python
+# Quick self-test: match each need to the right technique.
+needs = {
+    "Answers must come from our 500 policy PDFs": "RAG",
+    "Bot must cancel an order": "Tools / agent",
+    "Output must always be in our brand voice": "Fine-tuning (after prompts fail)",
+    "Model keeps returning broken JSON": "Structured output + validation",
+    "Bill is too high": "Small model, shorter prompts, caching",
+    "Users wait 8 seconds for a reply": "Streaming",
+}
+for need, technique in needs.items():
+    print(f"{need:<48} -> {technique}")
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Saying the model 'knows' or 'searches'">
+
+<Wrong>
+
+```text
+"The LLM searches its database and returns the right answer."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"The LLM predicts likely next tokens from patterns in its training data. It has no database.
+To use real data we add retrieval (RAG) or tools."
+```
+
+</Right>
+
+Interviewers listen for this exact understanding.
+
+</Mistake>
+
+<Mistake title="Jumping to agents or fine-tuning">
+
+<Wrong>
+
+```text
+"For a FAQ bot I would build a multi-agent system and fine-tune a model."
+```
+
+</Wrong>
+
+<Right>
+
+```text
+"I would start with a prompt and RAG, measure with an eval set, and add tools or fine-tuning
+only if the numbers show a gap."
+```
+
+</Right>
+
+Simple first, measured, then more complex. That is the answer seniors give.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="Design a customer-support assistant for an e-commerce company.">
+
+Ingest help articles and policies into a vector database (chunk, embed, index). For each question: authenticate, retrieve top chunks with hybrid search, build a grounded prompt with citations, call the LLM with streaming, and validate the output. Add read-only tools for order status scoped to the logged-in user, human handoff for refunds, guardrails for PII and injection, an eval set, and logging of cost and latency.
+
+</QA>
+
+<QA q="What limits does an LLM have that a backend engineer must design around?">
+
+A fixed context window, no memory between requests, knowledge cut off at training time, hallucinations, non-deterministic output, latency of seconds, per-token cost, rate limits, and sensitivity to prompt injection.
+
+</QA>
+
+<QA q="How do you evaluate a GenAI feature?">
+
+Build a test set of real questions with expected answers or rubrics. Score automatically (exact match, schema validity, retrieval recall, LLM-as-judge for faithfulness and relevance), review samples by hand, run the set on every prompt or model change, and track live metrics: thumbs up/down, escalations, cost and latency.
+
+</QA>
+
+<QA q="What is the difference between an LLM, RAG, an agent and MCP?">
+
+The LLM is the model that generates text. RAG is a pattern that fetches relevant documents and puts them in the prompt. An agent is an LLM in a loop that calls tools to finish a task. MCP is a protocol that standardises how applications expose tools and data to such models, so one integration works across many AI apps.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which gives a model access to fresh company knowledge without retraining?',
+      options: ['Temperature', 'RAG', 'Quantization', 'Diffusion'],
+      answer: 1,
+      why: 'RAG retrieves documents at question time.',
+    },
+    {
+      q: 'LLM + tools + a loop is called?',
+      options: ['An embedding', 'An agent', 'A tokenizer', 'A guardrail'],
+      answer: 1,
+      why: 'That is the usual definition of an agent.',
+    },
+    {
+      q: 'What should happen before model output is written to your database?',
+      options: ['Nothing', 'Validation in code', 'Translate it', 'Raise the temperature'],
+      answer: 1,
+      why: 'Model output is untrusted until validated.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Area | Remember |
+| --- | --- |
+| Model | predicts next token; no database; knowledge cutoff |
+| Units | tokens: cost, limits, speed |
+| Adapt | prompt → RAG → tools → fine-tune |
+| RAG | chunk → embed → store → retrieve → generate |
+| Agent | loop of model ↔ tools, with limits |
+| MCP | standard connector for tools and data |
+| Risks | hallucination, injection, PII, cost |
+| Guardrails | input, output, action, monitoring |
+| Production | streaming, retries, fallback, caching, logs |
+| Quality | eval set + human review |
+
+</CheatSheet>

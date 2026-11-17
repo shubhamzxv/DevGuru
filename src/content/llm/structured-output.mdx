@@ -1,0 +1,272 @@
+---
+id: llm-structured-output
+title: Structured output (JSON)
+summary: "Structured output makes a model reply in a fixed shape, usually JSON that follows a schema, so your code can read it safely; you still validate it and retry when it is wrong."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+A handwritten letter is nice for a person but hard for a clerk to process. A **printed form with boxes** (name, date, amount) is easy: every answer is in a known place. **Structured output** asks the model to fill in the form instead of writing a letter.
+
+</Analogy>
+
+## Simple explanation
+
+Programs cannot rely on free text like "Sure! The total is about ₹1,200." They need:
+
+`{"total": 1200, "currency": "INR"}`
+
+**Three levels of control**, weakest to strongest:
+
+| Level | How | Reliability |
+| --- | --- | --- |
+| **Ask in the prompt** | "Reply with JSON only, with keys …" plus an example | good, sometimes breaks |
+| **JSON mode** | an API option that forces valid JSON | valid JSON, but keys may be wrong |
+| **Schema-constrained output** | you send a **JSON Schema**; the API restricts generation to match it | shape guaranteed by the provider |
+
+A **JSON Schema** describes the shape: field names, types, required fields and allowed values (`enum`).
+
+Many teams define the shape as a **Pydantic** model in Python and generate the schema from it, then parse the reply back into the same model.
+
+**Always validate anyway**. A matching shape does not mean correct values: the model can put a wrong amount in a perfectly valid field. And the output can be cut off by `max_tokens`.
+
+**The repair loop**: parse → validate → if it fails, send the error back to the model and ask it to fix the output → try again, at most 2 or 3 times → otherwise fail cleanly.
+
+**Tips**:
+
+- Use **temperature 0**
+- Use `enum` for categories, so the model cannot invent a new one
+- Keep schemas small and flat; add a short `description` for each field
+- Allow `null` for unknown values so the model is not forced to guess
+
+## Code example
+
+Validating model output against a small schema, written by hand so it runs anywhere:
+
+```python
+import json
+
+SCHEMA = {
+    "name": str,
+    "amount": (int, float),
+    "category": {"food", "travel", "other"},     # enum
+}
+
+def validate(raw):
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        return None, f"invalid JSON: {e.msg}"
+    for key, rule in SCHEMA.items():
+        if key not in data:
+            return None, f"missing key: {key}"
+        if isinstance(rule, set):
+            if data[key] not in rule:
+                return None, f"{key} must be one of {sorted(rule)}"
+        elif not isinstance(data[key], rule) or isinstance(data[key], bool):
+            return None, f"{key} has the wrong type"
+    extra = set(data) - set(SCHEMA)
+    if extra:
+        return None, f"unexpected keys: {sorted(extra)}"
+    return data, "ok"
+
+replies = [
+    '{"name": "Lunch at Saravana", "amount": 340, "category": "food"}',
+    'Here you go: {"name": "Cab", "amount": 220, "category": "travel"}',
+    '{"name": "Cab", "amount": "220", "category": "travel"}',
+    '{"name": "Movie", "amount": 300, "category": "fun"}',
+    '{"name": "Tea", "amount": 20, "category": "food"',
+]
+for raw in replies:
+    print(validate(raw)[1])
+```
+
+```output
+ok
+invalid JSON: Expecting value
+amount has the wrong type
+category must be one of ['food', 'other', 'travel']
+invalid JSON: Expecting ',' delimiter
+```
+
+The **repair loop**: when validation fails, the error goes back to the model. The model here is a stand-in that fixes its answer on the second try:
+
+```python
+import json
+
+attempts = iter([
+    'Sure! {"city": "Pune", "temp_c": "31"}',           # chatty + wrong type
+    '{"city": "Pune", "temp_c": 31}',                   # fixed
+])
+
+def fake_llm(prompt):
+    return next(attempts)
+
+def check(raw):
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None, "Reply was not pure JSON."
+    if not isinstance(data.get("temp_c"), (int, float)):
+        return None, "temp_c must be a number."
+    return data, None
+
+def get_structured(prompt, max_tries=3):
+    for attempt in range(1, max_tries + 1):
+        raw = fake_llm(prompt)
+        data, error = check(raw)
+        if error is None:
+            print(f"attempt {attempt}: valid")
+            return data
+        print(f"attempt {attempt}: {error} Asking the model to fix it.")
+        prompt += f"\nYour last reply was rejected: {error} Reply with JSON only."
+    raise ValueError("could not get valid output")
+
+print(get_structured("Weather in Pune as JSON with keys city, temp_c"))
+```
+
+```output
+attempt 1: Reply was not pure JSON. Asking the model to fix it.
+attempt 2: valid
+{'city': 'Pune', 'temp_c': 31}
+```
+
+<Playground kind="none">
+
+```python
+# Real projects usually use Pydantic for the schema and the validation.
+# pip install pydantic
+from typing import Literal
+from pydantic import BaseModel, Field, ValidationError
+
+class Expense(BaseModel):
+    name: str = Field(description="Short name of the expense")
+    amount: float = Field(ge=0, description="Amount in rupees")
+    category: Literal["food", "travel", "other"]
+
+print(Expense.model_json_schema())          # send this schema to the LLM API
+
+raw = '{"name": "Cab", "amount": 220, "category": "travel"}'   # the model's reply
+try:
+    expense = Expense.model_validate_json(raw)
+    print(expense.amount + 10)
+except ValidationError as e:
+    print(e)                                # send this message back to the model and retry
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Parsing JSON out of free text with string tricks">
+
+<Wrong>
+
+```python
+reply = llm("Give me the user's details")
+start = reply.index("{")
+data = eval(reply[start:])            # eval on model output!
+```
+
+</Wrong>
+
+<Right>
+
+```python
+reply = llm(prompt, response_schema=SCHEMA, temperature=0)   # schema-constrained output
+data = json.loads(reply)
+validate(data)
+```
+
+</Right>
+
+Use the API's structured output feature, parse with `json.loads`, and never `eval` model output.
+
+</Mistake>
+
+<Mistake title="Forcing a value when the answer is unknown">
+
+<Wrong>
+
+```json
+{ "invoice_date": { "type": "string" } }
+```
+
+</Wrong>
+
+<Right>
+
+```json
+{ "invoice_date": { "type": ["string", "null"], "description": "null if not present in the document" } }
+```
+
+</Right>
+
+If a field is required and cannot be null, the model will invent a value. Let it say "unknown".
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="How do you get reliable JSON from an LLM?">
+
+Use the provider's structured output with a JSON Schema where available, otherwise JSON mode plus a clear prompt and example. Set temperature to 0, validate the parsed result (for example with Pydantic), retry with the validation error included, cap retries, and handle truncation by checking the stop reason.
+
+</QA>
+
+<QA q="What is the difference between JSON mode and schema-constrained output?">
+
+JSON mode guarantees syntactically valid JSON but not the keys or types. Schema-constrained (strict) output restricts token choices during generation so the result always matches the supplied JSON Schema.
+
+</QA>
+
+<QA q="If the output matches the schema, do you still need validation?">
+
+Yes. The schema guarantees shape, not truth. Check business rules (ranges, ids that exist, dates in order), cross-check against the source where possible, and treat the values as untrusted input.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Which gives the strongest guarantee about the shape of the output?',
+      options: ['Asking nicely in the prompt', 'JSON mode', 'Schema-constrained output', 'High temperature'],
+      answer: 2,
+      why: 'Generation is restricted to tokens that fit the schema.',
+    },
+    {
+      q: 'How do you stop the model inventing a new category?',
+      options: ['Raise max_tokens', 'Use an enum in the schema', 'Use top-k 1000', 'Remove the system prompt'],
+      answer: 1,
+      why: 'An enum lists the only allowed values.',
+    },
+    {
+      q: 'Validation fails. What is the usual next step?',
+      options: ['Crash', 'Send the error back and retry a limited number of times', 'Use eval()', 'Ignore it'],
+      answer: 1,
+      why: 'The repair loop fixes most failures within one or two retries.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Need | Do |
+| --- | --- |
+| Machine-readable reply | ask for JSON with a schema |
+| Guaranteed shape | provider's structured output / strict schema |
+| Fixed choices | `enum` |
+| Unknown values | allow `null` |
+| Define shape in Python | Pydantic model → `model_json_schema()` |
+| Parse | `json.loads` / `Model.model_validate_json` |
+| On failure | repair loop, max 2–3 tries |
+| Settings | temperature 0, enough `max_tokens` |
+| Truncated JSON | check the stop reason; raise `max_tokens` |
+| Never | `eval()` model output |
+
+</CheatSheet>

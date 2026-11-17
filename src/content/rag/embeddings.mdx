@@ -1,0 +1,247 @@
+---
+id: rag-embeddings
+title: Embeddings and similarity
+summary: "An embedding is a list of numbers that represents the meaning of a text; texts with similar meaning have vectors that point in similar directions, which is measured with cosine similarity."
+updated: "2026-11-17"
+---
+
+<Analogy>
+
+On a map, every place has **coordinates**. Places that are near each other have similar coordinates: Delhi and Gurugram are close; Delhi and Chennai are far. An **embedding** is a set of coordinates for **meaning**. "How do I get my money back?" and "refund policy" land close together, even with no shared words.
+
+</Analogy>
+
+## Simple explanation
+
+An **embedding model** turns text into a **vector**: a fixed-length list of numbers, often 384 to 3,072 of them (the **dimensions**).
+
+**The useful property**: similar meaning → vectors close together. That gives **semantic search**: search by meaning, not by exact words.
+
+**How "close" is measured**:
+
+| Measure | Idea | Range |
+| --- | --- | --- |
+| **Cosine similarity** | the angle between two vectors | -1 to 1; **1 = same direction** |
+| **Dot product** | like cosine, but length also counts | any number |
+| **Euclidean distance** | straight-line distance | 0 = identical |
+
+If vectors are **normalised** (length 1), cosine similarity and dot product give the same ranking. Many embedding models return normalised vectors.
+
+**Rules for using embeddings in RAG**:
+
+- Use the **same model** for documents and questions. Vectors from different models cannot be compared
+- If you **change** the embedding model, **re-embed everything**
+- Embedding models have a **maximum input length**; text beyond it is cut off, which is one reason for chunking
+- Some models want a **prefix or task type** for queries versus documents; follow the model's documentation
+- More dimensions can mean better quality, but more storage and slower search
+- Choose a model that handles your **languages** (for example Hindi + English) and your **domain**
+
+**Embedding vs LLM**: an embedding model **does not generate text**. It is small, fast and cheap, and its output is only a vector.
+
+## Code example
+
+Cosine similarity by hand, with tiny 3-number "meaning" vectors:
+
+```python
+import math
+
+def cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    return dot / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b)))
+
+# pretend dimensions: [money, travel, food]
+vectors = {
+    "refund policy":             [0.9, 0.1, 0.0],
+    "how do I get my money back": [0.8, 0.2, 0.1],
+    "train ticket to Goa":       [0.1, 0.9, 0.1],
+    "best biryani in Hyderabad": [0.0, 0.2, 0.9],
+}
+
+query = "how do I get my money back"
+for text, vec in vectors.items():
+    print(f"{cosine(vectors[query], vec):.2f}  {text}")
+```
+
+```output
+0.98  refund policy
+1.00  how do I get my money back
+0.36  train ticket to Goa
+0.17  best biryani in Hyderabad
+```
+
+A real, if simple, embedding you can build yourself: count words (**bag of words**). It shows the weakness that neural embeddings fix: different words with the same meaning get no match:
+
+```python
+import math
+from collections import Counter
+
+def embed(text, vocabulary):
+    counts = Counter(text.lower().replace("?", "").split())
+    return [counts[w] for w in vocabulary]
+
+def cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na, nb = math.sqrt(sum(x * x for x in a)), math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+docs = ["refund for a cancelled order", "delivery time for an order", "money back after cancellation"]
+vocabulary = sorted({w for d in docs for w in d.split()} | {"refund", "money", "back"})
+
+query = "refund for my order"
+q = embed(query, vocabulary)
+for d in docs:
+    print(f"{cosine(q, embed(d, vocabulary)):.2f}  {d}")
+print("dimensions:", len(vocabulary))
+```
+
+```output
+0.77  refund for a cancelled order
+0.52  delivery time for an order
+0.00  money back after cancellation
+dimensions: 12
+```
+
+"money back after cancellation" means the same as a refund but scores 0, because no words match. A neural embedding model would place it close to the query.
+
+<Playground kind="python">
+
+```python
+# Normalised vectors: cosine similarity equals the dot product.
+import math
+
+def normalise(v):
+    length = math.sqrt(sum(x * x for x in v))
+    return [x / length for x in v]
+
+a, b = [3.0, 4.0], [4.0, 3.0]
+na, nb = normalise(a), normalise(b)
+
+dot_raw = sum(x * y for x, y in zip(a, b))
+dot_norm = sum(x * y for x, y in zip(na, nb))
+cos = dot_raw / (math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b)))
+
+print("raw dot product:      ", dot_raw)
+print("cosine similarity:    ", round(cos, 3))
+print("dot of normalised:    ", round(dot_norm, 3))
+print("length after normalise:", round(math.sqrt(sum(x * x for x in na)), 3))
+```
+
+</Playground>
+
+<Mistakes>
+
+<Mistake title="Different embedding models for documents and queries">
+
+<Wrong>
+
+```python
+doc_vectors = model_a.embed(chunks)          # indexed last year
+query_vector = model_b.embed(question)       # new model today
+```
+
+</Wrong>
+
+<Right>
+
+```python
+doc_vectors = model_b.embed(chunks)          # re-embed everything with the new model
+query_vector = model_b.embed(question)
+```
+
+</Right>
+
+Each model has its own vector space. Mixing them gives meaningless similarity scores.
+
+</Mistake>
+
+<Mistake title="Embedding a whole long document as one vector">
+
+<Wrong>
+
+```python
+vector = embed(open("handbook.txt").read())     # 80 pages -> one vector (and mostly truncated)
+```
+
+</Wrong>
+
+<Right>
+
+```python
+vectors = [embed(chunk) for chunk in split_into_chunks(handbook)]
+```
+
+</Right>
+
+One vector cannot represent many topics, and text beyond the model's input limit is ignored.
+
+</Mistake>
+
+</Mistakes>
+
+<InterviewQA>
+
+<QA q="What is an embedding?">
+
+A dense vector representation of a piece of content, produced by a model trained so that semantically similar inputs have nearby vectors. It converts meaning into numbers that can be compared, indexed and searched.
+
+</QA>
+
+<QA q="What is cosine similarity and why is it used for embeddings?">
+
+The cosine of the angle between two vectors: their dot product divided by the product of their lengths. It measures direction and ignores magnitude, which suits text embeddings where direction carries meaning. With normalised vectors it equals the dot product.
+
+</QA>
+
+<QA q="What is the difference between semantic search and keyword search?">
+
+Keyword search (BM25) matches the words in the query and is strong for exact terms, ids and names. Semantic search matches meaning through embeddings and handles synonyms and paraphrases. Hybrid search combines both.
+
+</QA>
+
+<QA q="What happens when you change the embedding model?">
+
+All stored vectors must be regenerated with the new model, because vector spaces of different models are not compatible. Plan for re-indexing: keep the source text, version the index and switch over when the new index is ready.
+
+</QA>
+
+</InterviewQA>
+
+<Quiz
+  questions={[
+    {
+      q: 'Cosine similarity of 1 means the vectors are?',
+      options: ['Opposite', 'Unrelated', 'Pointing in the same direction', 'Zero'],
+      answer: 2,
+      why: 'The angle between them is 0.',
+    },
+    {
+      q: 'What does an embedding model output?',
+      options: ['A sentence', 'A vector of numbers', 'A JSON schema', 'An image'],
+      answer: 1,
+      why: 'A fixed-length list of numbers that represents meaning.',
+    },
+    {
+      q: 'You switch to a new embedding model. What must you do?',
+      options: ['Nothing', 'Re-embed all documents', 'Lower top-k', 'Change the LLM'],
+      answer: 1,
+      why: 'Old and new vectors live in different spaces.',
+    },
+  ]}
+/>
+
+<CheatSheet>
+
+| Item | Remember |
+| --- | --- |
+| Embedding | text → vector that captures meaning |
+| Dimensions | length of the vector (384 … 3,072) |
+| Cosine similarity | `dot(a, b) / (len(a) × len(b))`; 1 = same meaning direction |
+| Normalised vectors | cosine = dot product |
+| Semantic search | nearest vectors to the query vector |
+| Same model | for documents and queries, always |
+| Model change | re-embed everything |
+| Input limit | long text is truncated → chunk first |
+| Not an LLM | no text generation; cheap and fast |
+| Weak spot | exact ids and codes → add keyword search |
+
+</CheatSheet>
