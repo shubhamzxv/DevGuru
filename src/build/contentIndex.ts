@@ -43,6 +43,24 @@ export interface CheatSheetEntry {
   sheet: CheatSheetTable;
 }
 
+/** A piece of an interview answer: a paragraph (with `code` / **bold**) or a code block. */
+export type AnswerBlock =
+  { kind: 'text'; text: string } | { kind: 'code'; language: string; code: string };
+
+export interface InterviewItem {
+  q: string;
+  answer: AnswerBlock[];
+}
+
+/** All interview questions of one topic. */
+export interface InterviewEntry {
+  track: string;
+  module: string;
+  slug: string;
+  title: string;
+  items: InterviewItem[];
+}
+
 /** Same simple "key: value" reader as scripts/lib.mjs. */
 export function parseFrontmatter(text: string): Record<string, string> {
   const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
@@ -147,6 +165,38 @@ export function extractCheatSheet(text: string): CheatSheetTable | null {
       return headers.map((_, index) => cells[index] ?? '');
     });
   return { headers, rows, notes };
+}
+
+/** Every <QA q="..."> answer </QA> of a topic, with the answer split into blocks. */
+export function extractInterviewQA(text: string): InterviewItem[] {
+  return [...text.matchAll(/<QA\s+q=(["'])([\s\S]*?)\1\s*>([\s\S]*?)<\/QA>/g)].map((m) => ({
+    q: clean(m[2] ?? ''),
+    answer: splitAnswer(m[3] ?? ''),
+  }));
+}
+
+/** Splits answer markdown into paragraphs and fenced code blocks. */
+export function splitAnswer(body: string): AnswerBlock[] {
+  const blocks: AnswerBlock[] = [];
+  const fence = /^```([\w-]*)[^\n]*\n([\s\S]*?)^```[ \t]*$/gm;
+  const addText = (chunk: string) => {
+    for (const paragraph of chunk.split(/\n\s*\n/)) {
+      const text = clean(paragraph).replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'); // links -> their text
+      if (text) blocks.push({ kind: 'text', text });
+    }
+  };
+  let last = 0;
+  for (const match of body.matchAll(fence)) {
+    addText(body.slice(last, match.index));
+    blocks.push({
+      kind: 'code',
+      language: match[1] || 'text',
+      code: (match[2] ?? '').replace(/\n$/, ''),
+    });
+    last = (match.index ?? 0) + match[0].length;
+  }
+  addText(body.slice(last));
+  return blocks;
 }
 
 function clean(text: string): string {

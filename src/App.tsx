@@ -10,6 +10,7 @@ const PlaygroundPage = lazy(() => import('./pages/PlaygroundPage'));
 const SearchPage = lazy(() => import('./pages/SearchPage'));
 const ProgressPage = lazy(() => import('./pages/ProgressPage'));
 const CheatsheetsPage = lazy(() => import('./pages/CheatsheetsPage'));
+const InterviewPage = lazy(() => import('./pages/InterviewPage'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="search" element={<SearchPage />} />
         <Route path="progress" element={<ProgressPage />} />
         <Route path="cheatsheets" element={<CheatsheetsPage />} />
+        <Route path="interview" element={<InterviewPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>

@@ -1,12 +1,27 @@
-import type { ReactNode } from 'react';
+import { useContext, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
+import { getTrack } from '../../registry/tracks';
 import { H2 } from './Prose';
+import { TopicContext } from './topicContext';
 
 /** Template block 8: wraps 3 to 5 <QA> items. */
 export function InterviewQA({ children }: { children: ReactNode }) {
+  // The topic key is "<track>/<topic id>"; it is null outside a topic page.
+  const track = getTrack(useContext(TopicContext)?.split('/')[0] ?? '');
   return (
     <section className="defer-render">
       <H2>Interview questions</H2>
       <div className="space-y-3">{children}</div>
+      {track && (
+        <p className="mt-3 text-sm">
+          <Link
+            to={`/interview?track=${track.slug}`}
+            className="font-semibold text-brand-700 underline underline-offset-2 dark:text-brand-300"
+          >
+            All {track.name} interview questions →
+          </Link>
+        </p>
+      )}
     </section>
   );
 }

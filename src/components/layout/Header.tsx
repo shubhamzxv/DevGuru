@@ -45,6 +45,9 @@ export default function Header({ onMenuClick, drawerOpen }: HeaderProps) {
           <NavLink to="/cheatsheets" className={desktopLink}>
             Cheat sheets
           </NavLink>
+          <NavLink to="/interview" className={desktopLink}>
+            Interview
+          </NavLink>
         </nav>
 
         <div className="ml-auto flex items-center lg:ml-2">

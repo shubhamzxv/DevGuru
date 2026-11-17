@@ -20,6 +20,7 @@ const EXTRA_LINKS = [
   { heading: 'Playgrounds', to: '/playground/python', icon: '▶️', label: 'Python playground' },
   { heading: 'Playgrounds', to: '/playground/sql', icon: '▶️', label: 'SQL playground' },
   { heading: 'More', to: '/cheatsheets', icon: '📋', label: 'Cheat sheets' },
+  { heading: 'More', to: '/interview', icon: '🎯', label: 'Interview questions' },
   { heading: 'More', to: '/progress', icon: '📈', label: 'My progress' },
 ] as const;
 

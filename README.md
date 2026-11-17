@@ -4,6 +4,7 @@
 
 - **390 topics** in 12 tracks. Every topic: analogy → simple explanation → code with real output → "Try it yourself" playground → common mistakes → interview questions → quiz → cheat sheet.
 - **Runs in the browser**: Python (Pyodide), SQL (SQLite via sql.js), and simulators for Git, a Linux/Docker terminal, REST APIs and AWS architecture diagrams.
+- **Interview questions tab** (`/interview`): all 1,330 interview Q&As in one place, one chip per stack, with filter, show/hide answers, a random question for practice, and print.
 - **Works offline** after the first visit (PWA), on phones first.
 - **No account needed.** Progress is saved in the browser. Optional login with a phone number or username keeps it on every device ([docs/login.md](docs/login.md)).
 - Frontend only: React 18 + Vite + TypeScript (strict) + Tailwind + MDX. Hosted on **AWS Amplify**.
@@ -94,7 +95,7 @@ DevGuru/
 │  ├─ workers/                pyodide.worker.ts (Python runs off the main thread)
 │  ├─ registry/               tracks, topics and the MDX components a topic may use
 │  ├─ utils/                  storage (progress), cloudSync (login), search, theme…
-│  ├─ build/                  Vite plugins: search index + cheat sheets, service worker
+│  ├─ build/                  Vite plugins: search index, cheat sheets, interview questions, service worker
 │  └─ data/seed.sql           the sample database for the SQL track
 ├─ public/                    icons, manifest, wasm/sql-wasm.wasm, robots.txt
 ├─ tests/                     Vitest tests
